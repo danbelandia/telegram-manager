@@ -1,0 +1,42 @@
+# OpenSpec configuration for Telegram Group Manager
+# SDD workflow bootstrap — hybrid mode (openspec files + Engram observations)
+
+context: |
+  MVP de plataforma para administrar grupos de Telegram: bot en Go,
+  dashboard React+TypeScript, PostgreSQL. Monolito modular. Telegram es
+  fuente de verdad para acciones de Telegram; no inventar endpoints de la
+  Bot API. No Redis, no microservicios. JWT (access 15min + refresh 7d en
+  cookie httpOnly). Token bucket rate limiter (~25 req/s) en el adapter.
+  Migraciones con goose. Tests con TelegramService mockeado (moq).
+
+strict_tdd: false
+
+testing:
+  runner: not-configured
+  unit: false
+  integration: false
+  e2e: false
+  coverage: false
+  quality_tools:
+    backend_linter: false
+    frontend_linter: false
+    type_checker: false
+    formatter: false
+
+phases:
+  proposal:
+    when: "antes de tocar codigo: se propone un cambio con intencion, alcance y enfoque"
+  spec:
+    when: "despues de la propuesta: se escriben requisitos y escenarios (delta spec)"
+  design:
+    when: "despues del spec: se define el diseno tecnico y la arquitectura"
+  tasks:
+    when: "despues del diseno: se descompone el cambio en tareas de implementacion"
+  apply:
+    when: "se implementan las tareas segun spec + design"
+  verify:
+    when: "se ejecutan tests y se prueba que la implementacion cumple spec, design y tasks"
+  archive:
+    when: "cambio completado y verificado: se sincronizan delta specs y se archiva"
+
+# Se actualizara cuando exista codigo real (go.mod, package.json, CI)

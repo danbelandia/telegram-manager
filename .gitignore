@@ -1,0 +1,21 @@
+# Secrets — nunca commitear
+.env
+.env.*
+!.env.example
+
+# Node / frontend
+node_modules/
+dist/
+coverage/
+
+# Go / backend
+backend/bin/
+backend/*.exe
+backend/*.test
+*.out
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

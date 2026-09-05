@@ -1,0 +1,9 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": [
+    "TelegramManager/AGENTS.md",
+    "TelegramManager/docs/telegram_api_reference.md",
+    "TelegramManager/docs/backend-skills.md",
+    "TelegramManager/docs/frontend-skills.md"
+  ]
+}
