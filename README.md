@@ -3,8 +3,9 @@
 Plataforma para administrar grupos de Telegram: bot, backend en Go, panel
 React + TypeScript y PostgreSQL.
 
-> Estado: bootstrap en curso (cambio `repo-bootstrap`). La stack se
-> completa en slices: este README documenta lo que existe hoy.
+> Estado: bootstrap en curso (cambio `repo-bootstrap`). Backend y
+> frontend funcionales; los módulos de negocio (grupos, usuarios,
+> moderación, auth del panel) llegan en cambios siguientes.
 
 ## Stack
 
@@ -30,16 +31,16 @@ cp .env.example .env
 Completar `TELEGRAM_BOT_TOKEN` con el token del bot. **Nunca** commitear
 `.env`.
 
-### 2. Levantar la base de datos
+### 2. Levantar la stack
 
 ```bash
-docker compose up -d postgres
+docker compose up -d
 ```
 
-Postgres queda en `localhost:5432`. El servicio `backend` se levanta con
-`docker compose up -d backend` (requiere `TELEGRAM_BOT_TOKEN` en `.env`);
-el servicio `frontend` se agrega a `docker-compose.yml` en el siguiente
-cambio (con su código y Dockerfile).
+Levanta los tres servicios (`backend`, `frontend`, `postgres`). Postgres
+queda en `localhost:5432`, el backend en `http://localhost:8080` y el
+panel en `http://localhost:5173`. Requiere `TELEGRAM_BOT_TOKEN` en
+`.env` (el compose falla rápido si falta).
 
 ### 3. Variables de entorno
 

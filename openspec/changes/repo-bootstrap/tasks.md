@@ -38,6 +38,7 @@ Chain strategy: feature-branch-chain (tracker `feat/repo-bootstrap`; PR 2 y PR 3
 - [ ] 1.4 Crear `backend/Dockerfile` multi-stage (golang:alpine build → runtime, binary escucha ${PORT}) — **se implementa con el código del backend (PR 2)**
   - [x] 1.4.1 DONE PR 2 (2026-09-05): `golang:1.26-alpine` build (go.mod requiere Go >= 1.26 por el grafo de goose v3.28) → `alpine:3.20` + `ca-certificates wget` (healthcheck)
 - [ ] 1.5 Crear `frontend/Dockerfile` dev (node:20-alpine, `npm run dev -- --host 0.0.0.0`) — **se implementa con el código del frontend (PR 3)**
+  - [x] 1.5.1 DONE PR 3 (2026-09-05): node:20-alpine, `npm install` en build + volumen anónimo para node_modules en compose
 - [x] 1.6 Crear `README.md` base (ejecución con/sin Docker, migraciones en dev, TELEGRAM_MODE)
 
 ## Phase 2: Backend Go (Work Unit 2)
@@ -54,11 +55,11 @@ Chain strategy: feature-branch-chain (tracker `feat/repo-bootstrap`; PR 2 y PR 3
 
 ## Phase 3: Frontend (Work Unit 3)
 
-- [ ] 3.1 `package.json`, `tsconfig.json` (strict:true), `tsconfig.node.json`, `vite.config.ts`; deps react/react-dom/react-router-dom; dev: vite, typescript, vitest, testing-library, jsdom
-- [ ] 3.2 `index.html`, `src/main.tsx`, `src/App.tsx` (router con ruta placeholder)
-- [ ] 3.3 `src/lib/api-client.ts`: fetch wrapper con `VITE_API_BASE_URL` + normalización de envelope
-- [ ] 3.4 `src/App.test.tsx`: smoke test render del placeholder
-- [ ] 3.5 `npm install`, verificar `tsc --noEmit` y `vitest run`
+- [x] 3.1 `package.json`, `tsconfig.json` (strict:true), `tsconfig.node.json`, `vite.config.ts`; deps react/react-dom/react-router-dom; dev: vite, typescript, vitest, testing-library, jsdom
+- [x] 3.2 `index.html`, `src/main.tsx`, `src/App.tsx` (router con ruta placeholder)
+- [x] 3.3 `src/lib/api-client.ts`: fetch wrapper con `VITE_API_BASE_URL` + normalización de envelope
+- [x] 3.4 `src/App.test.tsx`: smoke test render del placeholder
+- [x] 3.5 `npm install`, verificar `tsc --noEmit` y `vitest run`
 
 ## Phase 4: Verificación (todos los work units juntos)
 

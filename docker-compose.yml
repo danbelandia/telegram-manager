@@ -45,6 +45,21 @@ services:
   # El servicio frontend se agrega en el PR 3 (cambio repo-bootstrap),
   # junto con su codigo fuente y Dockerfile, para que cada slice sea
   # verificable de forma autonoma.
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8080/api}
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - node_modules:/app/node_modules
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
+  node_modules:
   postgres_data:
