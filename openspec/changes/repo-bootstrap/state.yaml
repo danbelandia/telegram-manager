@@ -32,9 +32,10 @@ chain_strategy: feature-branch-chain
 chain_decision: user-selected (feature branch chain, 2026-09-05)
 tracker_branch: feat/repo-bootstrap
 
-next: sdd-apply | slice: frontend (PR 3) — aplicado y verificado (2026-09-05); resta verificación 4.1-4.5 y archive
+next: verify (parcial) — 4.1/4.4 done; 4.2/4.3 BLOQUEADAS: requieren TELEGRAM_BOT_TOKEN real (ver README §Bot de Telegram); 4.5 por confirmar; archive pendiente
 
 apply_log:
   - 2026-09-05 PR 1 foundation: 1.1, 1.2, 1.3, 1.6 done; 1.4 delegada a PR 2, 1.5 a PR 3
   - 2026-09-05 PR 2 backend: 2.1-2.9 y 1.4 done; build+vet+test verdes local y en Docker; postgres healthy; migración 00001 aplicada y verificada en psql; fail-fast de token verificado local y en container; `docker compose config` OK
-  - 2026-09-05 PR 3 frontend: 3.1-3.5 y 1.5 done; tsc --noEmit y vitest verdes, build de prod OK; container dev sirve HTML 200 en 5173; commit slice backend e8f6945 en feat/repo-bootstrap
+  - 2026-09-05 PR 3 frontend: 3.1-3.5 y 1.5 done; tsc --noEmit y vitest verdes, build de prod OK; container dev sirve HTML 200 en 5173; commit slice backend e8f6945, frontend 01aac61 en feat/repo-bootstrap
+  - 2026-09-05 docs token: README §Bot de Telegram (crear bot con BotFather, validacion getMe, health check, seguridad/rotacion). 4.2/4.3 quedan como verificacion manual requerida con token real en aplicacion posterior
