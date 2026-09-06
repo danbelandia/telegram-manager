@@ -2,7 +2,7 @@
 
 change: repo-bootstrap
 created: 2026-09-05
-status: explored
+status: verified (2026-09-06, PASS — sin pendientes automatizables)
 
 phases:
   explore: done
@@ -10,8 +10,11 @@ phases:
   spec: done
   design: done
   tasks: done
-  apply: in_progress
-  verify: pending
+  apply: done (e8f6945, 01aac61, 52441a8 en feat/repo-bootstrap)
+  verify: done 2026-09-06 — 4.2/4.3 confirmadas con TELEGRAM_BOT_TOKEN real:
+    docker compose up -d (3 servicios healthy), GET /api/health →
+    bot_connected:true, db ok, status ok; 4.4 sin secretos en el repo
+    verificado; 4.5 pendiente de archivo final del cambio
   archive: pending
 
 artifacts:
@@ -32,7 +35,7 @@ chain_strategy: feature-branch-chain
 chain_decision: user-selected (feature branch chain, 2026-09-05)
 tracker_branch: feat/repo-bootstrap
 
-next: verify (parcial) — 4.1/4.4 done; 4.2/4.3 BLOQUEADAS: requieren TELEGRAM_BOT_TOKEN real (ver README §Bot de Telegram); 4.5 por confirmar; archive pendiente
+next: archive — apply y verify completos (token real confirmado 2026-09-06)
 
 apply_log:
   - 2026-09-05 PR 1 foundation: 1.1, 1.2, 1.3, 1.6 done; 1.4 delegada a PR 2, 1.5 a PR 3
