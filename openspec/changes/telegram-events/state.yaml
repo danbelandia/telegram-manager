@@ -2,7 +2,7 @@
 
 change: telegram-events
 created: 2026-09-05
-status: applied (pending verify)
+status: verified (PASS WITH WARNINGS)
 
 phases:
   explore: done
@@ -11,7 +11,7 @@ phases:
   design: done
   tasks: done
   apply: done (commits 9742fe8, e2d53d7, 1cdd6f6 en feat/telegram-events)
-  verify: pending
+  verify: done (27 tests pass, 8/15 compliant, 7/15 partial, 0 failing)
   archive: pending
 
 artifacts:
@@ -25,6 +25,8 @@ artifacts:
   - engram: sdd/telegram-events/design
   - openspec/changes/telegram-events/tasks.md
   - engram: sdd/telegram-events/tasks
+  - openspec/changes/telegram-events/verify-report.md
+  - engram: sdd/telegram-events/verify-report
   - engram: sdd/telegram-events/apply-progress
 
 apply_log:
