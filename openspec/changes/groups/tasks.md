@@ -24,25 +24,25 @@ Chain strategy: feature-branch-chain
 
 ## Phase 1: Foundation (modelo persistente)
 
-- [ ] 1.1 Crear `backend/migrations/00002_create_groups.sql`: tabla `groups` según design (telegram_id BIGINT NOT NULL UNIQUE, title TEXT NOT NULL, username TEXT NULL, type TEXT NOT NULL, member_count BIGINT NULL, bot_status TEXT NOT NULL DEFAULT 'member', bot_permissions JSONB NULL, created_at/updated_at TIMESTAMPTZ DEFAULT now()) con `-- +goose Up/Down` (DROP TABLE).
-- [ ] 1.2 Crear `backend/internal/groups/model.go`: struct `Group` (ID, TelegramID, Title, Username *string, Type, MemberCount *int64, BotStatus, BotPermissions map[string]bool, CreatedAt, UpdatedAt), consts `Status*` (member default) y `var ErrNotFound`.
+- [x] 1.1 Crear `backend/migrations/00002_create_groups.sql`: tabla `groups` según design (telegram_id BIGINT NOT NULL UNIQUE, title TEXT NOT NULL, username TEXT NULL, type TEXT NOT NULL, member_count BIGINT NULL, bot_status TEXT NOT NULL DEFAULT 'member', bot_permissions JSONB NULL, created_at/updated_at TIMESTAMPTZ DEFAULT now()) con `-- +goose Up/Down` (DROP TABLE).
+- [x] 1.2 Crear `backend/internal/groups/model.go`: struct `Group` (ID, TelegramID, Title, Username *string, Type, MemberCount *int64, BotStatus, BotPermissions map[string]bool, CreatedAt, UpdatedAt), consts `Status*` (member default) y `var ErrNotFound`.
 
 ## Phase 2: Core (repository)
 
-- [ ] 2.1 Crear `backend/internal/groups/repository.go`: `NewRepository(db *sql.DB) *Repository` y helper `scanGroup(rows/row)` que mapea fila→Group (JSONB → map[string]bool, NULL → nil).
-- [ ] 2.2 Implementar `UpsertByTelegramID(ctx, g *Group) error` con `INSERT ... ON CONFLICT (telegram_id) DO UPDATE SET ... updated_at = now()` y placeholders `$n` (escenario Unicidad).
-- [ ] 2.3 Implementar `List(ctx) ([]Group, error)` con `ORDER BY title ASC` (escenario Listado).
-- [ ] 2.4 Implementar `GetByTelegramID(ctx, telegramID int64) (*Group, error)`; `sql.ErrNoRows` → `ErrNotFound` (escenario Consulta).
+- [x] 2.1 Crear `backend/internal/groups/repository.go`: `NewRepository(db *sql.DB) *Repository` y helper `scanGroup(rows/row)` que mapea fila→Group (JSONB → map[string]bool, NULL → nil).
+- [x] 2.2 Implementar `UpsertByTelegramID(ctx, g *Group) error` con `INSERT ... ON CONFLICT (telegram_id) DO UPDATE SET ... updated_at = now()` y placeholders `$n` (escenario Unicidad).
+- [x] 2.3 Implementar `List(ctx) ([]Group, error)` con `ORDER BY title ASC` (escenario Listado).
+- [x] 2.4 Implementar `GetByTelegramID(ctx, telegramID int64) (*Group, error)`; `sql.ErrNoRows` → `ErrNotFound` (escenario Consulta).
 
 ## Phase 3: Testing (integración Postgres real)
 
-- [ ] 3.1 Crear `backend/internal/groups/repository_test.go`: helper de setup que aplica `database.Migrate` y falla/skipea si `-short` o sin `TEST_DATABASE_URL` (default `postgres://telegram:telegram@localhost:5432/telegram_manager?sslmode=disable`).
-- [ ] 3.2 Tests table-driven que cubran: upsert idempotente (1 fila), listado ordenado por title, get encontrado, get inexistente → ErrNotFound, updated_at cambia y created_at se conserva (escenarios del spec: Unicidad, Listado, Consulta, Timestamps).
+- [x] 3.1 Crear `backend/internal/groups/repository_test.go`: helper de setup que aplica `database.Migrate` y falla/skipea si `-short` o sin `TEST_DATABASE_URL` (default `postgres://telegram:telegram@localhost:5432/telegram_manager?sslmode=disable`).
+- [x] 3.2 Tests table-driven que cubran: upsert idempotente (1 fila), listado ordenado por title, get encontrado, get inexistente → ErrNotFound, updated_at cambia y created_at se conserva (escenarios del spec: Unicidad, Listado, Consulta, Timestamps).
 
 ## Phase 4: Verification
 
-- [ ] 4.1 `go build ./...`, `go vet ./...`, `go test ./... -count=1` (sin short para correr integración si hay Postgres) y `gofmt -l .` limpio.
-- [ ] 4.2 Verificar en vivo: `docker compose up -d` y confirmar que goose aplica `00002` al iniciar el backend (log "migrations applied").
+- [x] 4.1 `go build ./...`, `go vet ./...`, `go test ./... -count=1` (sin short para correr integración si hay Postgres) y `gofmt -l .` limpio.
+- [x] 4.2 Verificar en vivo: `docker compose up -d` y confirmar que goose aplica `00002` al iniciar el backend (log "migrations applied").
 
 ## Notas
 
