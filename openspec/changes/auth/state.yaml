@@ -2,7 +2,7 @@
 
 change: auth
 created: 2026-09-06
-status: apply done
+status: verify done (PASS WITH WARNINGS)
 
 phases:
   explore: done (obs 123)
@@ -11,7 +11,7 @@ phases:
   design: done (obs 126)
   tasks: done (obs 127)
   apply: done (obs 128 + PR2 be70255)
-  verify: pending
+  verify: done (obs verify, PASS WITH WARNINGS — 13/14 escenarios, reporte verify-report.md)
   archive: pending
 
 artifacts:
