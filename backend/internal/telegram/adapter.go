@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -82,8 +84,18 @@ func (a *Adapter) GetMe(ctx context.Context) (BotUser, error) {
 // doGet ejecuta un GET contra un metodo de la Bot API y decodifica el
 // envelope estandar {ok, description, error_code, result}.
 func (a *Adapter) doGet(ctx context.Context, method string, result any) error {
-	url := fmt.Sprintf("%s/bot%s/%s", a.baseURL, a.token, method)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	return a.doGetQuery(ctx, method, nil, result)
+}
+
+// doGetQuery es doGet con query string. La Bot API admite parametros
+// por query en GET; se usa para getUpdates/setWebhook/deleteWebhook.
+func (a *Adapter) doGetQuery(ctx context.Context, method string, q url.Values, result any) error {
+	u := fmt.Sprintf("%s/bot%s/%s", a.baseURL, a.token, method)
+	if len(q) > 0 {
+		u += "?" + q.Encode()
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return fmt.Errorf("telegram: build request: %w", err)
 	}
@@ -110,8 +122,20 @@ func (a *Adapter) doGet(ctx context.Context, method string, result any) error {
 	}
 
 	if !envelope.OK {
-		if envelope.ErrorCode == http.StatusUnauthorized {
+		switch envelope.ErrorCode {
+		case http.StatusUnauthorized:
 			return ErrInvalidToken
+		case http.StatusTooManyRequests:
+			var errBody struct {
+				Parameters struct {
+					RetryAfter int `json:"retry_after"`
+				} `json:"parameters"`
+			}
+			// Si Telegram no mando retry_after, el default es 0 (instantaneo).
+			_ = json.Unmarshal(body, &errBody)
+			return &RateLimitError{RetryAfter: time.Duration(errBody.Parameters.RetryAfter) * time.Second}
+		case http.StatusConflict:
+			return ErrWebhookConflict
 		}
 		return fmt.Errorf("telegram: api error %d: %s", envelope.ErrorCode, envelope.Description)
 	}
@@ -122,4 +146,61 @@ func (a *Adapter) doGet(ctx context.Context, method string, result any) error {
 		}
 	}
 	return nil
+}
+
+// GetUpdates hace long polling contra la Bot API. offset>0 confirma
+// updates previos; timeout es el long poll en segundos; allowed son los
+// tipos de update a recibir (MVPAllowedUpdates).
+func (a *Adapter) GetUpdates(ctx context.Context, offset, timeout int, allowed []string) ([]Update, error) {
+	q := url.Values{}
+	if offset > 0 {
+		q.Set("offset", strconv.Itoa(offset))
+	}
+	if timeout > 0 {
+		q.Set("timeout", strconv.Itoa(timeout))
+	}
+	if len(allowed) > 0 {
+		q.Set("allowed_updates", mustJSON(allowed))
+	}
+
+	var result []Update
+	if err := a.doGetQuery(ctx, "getUpdates", q, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// SetWebhook registra el webhook de produccion. Con secret_token
+// habilitado, Telegram lo envia en X-Telegram-Bot-Api-Secret-Token y el
+// backend debe validarlo antes de procesar (ver api/webhook.go).
+// drop_pending_updates=true evita re-procesar updates acumulados del
+// polling.
+func (a *Adapter) SetWebhook(ctx context.Context, webhookURL, secret string, allowed []string) error {
+	q := url.Values{}
+	q.Set("url", webhookURL)
+	if secret != "" {
+		q.Set("secret_token", secret)
+	}
+	if len(allowed) > 0 {
+		q.Set("allowed_updates", mustJSON(allowed))
+	}
+	q.Set("drop_pending_updates", "true")
+
+	return a.doGetQuery(ctx, "setWebhook", q, nil)
+}
+
+// DeleteWebhook elimina el webhook actual. Necesario para volver a
+// polling (getUpdates responde 409 mientras haya webhook).
+func (a *Adapter) DeleteWebhook(ctx context.Context) error {
+	return a.doGetQuery(ctx, "deleteWebhook", nil, nil)
+}
+
+// mustJSON serializa allowed para la query string. Ante un error nunca
+// alcanzable con []string, devuelve "[]".
+func mustJSON(v any) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
 }

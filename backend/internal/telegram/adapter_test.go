@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // newStubServer arma un servidor local que responde como la Bot API.
@@ -26,6 +27,28 @@ func newStubServer(t *testing.T, handler http.HandlerFunc) *httptest.Server {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"ok":true,"result":{"id":123456,"username":"admin_bot","first_name":"Admin"}}`))
 	}))
+}
+
+// newBotStubServer acepta cualquier metodo de la Bot API y registra el
+// path en paths. Se usa para el transporte (getUpdates/setWebhook/
+// deleteWebhook), que comparte el mismo /bot<TOKEN>/<metodo>.
+func newBotStubServer(t *testing.T, handler http.HandlerFunc) (*httptest.Server, *[]string) {
+	t.Helper()
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/bot") {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		paths = append(paths, r.URL.Path)
+		if handler != nil {
+			handler(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true,"result":[]}`))
+	}))
+	return srv, &paths
 }
 
 func TestAdapterGetMe_Success(t *testing.T) {
@@ -107,5 +130,143 @@ func TestAdapterGetMe_Unavailable(t *testing.T) {
 	_, err := adapter.GetMe(context.Background())
 	if !errors.Is(err, ErrTelegramUnavailable) {
 		t.Fatalf("GetMe() error = %v, want ErrTelegramUnavailable", err)
+	}
+}
+
+func TestAdapterGetUpdates_Success(t *testing.T) {
+	srv, _ := newBotStubServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/getUpdates") {
+			t.Errorf("path = %s, want /getUpdates", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("offset"); got != "10" {
+			t.Errorf("offset = %q, want 10", got)
+		}
+		if got := r.URL.Query().Get("timeout"); got != "30" {
+			t.Errorf("timeout = %q, want 30", got)
+		}
+		if got := r.URL.Query().Get("allowed_updates"); got != `["message","chat_join_request"]` {
+			t.Errorf("allowed_updates = %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true,"result":[
+			{"update_id":10,"message":{"message_id":1,"chat":{"id":-1001,"type":"supergroup"},"text":"hola"}},
+			{"update_id":11,"chat_join_request":{"user":{"id":42,"first_name":"Juan"},"chat":{"id":-1001,"type":"supergroup"},"date":1700000000}}
+		]}`))
+	})
+	defer srv.Close()
+
+	adapter := NewAdapter("123456:test", WithBaseURL(srv.URL))
+
+	updates, err := adapter.GetUpdates(context.Background(), 10, 30, []string{"message", "chat_join_request"})
+	if err != nil {
+		t.Fatalf("GetUpdates() unexpected error: %v", err)
+	}
+	if len(updates) != 2 {
+		t.Fatalf("len(updates)=%d, want 2", len(updates))
+	}
+	if updates[0].UpdateID != 10 || updates[0].Kind() != "message" {
+		t.Errorf("first update = %+v (%s), want id 10 kind message", updates[0], updates[0].Kind())
+	}
+	if updates[0].Message.Chat.ID != -1001 || updates[0].Message.Text != "hola" {
+		t.Errorf("message fields not decoded: %+v", updates[0].Message)
+	}
+	if updates[1].Kind() != "chat_join_request" {
+		t.Errorf("second update kind = %s, want chat_join_request", updates[1].Kind())
+	}
+	if updates[1].ChatJoinRequest.User.ID != 42 {
+		t.Errorf("join request user id = %d, want 42", updates[1].ChatJoinRequest.User.ID)
+	}
+}
+
+func TestAdapterGetUpdates_Conflict(t *testing.T) {
+	srv, _ := newBotStubServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"ok":false,"error_code":409,"description":"Conflict: terminated by other getUpdates request"}`))
+	})
+	defer srv.Close()
+
+	adapter := NewAdapter("123456:test", WithBaseURL(srv.URL))
+
+	_, err := adapter.GetUpdates(context.Background(), 0, 30, nil)
+	if !errors.Is(err, ErrWebhookConflict) {
+		t.Fatalf("GetUpdates() error = %v, want ErrWebhookConflict", err)
+	}
+}
+
+func TestAdapterGetUpdates_RateLimited(t *testing.T) {
+	srv, _ := newBotStubServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"ok":false,"error_code":429,"description":"Too Many Requests","parameters":{"retry_after":2}}`))
+	})
+	defer srv.Close()
+
+	adapter := NewAdapter("123456:test", WithBaseURL(srv.URL))
+
+	_, err := adapter.GetUpdates(context.Background(), 0, 30, nil)
+	var rateErr *RateLimitError
+	if !errors.As(err, &rateErr) {
+		t.Fatalf("GetUpdates() error = %v, want *RateLimitError", err)
+	}
+	if rateErr.RetryAfter != 2*time.Second {
+		t.Errorf("RetryAfter = %v, want 2s", rateErr.RetryAfter)
+	}
+}
+
+func TestAdapterSetWebhook_Success(t *testing.T) {
+	srv, paths := newBotStubServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/setWebhook") {
+			t.Errorf("path = %s, want /setWebhook", r.URL.Path)
+		}
+		q := r.URL.Query()
+		if got := q.Get("url"); got != "https://example.com/webhook" {
+			t.Errorf("url = %q", got)
+		}
+		if got := q.Get("secret_token"); got != "mi-secret" {
+			t.Errorf("secret_token = %q", got)
+		}
+		if got := q.Get("drop_pending_updates"); got != "true" {
+			t.Errorf("drop_pending_updates = %q, want true", got)
+		}
+		if got := q.Get("allowed_updates"); got == "" {
+			t.Error("allowed_updates no enviado")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true,"result":true}`))
+	})
+	defer srv.Close()
+
+	adapter := NewAdapter("123456:test", WithBaseURL(srv.URL))
+
+	err := adapter.SetWebhook(context.Background(), "https://example.com/webhook", "mi-secret", []string{"message"})
+	if err != nil {
+		t.Fatalf("SetWebhook() unexpected error: %v", err)
+	}
+	if len(*paths) != 1 {
+		t.Errorf("requests = %v, want 1", *paths)
+	}
+}
+
+func TestAdapterDeleteWebhook_Success(t *testing.T) {
+	srv, paths := newBotStubServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/deleteWebhook") {
+			t.Errorf("path = %s, want /deleteWebhook", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true,"result":true}`))
+	})
+	defer srv.Close()
+
+	adapter := NewAdapter("123456:test", WithBaseURL(srv.URL))
+
+	if err := adapter.DeleteWebhook(context.Background()); err != nil {
+		t.Fatalf("DeleteWebhook() unexpected error: %v", err)
+	}
+	if len(*paths) != 1 {
+		t.Errorf("requests = %v, want 1", *paths)
 	}
 }

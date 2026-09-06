@@ -1,0 +1,31 @@
+# State — telegram-events
+
+change: telegram-events
+created: 2026-09-05
+status: tasked
+
+phases:
+  explore: done
+  propose: done
+  spec: done
+  design: done
+  tasks: done
+  apply: pending
+  apply: pending
+  verify: pending
+  archive: pending
+
+artifacts:
+  - openspec/changes/telegram-events/exploration.md
+  - engram: sdd/telegram-events/explore
+  - openspec/changes/telegram-events/proposal.md
+  - engram: sdd/telegram-events/proposal
+  - openspec/changes/telegram-events/specs/telegram-events/spec.md
+  - engram: sdd/telegram-events/spec
+  - openspec/changes/telegram-events/design.md
+  - engram: sdd/telegram-events/design
+  - openspec/changes/telegram-events/tasks.md
+  - engram: sdd/telegram-events/tasks
+
+delivery_strategy: ask-on-risk
+chain_strategy: feature-branch-chain (misma chain que repo-bootstrap; aún sin remote)
