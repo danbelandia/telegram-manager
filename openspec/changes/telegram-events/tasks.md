@@ -35,12 +35,12 @@ Chain strategy: feature-branch-chain
 
 ## Phase 2: Bus + Poller (Work Unit 2)
 
-- [ ] 2.1 `internal/events/bus.go`: `Bus{mu, handlers []func(*telegram.Update)}` con `NewBus()`, `Handle(func(*telegram.Update))`, `Publish(*telegram.Update)` (entrega a todos en orden)
-- [ ] 2.2 `events/bus_test.go`: 1 handler recibe; 2 handlers reciben exactamente una vez
-- [ ] 2.3 `internal/telegram/poller.go`: const `MVPAllowedUpdates = [message, chat_member, my_chat_member, chat_join_request]`; `NewPoller(svc Service, opts ...PollerOption)` con timeout default 30s; `Run(ctx, onBatch func([]Update)) error`
-- [ ] 2.4 `poller.go`: loop — offset avanza a max(update_id)+1 solo tras éxito; error red → backoff (1s, 2s, 5s) sin avanzar; 429 → espera `retry_after` y reintenta (máx 3); ctx cancel → limpio
-- [ ] 2.5 `poller.go`: 401 → `ErrInvalidToken` fatal; 409 → `ErrWebhookConflict` fatal
-- [ ] 2.6 `poller_test.go`: fake Service (mock a mano): lote 10/11 → offset 12; error red → offset previo; 429 retry_after 2 → espera ≥2s; ctx cancel → Run retorna sin error; 409 → error fatal
+- [x] 2.1 `internal/events/bus.go`: `Bus{mu, handlers []func(*telegram.Update)}` con `NewBus()`, `Handle(func(*telegram.Update))`, `Publish(*telegram.Update)` (entrega a todos en orden)
+- [x] 2.2 `events/bus_test.go`: 1 handler recibe; 2 handlers reciben exactamente una vez
+- [x] 2.3 `internal/telegram/poller.go`: const `MVPAllowedUpdates = [message, chat_member, my_chat_member, chat_join_request]`; `NewPoller(svc Service, opts ...PollerOption)` con timeout default 30s; `Run(ctx, onBatch func([]Update)) error`
+- [x] 2.4 `poller.go`: loop — offset avanza a max(update_id)+1 solo tras éxito; error red → backoff (1s, 2s, 5s) sin avanzar; 429 → espera `retry_after` y reintenta (máx 3); ctx cancel → limpio
+- [x] 2.5 `poller.go`: 401 → `ErrInvalidToken` fatal; 409 → `ErrWebhookConflict` fatal
+- [x] 2.6 `poller_test.go`: fake Service (mock a mano): lote 10/11 → offset 12; error red → offset previo; 429 retry_after 2 → espera ≥2s; ctx cancel → Run retorna sin error; 409 → error fatal
 
 ## Phase 3: Webhook + config + wiring (Work Unit 3)
 
