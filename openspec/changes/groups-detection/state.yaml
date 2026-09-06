@@ -1,0 +1,25 @@
+# State — groups-detection
+
+change: groups-detection
+created: 2026-09-06
+status: tasks done
+
+phases:
+  explore: done (obs 114)
+  propose: done (obs 115)
+  spec: done (obs 116)
+  design: done (obs 117)
+  tasks: done (obs 118)
+  apply: pending
+  verify: pending
+  archive: pending
+
+artifacts:
+  - openspec/changes/groups-detection/state.yaml
+  - openspec/changes/groups-detection/exploration.md
+  - engram: sdd/groups-detection/explore
+
+apply_log: []
+
+delivery_strategy: ask-on-risk
+chain_strategy: feature-branch-chain (misma chain; aún sin remote)
