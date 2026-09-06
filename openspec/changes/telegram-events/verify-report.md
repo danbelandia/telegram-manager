@@ -20,13 +20,13 @@
 **Vet**: ✅ Passed (`go vet ./...` sin hallazgos)
 **Gofmt**: ✅ Limpio (`gofmt -l .` sin archivos)
 
-**Tests**: ✅ 27 passed / 0 failed / 0 skipped (`go test ./... -count=1 -v`)
+**Tests**: ✅ 29 passed / 0 failed / 0 skipped (`go test ./... -count=1 -v`)
 
 ```text
-ok  internal/api        5.548s   coverage: 84.2%
-ok  internal/config     3.976s   coverage: 93.1%
-ok  internal/events     4.819s   coverage: 100.0%
-ok  internal/telegram   10.178s  coverage: 84.8%
+ok  internal/api        1.925s   coverage: ~84%
+ok  internal/config     1.289s   coverage: ~93%
+ok  internal/events     1.647s   coverage: 100%
+ok  internal/telegram   17.434s  coverage: ~85%
 cmd/server y database: sin tests (wiring/infra, aceptado en MVP)
 ```
 
@@ -88,6 +88,23 @@ cmd/server y database: sin tests (wiring/infra, aceptado en MVP)
 - No hay test de integración de `main.go` (startup con setWebhook exitoso/fallido) — aceptado por diseño MVP.
 - `TestWebhook_ValidSecretPublishes` no mide explícitamente que el 200 precede al handler (garantizado por `go publisher.Publish`).
 
+## Regresión e2e (2026-09-06, token real)
+
+La verificación con token real reveló **2 bugs** que los tests unitarios no
+cubrían (el error de red real y el timeout de HTTP real):
+
+| Bug | Severidad | Detalle | Fix | Regresión test |
+|-----|-----------|---------|-----|----------------|
+| Fuga de token en errores de red | CRÍTICO (seguridad) | `*url.Error` de `http.Client` incluye la URL `bot<TOKEN>/...`; el adapter la envolvía en `ErrTelegramUnavailable` y el poller la logueaba | Extraer solo la causa (`urlErr.Err`) antes de envolver | `TestAdapterError_DoesNotLeakToken` |
+| Long poll truncado a 10s | ALTO (funcional) | `http.Client{Timeout: 10s}` cortaba `getUpdates` con `timeout=30`, causando backoff infinito | Sin Timeout global; deadlines por llamada (`defaultRequestTimeout` 10s; `GetUpdates` deriva `timeout+5`) | `TestAdapterGetUpdates_LongPollNotTruncated` (stub 11s) |
+
+**Verificación en vivo post-fix**: reiniciado con token real, 0 `poll error` en
+48s (antes: timeout+token cada ~15s), long poll aguantando los 30s, sin
+rastros del token en logs.
+
+**Acción requerida del usuario**: rotar el token con `/revoke` en BotFather
+(el token expuesto en logs antes del fix ya no es seguro).
+
 ## Verdict
 
-**PASS WITH WARNINGS** — implementación completa, build/vet/test verdes, cobertura 84-100% en lógica; los PARTIAL son granularidad de test, no desvíos de spec. Quedan 2 verificaciones manuales (4.4/4.5) bloqueadas por token real, documentadas en tasks.md y README.
+**PASS WITH WARNINGS** — implementación completa, build/vet/test verdes, cobertura 84-100% en lógica; los PARTIAL son granularidad de test, no desvíos de spec. **2 bugs reales encontrados en la verificación e2e con token real (fuga de token en errores de red, long poll truncado) — ambos corregidos con test de regresión y verificación en vivo.** Queda la verificación manual 4.5 (webhook real) opcional, documentada en README, y la rotación del token expuesto.

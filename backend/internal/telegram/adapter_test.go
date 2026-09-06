@@ -133,6 +133,55 @@ func TestAdapterGetMe_Unavailable(t *testing.T) {
 	}
 }
 
+func TestAdapterError_DoesNotLeakToken(t *testing.T) {
+	// Regresion Bug 1: el error de red de http.Client viene como
+	// *url.Error con la URL completa (bot<TOKEN>/...). El adapter debe
+	// devolver solo la causa, sin el token.
+	const token = "123456:super-secret-token"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		panic("should not be reached")
+	}))
+	url := srv.URL
+	srv.Close()
+
+	adapter := NewAdapter(token, WithBaseURL(url))
+
+	_, err := adapter.GetMe(context.Background())
+	if err == nil {
+		t.Fatal("GetMe() expected error, got nil")
+	}
+	if strings.Contains(err.Error(), token) {
+		t.Errorf("error leaks the token: %v", err)
+	}
+	if strings.Contains(err.Error(), "bot123456:super-secret-token") {
+		t.Errorf("error leaks the URL with token: %v", err)
+	}
+}
+
+func TestAdapterGetUpdates_LongPollNotTruncated(t *testing.T) {
+	// Regresion Bug 2: el client no debe tener Timeout fijo que corte
+	// el long poll. Un stub que tarda 11s (mas que los 10s del bug)
+	// debe resolverse sin error cuando pedimos timeout=30.
+	srv, _ := newBotStubServer(t, func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(11 * time.Second)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true,"result":[]}`))
+	})
+	defer srv.Close()
+
+	adapter := NewAdapter("123456:test", WithBaseURL(srv.URL))
+
+	start := time.Now()
+	_, err := adapter.GetUpdates(context.Background(), 0, 30, nil)
+	if err != nil {
+		t.Fatalf("GetUpdates() error = %v, want long poll sin truncar a los 10s", err)
+	}
+	if elapsed := time.Since(start); elapsed < 11*time.Second {
+		t.Errorf("respuesta en %v, el stub simulaba long poll de 11s", elapsed)
+	}
+}
+
 func TestAdapterGetUpdates_Success(t *testing.T) {
 	srv, _ := newBotStubServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasSuffix(r.URL.Path, "/getUpdates") {

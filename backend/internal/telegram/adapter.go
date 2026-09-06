@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,11 @@ import (
 )
 
 const defaultBaseURL = "https://api.telegram.org"
+
+// defaultRequestTimeout aplica a llamadas sin deadline propio (getMe,
+// setWebhook...). El long poll NO usa este valor: GetUpdates deriva su
+// propio deadline de timeout+5s (ver abajo).
+const defaultRequestTimeout = 10 * time.Second
 
 // Option configura la creacion de un Adapter (usado en tests).
 type Option func(*Adapter)
@@ -40,11 +46,14 @@ type Adapter struct {
 }
 
 // NewAdapter crea un Adapter apuntando a la Bot API real.
+// El client NO tiene Timeout global: los cortes se manejan por contexto
+// (defaultRequestTimeout para llamadas normales, timeout+5s para el
+// long poll), porque un Timeout fijo truncaria el long poll de 30s.
 func NewAdapter(token string, opts ...Option) *Adapter {
 	a := &Adapter{
 		token:   token,
 		baseURL: defaultBaseURL,
-		client:  &http.Client{Timeout: 10 * time.Second},
+		client:  &http.Client{},
 	}
 	for _, opt := range opts {
 		opt(a)
@@ -90,6 +99,14 @@ func (a *Adapter) doGet(ctx context.Context, method string, result any) error {
 // doGetQuery es doGet con query string. La Bot API admite parametros
 // por query en GET; se usa para getUpdates/setWebhook/deleteWebhook.
 func (a *Adapter) doGetQuery(ctx context.Context, method string, q url.Values, result any) error {
+	// Deadlines por llamada, no en el client: si el ctx no trae uno de
+	// su propio (long poll), aplica el default para no colgarse.
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, defaultRequestTimeout)
+		defer cancel()
+	}
+
 	u := fmt.Sprintf("%s/bot%s/%s", a.baseURL, a.token, method)
 	if len(q) > 0 {
 		u += "?" + q.Encode()
@@ -102,6 +119,13 @@ func (a *Adapter) doGetQuery(ctx context.Context, method string, q url.Values, r
 
 	res, err := a.client.Do(req)
 	if err != nil {
+		// El *url.Error incluye la URL COMPLETA, con el token dentro
+		// (bot<TOKEN>/...). Nunca debe llegar a logs: se extrae solo
+		// la causa (context deadline exceeded, connection refused...).
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			err = urlErr.Err
+		}
 		return fmt.Errorf("%w: %v", ErrTelegramUnavailable, err)
 	}
 	defer res.Body.Close()
@@ -151,7 +175,17 @@ func (a *Adapter) doGetQuery(ctx context.Context, method string, q url.Values, r
 // GetUpdates hace long polling contra la Bot API. offset>0 confirma
 // updates previos; timeout es el long poll en segundos; allowed son los
 // tipos de update a recibir (MVPAllowedUpdates).
+//
+// El deadline del ctx se deriva de timeout: Telegram mantiene la
+// respuesta abierta hasta timeout segundos, asi que el HTTP debe poder
+// esperar mas que el defaultRequestTimeout.
 func (a *Adapter) GetUpdates(ctx context.Context, offset, timeout int, allowed []string) ([]Update, error) {
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeout+5)*time.Second)
+		defer cancel()
+	}
+
 	q := url.Values{}
 	if offset > 0 {
 		q.Set("offset", strconv.Itoa(offset))
