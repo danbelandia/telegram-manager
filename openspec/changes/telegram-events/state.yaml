@@ -2,7 +2,7 @@
 
 change: telegram-events
 created: 2026-09-05
-status: tasked
+status: applied (pending verify)
 
 phases:
   explore: done
@@ -10,8 +10,7 @@ phases:
   spec: done
   design: done
   tasks: done
-  apply: pending
-  apply: pending
+  apply: done (commits 9742fe8, e2d53d7, 1cdd6f6 en feat/telegram-events)
   verify: pending
   archive: pending
 
@@ -26,6 +25,21 @@ artifacts:
   - engram: sdd/telegram-events/design
   - openspec/changes/telegram-events/tasks.md
   - engram: sdd/telegram-events/tasks
+  - engram: sdd/telegram-events/apply-progress
+
+apply_log:
+  - id: apply-telegram-events
+    applied_at: 2026-09-06
+    commits:
+      - 9742fe8 (WU1 transporte)
+      - e2d53d7 (WU2 bus+poller)
+      - 1cdd6f6 (WU3 webhook+config+wiring)
+    branch: feat/telegram-events
+    status: done
+    verify_notes: |
+      4.1 go build/vet/test verdes; 4.2 gofmt limpio; 4.3 README.
+      4.4/4.5 (polling/webhook reales) requieren TELEGRAM_BOT_TOKEN
+      real — pendientes de verificación manual.
 
 delivery_strategy: ask-on-risk
 chain_strategy: feature-branch-chain (misma chain que repo-bootstrap; aún sin remote)
