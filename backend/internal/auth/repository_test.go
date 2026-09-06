@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"os"
 	"testing"
 	"time"
 
@@ -15,30 +14,23 @@ import (
 	"github.com/telegram-manager/backend/internal/database"
 )
 
-// testDB abre PostgreSQL real y limpia la tabla admins. Convencion del
-// proyecto: no mockear la capa DB (backend-go-skill §8). Se saltea en
-// -short o sin base disponible.
+// testDB abre una PostgreSQL real (convencion del proyecto: no mockear
+// la capa DB) y aplica las migraciones. Se saltea en -short o si no
+// hay base disponible: son tests de integracion. Cada suite usa su
+// propia base (telegram_manager_auth) para no pisarse con otros
+// paquetes en `go test ./...`.
 func testDB(t *testing.T) *sql.DB {
 	t.Helper()
 	if testing.Short() {
 		t.Skip("integration: skipping with -short")
 	}
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://telegram:telegram@localhost:5432/telegram_manager?sslmode=disable"
-	}
 
-	db, err := sql.Open("pgx", dsn)
+	db, err := database.OpenTestDB(t, "auth")
 	if err != nil {
-		t.Fatalf("open test db: %v", err)
+		t.Skipf("integration: no postgres available: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := db.PingContext(ctx); err != nil {
-		t.Skipf("integration: no postgres available: %v", err)
-	}
 	if err := database.Migrate(context.Background(), db); err != nil {
 		t.Fatalf("migrate test db: %v", err)
 	}

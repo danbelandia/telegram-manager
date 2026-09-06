@@ -15,6 +15,9 @@ type Config struct {
 	TelegramWebhookSecret string
 	DatabaseURL           string
 	JWTSecret             string
+	AdminUsername         string
+	AdminPassword         string
+	CookieSecure          bool
 	Port                  string
 	RunMigrations         bool
 }
@@ -29,6 +32,9 @@ func Load() (Config, error) {
 		TelegramWebhookSecret: os.Getenv("TELEGRAM_WEBHOOK_SECRET"),
 		DatabaseURL:           os.Getenv("DATABASE_URL"),
 		JWTSecret:             os.Getenv("JWT_SECRET"),
+		AdminUsername:         os.Getenv("ADMIN_USERNAME"),
+		AdminPassword:         os.Getenv("ADMIN_PASSWORD"),
+		CookieSecure:          envBoolOr("COOKIE_SECURE", false),
 		Port:                  envOr("PORT", "8080"),
 		RunMigrations:         envBoolOr("RUN_MIGRATIONS", true),
 	}
@@ -38,6 +44,19 @@ func Load() (Config, error) {
 	}
 	if cfg.DatabaseURL == "" {
 		return cfg, fmt.Errorf("config: DATABASE_URL is required")
+	}
+	if cfg.JWTSecret == "" {
+		return cfg, fmt.Errorf("config: JWT_SECRET is required")
+	}
+	if len(cfg.JWTSecret) < 32 {
+		// El secret firma tokens; uno corto es trivialmente forzable.
+		return cfg, fmt.Errorf("config: JWT_SECRET too short (min 32 chars)")
+	}
+	if cfg.AdminUsername == "" {
+		return cfg, fmt.Errorf("config: ADMIN_USERNAME is required")
+	}
+	if cfg.AdminPassword == "" {
+		return cfg, fmt.Errorf("config: ADMIN_PASSWORD is required")
 	}
 	if cfg.TelegramMode != "polling" && cfg.TelegramMode != "webhook" {
 		return cfg, fmt.Errorf("config: TELEGRAM_MODE must be %q or %q, got %q",

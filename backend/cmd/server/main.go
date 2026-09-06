@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/telegram-manager/backend/internal/api"
+	"github.com/telegram-manager/backend/internal/auth"
 	"github.com/telegram-manager/backend/internal/config"
 	"github.com/telegram-manager/backend/internal/database"
 	"github.com/telegram-manager/backend/internal/events"
@@ -98,6 +99,16 @@ func run() error {
 		slog.Info("groups: group registered", "telegram_id", g.TelegramID, "title", g.Title, "bot_status", g.BotStatus)
 	})
 
+	// Autenticacion del panel: seed del primer admin (si tabla vacia),
+	// emision/validacion de tokens y servicio de login.
+	authRepo := auth.NewRepository(db)
+	if err := auth.EnsureInitialAdmin(ctx, authRepo, cfg.AdminUsername, cfg.AdminPassword); err != nil {
+		return fmt.Errorf("startup: seed admin: %w", err)
+	}
+	slog.Info("auth: admin bootstrap ok")
+	tokenManager := auth.NewTokenManager(cfg.JWTSecret)
+	authService := auth.NewService(authRepo, tokenManager)
+
 	var pollerErrCh chan error
 	var server *api.Server
 
@@ -109,10 +120,13 @@ func run() error {
 			return fmt.Errorf("startup: set webhook: %w", err)
 		}
 		slog.Info("webhook registered", "url", cfg.TelegramWebhookURL)
-		server = api.NewServer(db, bot, api.WithWebhook(bus, cfg.TelegramWebhookSecret))
+		server = api.NewServer(db, bot,
+			api.WithWebhook(bus, cfg.TelegramWebhookSecret),
+			api.WithAuth(authService, tokenManager, cfg.CookieSecure),
+		)
 
 	case "polling":
-		server = api.NewServer(db, bot)
+		server = api.NewServer(db, bot, api.WithAuth(authService, tokenManager, cfg.CookieSecure))
 		poller := telegram.NewPoller(bot, telegram.WithPollerLogger(slog.Default()))
 		pollerErrCh = make(chan error, 1)
 		go func() {

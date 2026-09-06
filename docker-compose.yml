@@ -25,7 +25,10 @@ services:
       TELEGRAM_MODE: ${TELEGRAM_MODE:-polling}
       TELEGRAM_WEBHOOK_URL: ${TELEGRAM_WEBHOOK_URL:-}
       TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
-      JWT_SECRET: ${JWT_SECRET:-}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET (min 32 chars) in .env}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:?Set ADMIN_USERNAME in .env}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
       DATABASE_URL: postgres://telegram:telegram@postgres:5432/telegram_manager?sslmode=disable
       PORT: ${PORT:-8080}
       RUN_MIGRATIONS: ${RUN_MIGRATIONS:-true}

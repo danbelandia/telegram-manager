@@ -11,8 +11,23 @@ var configKeys = []string{
 	"TELEGRAM_WEBHOOK_SECRET",
 	"DATABASE_URL",
 	"JWT_SECRET",
+	"ADMIN_USERNAME",
+	"ADMIN_PASSWORD",
+	"COOKIE_SECURE",
 	"PORT",
 	"RUN_MIGRATIONS",
+}
+
+// validEnv devuelve un map con las variables minimas que Load() acepta
+// (token + DB + auth), para que los casos de config no deban repetirlas.
+func validEnv() map[string]string {
+	return map[string]string{
+		"TELEGRAM_BOT_TOKEN": "123456:test-token",
+		"DATABASE_URL":       "postgres://telegram:telegram@localhost:5432/telegram_manager?sslmode=disable",
+		"JWT_SECRET":         "clave-suficientemente-larga-para-firmar-jwt-abcdefghijklmnop",
+		"ADMIN_USERNAME":     "admin",
+		"ADMIN_PASSWORD":     "secret123",
+	}
 }
 
 func TestLoad(t *testing.T) {
@@ -23,11 +38,7 @@ func TestLoad(t *testing.T) {
 	}{
 		{
 			name: "configuration complete",
-			env: map[string]string{
-				"TELEGRAM_BOT_TOKEN": "123456:test-token",
-				"DATABASE_URL":       "postgres://telegram:telegram@localhost:5432/telegram_manager?sslmode=disable",
-			},
-			wantErr: false,
+			env:  validEnv(),
 		},
 		{
 			name: "missing bot token",
@@ -44,6 +55,32 @@ func TestLoad(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "missing jwt secret",
+			env: map[string]string{
+				"TELEGRAM_BOT_TOKEN": "123456:test-token",
+				"DATABASE_URL":       "postgres://telegram:telegram@localhost:5432/telegram_manager?sslmode=disable",
+			},
+			wantErr: true,
+		},
+		{
+			name: "short jwt secret",
+			env: map[string]string{
+				"TELEGRAM_BOT_TOKEN": "123456:test-token",
+				"DATABASE_URL":       "postgres://telegram:telegram@localhost:5432/telegram_manager?sslmode=disable",
+				"JWT_SECRET":         "corto",
+			},
+			wantErr: true,
+		},
+		{
+			name: "missing admin username",
+			env: map[string]string{
+				"TELEGRAM_BOT_TOKEN": "123456:test-token",
+				"DATABASE_URL":       "postgres://telegram:telegram@localhost:5432/telegram_manager?sslmode=disable",
+				"JWT_SECRET":         "clave-suficientemente-larga-para-firmar-jwt-abcdefghijklmnop",
+			},
+			wantErr: true,
+		},
+		{
 			name: "invalid telegram mode",
 			env: map[string]string{
 				"TELEGRAM_BOT_TOKEN": "123456:test-token",
@@ -54,53 +91,48 @@ func TestLoad(t *testing.T) {
 		},
 		{
 			name: "webhook without url",
-			env: map[string]string{
-				"TELEGRAM_BOT_TOKEN":      "123456:test-token",
-				"DATABASE_URL":            "postgres://telegram:telegram@localhost:5432/telegram_manager?sslmode=disable",
-				"TELEGRAM_MODE":           "webhook",
-				"TELEGRAM_WEBHOOK_SECRET": "safe-secret-123",
-			},
+			env: func() map[string]string {
+				m := validEnv()
+				m["TELEGRAM_MODE"] = "webhook"
+				m["TELEGRAM_WEBHOOK_SECRET"] = "safe-secret-123"
+				return m
+			}(),
 			wantErr: true,
 		},
 		{
 			name: "webhook without secret",
-			env: map[string]string{
-				"TELEGRAM_BOT_TOKEN":   "123456:test-token",
-				"DATABASE_URL":         "postgres://telegram:telegram@localhost:5432/telegram_manager?sslmode=disable",
-				"TELEGRAM_MODE":        "webhook",
-				"TELEGRAM_WEBHOOK_URL": "https://example.com/webhook",
-			},
+			env: func() map[string]string {
+				m := validEnv()
+				m["TELEGRAM_MODE"] = "webhook"
+				m["TELEGRAM_WEBHOOK_URL"] = "https://example.com/webhook"
+				return m
+			}(),
 			wantErr: true,
 		},
 		{
 			name: "webhook invalid secret char",
-			env: map[string]string{
-				"TELEGRAM_BOT_TOKEN":      "123456:test-token",
-				"DATABASE_URL":            "postgres://telegram:telegram@localhost:5432/telegram_manager?sslmode=disable",
-				"TELEGRAM_MODE":           "webhook",
-				"TELEGRAM_WEBHOOK_URL":    "https://example.com/webhook",
-				"TELEGRAM_WEBHOOK_SECRET": "not allowed!",
-			},
+			env: func() map[string]string {
+				m := validEnv()
+				m["TELEGRAM_MODE"] = "webhook"
+				m["TELEGRAM_WEBHOOK_URL"] = "https://example.com/webhook"
+				m["TELEGRAM_WEBHOOK_SECRET"] = "not allowed!"
+				return m
+			}(),
 			wantErr: true,
 		},
 		{
 			name: "webhook complete",
-			env: map[string]string{
-				"TELEGRAM_BOT_TOKEN":      "123456:test-token",
-				"DATABASE_URL":            "postgres://telegram:telegram@localhost:5432/telegram_manager?sslmode=disable",
-				"TELEGRAM_MODE":           "webhook",
-				"TELEGRAM_WEBHOOK_URL":    "https://example.com/webhook",
-				"TELEGRAM_WEBHOOK_SECRET": "safe-secret-123",
-			},
-			wantErr: false,
+			env: func() map[string]string {
+				m := validEnv()
+				m["TELEGRAM_MODE"] = "webhook"
+				m["TELEGRAM_WEBHOOK_URL"] = "https://example.com/webhook"
+				m["TELEGRAM_WEBHOOK_SECRET"] = "safe-secret-123"
+				return m
+			}(),
 		},
 		{
 			name: "defaults applied",
-			env: map[string]string{
-				"TELEGRAM_BOT_TOKEN": "123456:test-token",
-				"DATABASE_URL":       "postgres://telegram:telegram@localhost:5432/telegram_manager?sslmode=disable",
-			},
-			wantErr: false,
+			env:  validEnv(),
 		},
 	}
 
@@ -128,6 +160,9 @@ func TestLoad(t *testing.T) {
 			}
 			if !cfg.RunMigrations {
 				t.Errorf("RunMigrations: want default true, got false")
+			}
+			if cfg.CookieSecure {
+				t.Errorf("CookieSecure: want default false, got true")
 			}
 		})
 	}

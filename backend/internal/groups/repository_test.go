@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"os"
 	"testing"
 	"time"
 
@@ -16,31 +15,24 @@ import (
 // testDB abre una PostgreSQL real (convencion del proyecto: no mockear
 // la capa DB) y aplica las migraciones. Se saltea en -short o si no
 // hay base disponible: los tests de repositorio son de integracion.
+// Cada suite usa su propia base (telegram_manager_groups) para no
+// pisarse con otros paquetes en `go test ./...`.
 func testDB(t *testing.T) *sql.DB {
 	t.Helper()
 	if testing.Short() {
 		t.Skip("integration: skipping with -short")
 	}
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://telegram:telegram@localhost:5432/telegram_manager?sslmode=disable"
-	}
 
-	db, err := sql.Open("pgx", dsn)
+	db, err := database.OpenTestDB(t, "groups")
 	if err != nil {
-		t.Fatalf("open test db: %v", err)
+		t.Skipf("integration: no postgres available: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := db.PingContext(ctx); err != nil {
-		t.Skipf("integration: no postgres available: %v", err)
-	}
 	if err := database.Migrate(context.Background(), db); err != nil {
 		t.Fatalf("migrate test db: %v", err)
 	}
-	// Los tests comparten la misma base: cada test arranca con la tabla
+	// Los tests comparten la base: cada test arranca con la tabla
 	// vacia para no depender del estado que dejo el anterior.
 	if _, err := db.ExecContext(context.Background(), "TRUNCATE groups"); err != nil {
 		t.Fatalf("truncate groups: %v", err)

@@ -2,14 +2,14 @@
 
 change: auth
 created: 2026-09-06
-status: design done
+status: tasks done
 
 phases:
   explore: done (obs 123)
   propose: done (obs 124)
   spec: done (obs 125)
   design: done (obs 126)
-  tasks: pending
+  tasks: done (obs 127)
   apply: pending
   verify: pending
   archive: pending

@@ -13,9 +13,12 @@ type pinger interface {
 
 // Server agrupa las dependencias del API y su router.
 type Server struct {
-	db        pinger
-	botStatus botStatusProvider
-	mux       *http.ServeMux
+	db           pinger
+	botStatus    botStatusProvider
+	auth         authenticator
+	authSvc      authService
+	cookieSecure bool
+	mux          *http.ServeMux
 }
 
 // NewServer construye el handler HTTP del API.
@@ -36,6 +39,21 @@ func NewServer(db pinger, botStatus botStatusProvider, opts ...Option) *Server {
 
 // Option configura Server al construirse.
 type Option func(*Server)
+
+// WithAuth monta las rutas de autenticacion del panel (login, refresh,
+// logout, me) con el servicio y flags de cookie. Sin esto, el Server no
+// sabe autenticar: solo health/webhook.
+func WithAuth(svc authService, verifier authenticator, cookieSecure bool) Option {
+	return func(s *Server) {
+		s.authSvc = svc
+		s.auth = verifier
+		s.cookieSecure = cookieSecure
+		s.mux.HandleFunc("POST /api/auth/login", s.handleLogin)
+		s.mux.HandleFunc("POST /api/auth/refresh", s.handleRefresh)
+		s.mux.HandleFunc("POST /api/auth/logout", s.handleLogout)
+		s.mux.HandleFunc("GET /api/auth/me", s.requireAuth(s.handleMe))
+	}
+}
 
 // WithWebhook monta POST /api/telegram/webhook, la entrada de eventos
 // en modo webhook. Solo debe usarse cuando TELEGRAM_MODE=webhook: en
