@@ -2,7 +2,7 @@
 
 change: groups
 created: 2026-09-06
-status: tasks done
+status: verified (PASS)
 
 phases:
   explore: done (obs 105)
@@ -10,8 +10,8 @@ phases:
   spec: done (obs 107)
   design: done (obs 108)
   tasks: done (obs 109)
-  apply: pending
-  verify: pending
+  apply: done (obs 110; commit feat(groups): modelo Group con migracion y repositorio)
+  verify: done (obs 111; 12/12 escenarios COMPLIANT, coverage 83.3%)
   archive: pending
 
 artifacts:
