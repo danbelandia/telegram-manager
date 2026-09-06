@@ -2,7 +2,8 @@
 
 change: groups-detection
 created: 2026-09-06
-status: tasks done
+archived: 2026-09-06 (commit 6edcbd5)
+status: archived
 
 phases:
   explore: done (obs 114)
@@ -10,16 +11,25 @@ phases:
   spec: done (obs 116)
   design: done (obs 117)
   tasks: done (obs 118)
-  apply: pending
-  verify: pending
-  archive: pending
+  apply: done (obs 119, commit e37845c)
+  verify: done (obs 120, commit ca11c2a, PASS)
+  archive: done (obs 121, commit 6edcbd5)
 
-artifacts:
-  - openspec/changes/groups-detection/state.yaml
-  - openspec/changes/groups-detection/exploration.md
-  - engram: sdd/groups-detection/explore
+spec_base: openspec/specs/group-detection/spec.md
+archive_path: openspec/changes/archive/2026-09-06-groups-detection/
 
-apply_log: []
+commits:
+  - e37845c feat(groups): detectar y registrar grupos desde my_chat_member
+  - 7ec409e docs(sdd): groups-detection apply completo (verificacion en vivo OK)
+  - ca11c2a docs(sdd): groups-detection verificado (PASS)
+  - 6edcbd5 docs(sdd): archivo groups-detection (spec base creado)
+
+branch: feat/groups-detection (base feat/groups)
+merging: pending remote/PR
+
+apply_log:
+  - e37845c feat implementation
+  - 7ec409e apply complete (e2e live OK)
 
 delivery_strategy: ask-on-risk
 chain_strategy: feature-branch-chain (misma chain; aún sin remote)
