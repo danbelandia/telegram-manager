@@ -1,0 +1,27 @@
+# State — auth
+
+change: auth
+created: 2026-09-06
+status: design done
+
+phases:
+  explore: done (obs 123)
+  propose: done (obs 124)
+  spec: done (obs 125)
+  design: done (obs 126)
+  tasks: pending
+  apply: pending
+  verify: pending
+  archive: pending
+
+artifacts:
+  - openspec/changes/auth/state.yaml
+  - openspec/changes/auth/exploration.md
+  - engram: sdd/auth/explore
+
+branch: feat/auth (base feat/groups-detection)
+
+apply_log: []
+
+delivery_strategy: ask-on-risk
+chain_strategy: feature-branch-chain (misma chain; aún sin remote)
