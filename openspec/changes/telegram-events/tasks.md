@@ -44,18 +44,18 @@ Chain strategy: feature-branch-chain
 
 ## Phase 3: Webhook + config + wiring (Work Unit 3)
 
-- [ ] 3.1 `config.go`: fail-fast modo webhook sin `TELEGRAM_WEBHOOK_URL` y sin `TELEGRAM_WEBHOOK_SECRET`; validar formato del secret (1-256, `A-Za-z0-9_-`)
-- [ ] 3.2 `config_test.go`: casos webhook sin URL → error, webhook sin secret → error, secret inválido → error, polling → ok
-- [ ] 3.3 `internal/api/webhook.go`: `telegramWebhookHandler(bus, secret string) http.HandlerFunc` — header `X-Telegram-Bot-Api-Secret-Token` con `subtle.ConstantTimeCompare` (401 si no coincide), decode `Update` (body ≤1 MiB), `go bus.Publish`, 200
-- [ ] 3.4 `internal/api/server.go`: option `WithWebhook(bus, secret)` que monta `POST /api/telegram/webhook`
-- [ ] 3.5 `webhook_test.go`: sin header → 401 y no publica; secret malo → 401; correcto → 200 y update publicado (bus con handler capturando)
-- [ ] 3.6 `cmd/server/main.go`: crear bus + handler de logging (`Update.Kind()` + update_id); modo polling → `go poller.Run(ctx, bus.Publish)` con errores al errCh; modo webhook → `bot.SetWebhook(ctx, url, secret, MVPAllowedUpdates)` (falla detiene startup) y `WithWebhook`; ctx cancela poller en shutdown
+- [x] 3.1 `config.go`: fail-fast modo webhook sin `TELEGRAM_WEBHOOK_URL` y sin `TELEGRAM_WEBHOOK_SECRET`; validar formato del secret (1-256, `A-Za-z0-9_-`)
+- [x] 3.2 `config_test.go`: casos webhook sin URL → error, webhook sin secret → error, secret inválido → error, polling → ok
+- [x] 3.3 `internal/api/webhook.go`: `telegramWebhookHandler(bus, secret string) http.HandlerFunc` — header `X-Telegram-Bot-Api-Secret-Token` con `subtle.ConstantTimeCompare` (401 si no coincide), decode `Update` (body ≤1 MiB), `go bus.Publish`, 200
+- [x] 3.4 `internal/api/server.go`: option `WithWebhook(bus, secret)` que monta `POST /api/telegram/webhook`
+- [x] 3.5 `webhook_test.go`: sin header → 401 y no publica; secret malo → 401; correcto → 200 y update publicado (bus con handler capturando)
+- [x] 3.6 `cmd/server/main.go`: crear bus + handler de logging (`Update.Kind()` + update_id); modo polling → `go poller.Run(ctx, bus.Publish)` con errores al errCh; modo webhook → `bot.SetWebhook(ctx, url, secret, MVPAllowedUpdates)` (falla detiene startup) y `WithWebhook`; ctx cancela poller en shutdown
 
 ## Phase 4: Verificación
 
-- [ ] 4.1 `go build ./...` + `go vet ./...` + `go test ./...` verdes
-- [ ] 4.2 gofmt limpio; token no aparece en logs/errores (review de strings)
-- [ ] 4.3 README: cómo probar webhook con curl en dev (túnel) — verificación e2e real queda pendiente de token real
+- [x] 4.1 `go build ./...` + `go vet ./...` + `go test ./...` verdes
+- [x] 4.2 gofmt limpio; token no aparece en logs/errores (review de strings)
+- [x] 4.3 README: cómo probar webhook con curl en dev (túnel) — verificación e2e real queda pendiente de token real
 
 # Verificación manual pendiente (token real)
 - 4.4 polling real: arranca, loguea updates recibidos

@@ -43,7 +43,35 @@ func Load() (Config, error) {
 		return cfg, fmt.Errorf("config: TELEGRAM_MODE must be %q or %q, got %q",
 			"polling", "webhook", cfg.TelegramMode)
 	}
+	if cfg.TelegramMode == "webhook" {
+		// El webhook sin URL publica no tiene sentido; y sin secret, el
+		// endpoint quedaria abierto a eventos falsos (AGENTS.md 19.1).
+		if cfg.TelegramWebhookURL == "" {
+			return cfg, fmt.Errorf("config: TELEGRAM_WEBHOOK_URL is required when TELEGRAM_MODE=webhook")
+		}
+		if err := validateWebhookSecret(cfg.TelegramWebhookSecret); err != nil {
+			return cfg, err
+		}
+	}
 	return cfg, nil
+}
+
+// validateWebhookSecret chequea el formato que pide la Bot API para
+// secret_token: 1-256 caracteres de [A-Za-z0-9_-].
+func validateWebhookSecret(secret string) error {
+	if secret == "" {
+		return fmt.Errorf("config: TELEGRAM_WEBHOOK_SECRET is required when TELEGRAM_MODE=webhook")
+	}
+	if len(secret) > 256 {
+		return fmt.Errorf("config: TELEGRAM_WEBHOOK_SECRET too long (max 256 chars)")
+	}
+	for _, r := range secret {
+		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			continue
+		}
+		return fmt.Errorf("config: TELEGRAM_WEBHOOK_SECRET contains invalid char %q (allowed: A-Za-z0-9_-)", r)
+	}
+	return nil
 }
 
 func envOr(key, fallback string) string {

@@ -21,14 +21,29 @@ type Server struct {
 // NewServer construye el handler HTTP del API.
 // botStatus expone el estado cacheado del bot de Telegram; se declara
 // aqui (lado consumidor), como pide la convencion de interfaces de Go.
-func NewServer(db pinger, botStatus botStatusProvider) *Server {
+func NewServer(db pinger, botStatus botStatusProvider, opts ...Option) *Server {
 	s := &Server{
 		db:        db,
 		botStatus: botStatus,
 		mux:       http.NewServeMux(),
 	}
 	s.routes()
+	for _, opt := range opts {
+		opt(s)
+	}
 	return s
+}
+
+// Option configura Server al construirse.
+type Option func(*Server)
+
+// WithWebhook monta POST /api/telegram/webhook, la entrada de eventos
+// en modo webhook. Solo debe usarse cuando TELEGRAM_MODE=webhook: en
+// polling el endpoint no existe.
+func WithWebhook(publisher updatePublisher, secret string) Option {
+	return func(s *Server) {
+		s.mux.HandleFunc("POST /api/telegram/webhook", telegramWebhookHandler(publisher, secret))
+	}
 }
 
 func (s *Server) routes() {

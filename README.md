@@ -89,6 +89,41 @@ El backend llama a `getMe` de la Bot API oficial
 
 El token **nunca** aparece en logs ni en respuestas de la API.
 
+### Recibir eventos: polling o webhook
+
+El backend configura el modo con `TELEGRAM_MODE` (ver `.env.example`):
+
+- **`polling`** (default, desarrollo local): el bot hace long polling
+  contra la Bot API y no necesita URL pública. Al arrancar se ve
+  `telegram update` por cada evento recibido.
+- **`webhook`** (producción): requiere `TELEGRAM_WEBHOOK_URL` (HTTPS
+  pública) y `TELEGRAM_WEBHOOK_SECRET` (1-256 caracteres de
+  `A-Za-z0-9_-`). Al arrancar registra el webhook con
+  `setWebhook` y deja de usar polling. El backend valida el header
+  `X-Telegram-Bot-Api-Secret-Token` en cada evento; sin el secret el
+  backend **no arranca** (`config: TELEGRAM_WEBHOOK_SECRET is required`).
+
+Los eventos se entregan a los consumidores en el orden de llegada,
+respetando los rate limits de Telegram (429 → espera `retry_after` y
+reintenta; el polling nunca avanza de offset si Telegram no confirma).
+
+Para probar el webhook en desarrollo, exponé la URL con un túnel
+(ngrok/cloudflared), registrala en `TELEGRAM_WEBHOOK_URL` y simulá un
+evento real:
+
+```bash
+curl -X POST http://localhost:8080/api/telegram/webhook \
+  -H "X-Telegram-Bot-Api-Secret-Token: TU_SECRET_AQUI" \
+  -H "Content-Type: application/json" \
+  -d '{"update_id":1,"message":{"message_id":1,"chat":{"id":-1001,"type":"supergroup"},"text":"hola"}}'
+```
+
+- Sin header o con secret incorrecto → `401` (no procesa).
+- Con secret correcto → `200` y aparece `telegram update` en los logs
+  del backend.
+- Sin token real no hay verificación end-to-end: el registro real del
+  webhook y el polling real necesitan `TELEGRAM_BOT_TOKEN` válido.
+
 ### Verificar que el bot está conectado
 
 ```bash
