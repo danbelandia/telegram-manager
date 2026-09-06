@@ -18,6 +18,7 @@ import (
 	"github.com/telegram-manager/backend/internal/config"
 	"github.com/telegram-manager/backend/internal/database"
 	"github.com/telegram-manager/backend/internal/events"
+	"github.com/telegram-manager/backend/internal/groups"
 	"github.com/telegram-manager/backend/internal/telegram"
 )
 
@@ -72,6 +73,29 @@ func run() error {
 	bus := events.NewBus()
 	bus.Handle(func(u *telegram.Update) {
 		slog.Info("telegram update", "update_id", u.UpdateID, "kind", u.Kind())
+	})
+
+	// Deteccion de grupos: cada my_chat_member registra (o actualiza)
+	// el grupo en la tabla groups. Fallos de persistencia se loguean y
+	// el bus continua; no se rompe la entrega de los demas eventos.
+	groupsRepo := groups.NewRepository(db)
+	bus.Handle(func(u *telegram.Update) {
+		if u.MyChatMember == nil {
+			return
+		}
+		var g groups.Group
+		if err := groups.HandleMyChatMember(ctx, u.MyChatMember, &g); err != nil {
+			slog.Warn("groups: ignoring my_chat_member", "error", err)
+			return
+		}
+		if g.TelegramID == 0 {
+			return // chat no registrable (private, sin chat, etc.)
+		}
+		if err := groupsRepo.UpsertByTelegramID(ctx, &g); err != nil {
+			slog.Error("groups: upsert failed", "telegram_id", g.TelegramID, "error", err)
+			return
+		}
+		slog.Info("groups: group registered", "telegram_id", g.TelegramID, "title", g.Title, "bot_status", g.BotStatus)
 	})
 
 	var pollerErrCh chan error

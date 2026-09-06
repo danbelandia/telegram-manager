@@ -37,17 +37,31 @@ type Chat struct {
 }
 
 // ChatMemberUpdated llega en updates chat_member y my_chat_member
-// (cambios de estado de un miembro; ver ChatMemberStatus).
+// (cambios de estado de un miembro; ver ChatMemberStatus). Chat es el
+// chat al que pertenece el cambio; OldChatMember se modela para
+// completar el decode del payload real (se puede usar para detectar
+// transiciones, aunque el MVP no lo consume todavia).
 type ChatMemberUpdated struct {
+	Chat          *Chat      `json:"chat,omitempty"`
 	From          User       `json:"from"`
+	OldChatMember ChatMember `json:"old_chat_member,omitempty"`
 	NewChatMember ChatMember `json:"new_chat_member"`
 	Date          int64      `json:"date"`
 }
 
-// ChatMember es el estado de un miembro dentro de un chat.
+// ChatMember es el estado de un miembro dentro de un chat. Los
+// permisos can_* son *bool: nil significa que Telegram no los incluyo
+// en el payload (el bot no es admin); true/false cuando los reporta.
 type ChatMember struct {
 	Status string `json:"status"`
 	User   *User  `json:"user,omitempty"`
+
+	CanDeleteMessages  *bool `json:"can_delete_messages,omitempty"`
+	CanRestrictMembers *bool `json:"can_restrict_members,omitempty"`
+	CanPinMessages     *bool `json:"can_pin_messages,omitempty"`
+	CanInviteUsers     *bool `json:"can_invite_users,omitempty"`
+	CanPromoteMembers  *bool `json:"can_promote_members,omitempty"`
+	CanChangeInfo      *bool `json:"can_change_info,omitempty"`
 }
 
 // Estados de ChatMember.Status segun la Bot API.

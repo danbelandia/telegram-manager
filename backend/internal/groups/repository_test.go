@@ -208,5 +208,40 @@ func TestRepository_UpsertPermissionsJSONB(t *testing.T) {
 	}
 }
 
+func TestRepository_UpsertPreservesPermissionsWhenNil(t *testing.T) {
+	db := testDB(t)
+	repo := NewRepository(db)
+
+	ctx := context.Background()
+	g := sampleGroup(1000000301, "Preserva")
+	g.BotStatus = StatusAdministrator
+	g.BotPermissions = map[string]bool{"can_restrict_members": true, "can_delete_messages": true}
+	if err := repo.UpsertByTelegramID(ctx, g); err != nil {
+		t.Fatalf("upsert with permissions: %v", err)
+	}
+
+	// Segundo upsert sin permisos (nil): el valor previo debe quedar.
+	g2 := sampleGroup(1000000301, "Preserva Renombrado")
+	g2.BotStatus = StatusMember
+	if err := repo.UpsertByTelegramID(ctx, g2); err != nil {
+		t.Fatalf("upsert with nil permissions: %v", err)
+	}
+
+	got, err := repo.GetByTelegramID(ctx, g.TelegramID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.BotPermissions["can_restrict_members"] != true || got.BotPermissions["can_delete_messages"] != true {
+		t.Errorf("permisos previos pisados: %#v", got.BotPermissions)
+	}
+	// Los demas campos si se actualizaron.
+	if got.Title != "Preserva Renombrado" {
+		t.Errorf("title = %q, want Preserva Renombrado", got.Title)
+	}
+	if got.BotStatus != StatusMember {
+		t.Errorf("bot_status = %q, want member", got.BotStatus)
+	}
+}
+
 func ptr(s string) *string    { return &s }
 func ptrInt64(n int64) *int64 { return &n }

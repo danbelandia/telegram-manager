@@ -24,6 +24,10 @@ func NewRepository(db *sql.DB) *Repository {
 // UpsertByTelegramID inserta el grupo o actualiza la fila existente
 // (misma telegram_id), renovando updated_at. Idempotente: nunca crea
 // duplicados.
+//
+// bot_permissions se actualiza solo cuando el valor entrante no es
+// nil: si la deteccion de grupos no trae permisos (el bot no es admin),
+// se preserva el valor previo de la fila.
 func (r *Repository) UpsertByTelegramID(ctx context.Context, g *Group) error {
 	const q = `
 INSERT INTO groups (telegram_id, title, username, type, member_count, bot_status, bot_permissions)
@@ -34,7 +38,9 @@ ON CONFLICT (telegram_id) DO UPDATE SET
     type            = EXCLUDED.type,
     member_count    = EXCLUDED.member_count,
     bot_status      = EXCLUDED.bot_status,
-    bot_permissions = EXCLUDED.bot_permissions,
+    bot_permissions = CASE WHEN EXCLUDED.bot_permissions IS NOT NULL
+                           THEN EXCLUDED.bot_permissions
+                           ELSE groups.bot_permissions END,
     updated_at      = now()`
 
 	perms, err := marshalPermissions(g.BotPermissions)
