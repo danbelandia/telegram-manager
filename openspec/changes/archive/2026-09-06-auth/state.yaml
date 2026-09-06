@@ -1,0 +1,40 @@
+﻿# State — auth
+
+change: auth
+created: 2026-09-06
+archived: 2026-09-06
+status: archived (PASS WITH WARNINGS)
+
+phases:
+  explore: done (obs 123)
+  propose: done (obs 124)
+  spec: done (obs 125)
+  design: done (obs 126)
+  tasks: done (obs 127)
+  apply: done (obs 128 + PR1 2fced95, PR2 be70255)
+  verify: done (PASS WITH WARNINGS, 13/14 escenarios)
+  archive: done (obs archive-report)
+
+artifacts:
+  - openspec/changes/archive/2026-09-06-auth/state.yaml
+  - openspec/changes/archive/2026-09-06-auth/exploration.md
+  - openspec/changes/archive/2026-09-06-auth/proposal.md
+  - openspec/changes/archive/2026-09-06-auth/specs/auth/spec.md
+  - openspec/changes/archive/2026-09-06-auth/design.md
+  - openspec/changes/archive/2026-09-06-auth/tasks.md
+  - openspec/changes/archive/2026-09-06-auth/verify-report.md
+  - openspec/specs/auth/spec.md (base spec)
+  - engram: sdd/auth/explore, sdd/auth/apply, sdd/auth/verify
+
+commits:
+  - 3bcfacb docs(sdd): cambio auth — ciclo explore/propose/spec/design/tasks
+  - 2fced95 feat(auth): core autenticacion (repo, tokens JWT, service, seeder) [PR1]
+  - be70255 feat(auth): config, handlers API, middleware y seed admin [PR2]
+  - 986eb16 docs(sdd): auth apply done — estado final tras PR2
+  - f8aeedd docs(sdd): auth verificado (PASS WITH WARNINGS)
+  - archive-commit (this session)
+
+branch: feat/auth (base feat/groups-detection)
+
+delivery_strategy: ask-on-risk
+chain_strategy: feature-branch-chain (misma chain; aún sin remote)
