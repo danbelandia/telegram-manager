@@ -248,6 +248,7 @@ func TestModerationAction_Errors(t *testing.T) {
 		{"telegram permission denied", "POST", "/api/groups/-1/users/2/ban", telegram.ErrPermissionDenied, http.StatusForbidden},
 		{"telegram not found", "POST", "/api/groups/-1/users/2/ban", telegram.ErrTelegramNotFound, http.StatusNotFound},
 		{"telegram unavailable", "POST", "/api/groups/-1/lock", telegram.ErrTelegramUnavailable, http.StatusBadGateway},
+		{"telegram api error 400", "POST", "/api/groups/-1/lock", &telegram.TelegramAPIError{Code: 400, Description: "method is available only in supergroups"}, http.StatusBadGateway},
 		{"solicitud ya decidida", "POST", "/api/groups/-1/join-requests/9/approve", moderation.ErrRequestAlreadyDecided, http.StatusConflict},
 		{"solicitud no encontrada", "POST", "/api/groups/-1/join-requests/9/approve", moderation.ErrRequestNotFound, http.StatusNotFound},
 	}

@@ -277,8 +277,20 @@ func respondModerationError(w http.ResponseWriter, err error) bool {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "el recurso no existe en Telegram")
 	case errors.Is(err, telegram.ErrTelegramUnavailable), errors.Is(err, telegram.ErrWebhookConflict):
 		respondError(w, http.StatusBadGateway, "TELEGRAM_ERROR", "Telegram no respondio correctamente")
+	case isTelegramAPIError(err):
+		// 400 de validacion y codigos inesperados de la Bot API: es un
+		// fallo de la llamada a Telegram (spec §18 TELEGRAM_ERROR), no
+		// un error interno nuestro.
+		respondError(w, http.StatusBadGateway, "TELEGRAM_ERROR", "Telegram rechazo la accion")
 	default:
 		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "no se pudo ejecutar la accion")
 	}
 	return true
+}
+
+// isTelegramAPIError detecta *telegram.TelegramAPIError vía errors.As
+// (es un tipo, no un sentinel, así que errors.Is no lo alcanza).
+func isTelegramAPIError(err error) bool {
+	var apiErr *telegram.TelegramAPIError
+	return errors.As(err, &apiErr)
 }
