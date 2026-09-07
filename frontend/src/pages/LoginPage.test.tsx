@@ -4,10 +4,13 @@
 // automatico del api-client.
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
+import { MantineProvider } from '@mantine/core'
+import { Notifications } from '@mantine/notifications'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import LoginPage from './LoginPage'
 import { AuthProvider } from '../lib/auth-context'
 import { errorJson, mockFetchRoutes, okJson } from '../test/helpers'
+import { mantineTheme } from '../theme'
 
 // state de entrada para /login: permite simular redirect post-login
 const ROUTE_WITH_STATE: { pathname: string; state: { from?: string } } = {
@@ -17,11 +20,14 @@ const ROUTE_WITH_STATE: { pathname: string; state: { from?: string } } = {
 
 function renderLogin(initialEntries: Array<string | { pathname: string; state: unknown }> = ['/login']) {
   return render(
-    <MemoryRouter initialEntries={initialEntries}>
-      <AuthProvider>
-        <LoginPage />
-      </AuthProvider>
-    </MemoryRouter>,
+    <MantineProvider theme={mantineTheme} defaultColorScheme="light">
+      <Notifications position="top-right" />
+      <MemoryRouter initialEntries={initialEntries}>
+        <AuthProvider>
+          <LoginPage />
+        </AuthProvider>
+      </MemoryRouter>
+    </MantineProvider>,
   )
 }
 

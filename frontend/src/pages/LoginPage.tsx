@@ -1,16 +1,24 @@
-// Pagina de login (AGENTS 17/17.1). Formulario con React Hook Form +
-// Zod (guia frontend seccion 5): validacion cliente antes de llamar a
-// la API. Tras login exitoso redirige a la ruta intentada
-// (location.state.from, spec frontend-routing) o al dashboard.
-import { useForm } from 'react-hook-form'
+// LoginPage migrado a Mantine (frontend-refresh slice 1 — design D8/D9).
+// Form con React Hook Form + Zod (sin cambios en schema); inputs envueltos
+// en `Controller` para conectar Mantine inputs con RHF (D8). Notificaciones
+// globales: exito → `notifySuccess('Bienvenido')`, error → `notifyError(msg)`
+// (slice 2 conecta el resto de los hooks siguiendo este patron).
+import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { useState } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
+import {
+  Button,
+  Center,
+  Paper,
+  PasswordInput,
+  Stack,
+  TextInput,
+  Title,
+} from '@mantine/core'
 import { useAuth } from '../lib/auth-context'
+import { notifyError, notifySuccess } from '../lib/notifications'
 
-// Schema del formulario: los dos campos son obligatorios (el backend
-// valida de nuevo; esta validacion es solo UX, guia seccion 5).
 const loginSchema = z.object({
   username: z.string().min(1, 'El usuario es obligatorio'),
   password: z.string().min(1, 'La contraseña es obligatoria'),
@@ -22,15 +30,16 @@ export default function LoginPage() {
   const { user, login } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
-  const [formError, setFormError] = useState<string | null>(null)
 
   const {
-    register,
+    control,
     handleSubmit,
     formState: { errors, isSubmitting },
-  } = useForm<LoginForm>({ resolver: zodResolver(loginSchema) })
+  } = useForm<LoginForm>({
+    resolver: zodResolver(loginSchema),
+    defaultValues: { username: '', password: '' },
+  })
 
-  // Ya hay sesion: ahi afuera.
   if (user) {
     return <Navigate to="/dashboard" replace />
   }
@@ -38,37 +47,56 @@ export default function LoginPage() {
   const from = (location.state as { from?: string } | null)?.from ?? '/dashboard'
 
   const onSubmit = async (values: LoginForm) => {
-    setFormError(null)
     try {
       await login(values.username, values.password)
+      notifySuccess('Bienvenido')
       navigate(from, { replace: true })
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'No se pudo iniciar sesión')
+      const message = err instanceof Error ? err.message : 'No se pudo iniciar sesión'
+      notifyError(message)
     }
   }
 
   return (
-    <main className="login-page">
-      <h1>Iniciar sesión</h1>
-      <form className="login-form" onSubmit={handleSubmit(onSubmit)} noValidate>
-        <label className="form-field">
-          <span>Usuario</span>
-          <input type="text" autoComplete="username" {...register('username')} />
-          {errors.username ? <span className="form-error">{errors.username.message}</span> : null}
-        </label>
-
-        <label className="form-field">
-          <span>Contraseña</span>
-          <input type="password" autoComplete="current-password" {...register('password')} />
-          {errors.password ? <span className="form-error">{errors.password.message}</span> : null}
-        </label>
-
-        {formError ? <p className="form-error form-error-global">{formError}</p> : null}
-
-        <button type="submit" className="btn btn-primary" disabled={isSubmitting}>
-          {isSubmitting ? 'Ingresando…' : 'Ingresar'}
-        </button>
-      </form>
-    </main>
+    <Center mih="100vh" px="md">
+      <Paper withBorder shadow="md" p="xl" radius="md" w={360}>
+        <Title order={2} ta="center" mb="lg">
+          Iniciar sesión
+        </Title>
+        <form onSubmit={handleSubmit(onSubmit)} noValidate>
+          <Stack>
+            <Controller
+              name="username"
+              control={control}
+              render={({ field }) => (
+                <TextInput
+                  {...field}
+                  label="Usuario"
+                  autoComplete="username"
+                  error={errors.username?.message}
+                  withAsterisk={false}
+                />
+              )}
+            />
+            <Controller
+              name="password"
+              control={control}
+              render={({ field }) => (
+                <PasswordInput
+                  {...field}
+                  label="Contraseña"
+                  autoComplete="current-password"
+                  error={errors.password?.message}
+                  withAsterisk={false}
+                />
+              )}
+            />
+            <Button type="submit" loading={isSubmitting} fullWidth>
+              {isSubmitting ? 'Ingresando…' : 'Ingresar'}
+            </Button>
+          </Stack>
+        </form>
+      </Paper>
+    </Center>
   )
 }
