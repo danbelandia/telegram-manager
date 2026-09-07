@@ -62,6 +62,7 @@ type ChatMember struct {
 	CanInviteUsers     *bool `json:"can_invite_users,omitempty"`
 	CanPromoteMembers  *bool `json:"can_promote_members,omitempty"`
 	CanChangeInfo      *bool `json:"can_change_info,omitempty"`
+	CanSendMessages    *bool `json:"can_send_messages,omitempty"`
 }
 
 // Estados de ChatMember.Status segun la Bot API.

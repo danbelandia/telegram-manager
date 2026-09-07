@@ -32,6 +32,35 @@ func (f *fakeService) SetWebhook(ctx context.Context, url, secret string, allowe
 }
 func (f *fakeService) DeleteWebhook(ctx context.Context) error { return nil }
 
+func (f *fakeService) BanUser(ctx context.Context, chatID, userID, untilDate int64, revoke bool) error {
+	return nil
+}
+func (f *fakeService) UnbanUser(ctx context.Context, chatID, userID int64) error { return nil }
+func (f *fakeService) MuteUser(ctx context.Context, chatID, userID, untilDate int64) error {
+	return nil
+}
+func (f *fakeService) UnmuteUser(ctx context.Context, chatID, userID int64) error { return nil }
+func (f *fakeService) DeleteMessage(ctx context.Context, chatID, messageID int64) error {
+	return nil
+}
+func (f *fakeService) PinMessage(ctx context.Context, chatID, messageID int64) error {
+	return nil
+}
+func (f *fakeService) LockGroup(ctx context.Context, chatID int64) error   { return nil }
+func (f *fakeService) UnlockGroup(ctx context.Context, chatID int64) error { return nil }
+func (f *fakeService) ApproveJoinRequest(ctx context.Context, chatID, userID int64) error {
+	return nil
+}
+func (f *fakeService) RejectJoinRequest(ctx context.Context, chatID, userID int64) error {
+	return nil
+}
+func (f *fakeService) GetChatMember(ctx context.Context, chatID, userID int64) (ChatMember, error) {
+	return ChatMember{}, nil
+}
+func (f *fakeService) GetChatAdministrators(ctx context.Context, chatID int64) ([]ChatMember, error) {
+	return nil, nil
+}
+
 func (f *fakeService) GetUpdates(ctx context.Context, offset, timeout int, allowed []string) ([]Update, error) {
 	f.mu.Lock()
 	f.calls++

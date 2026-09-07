@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -19,6 +21,13 @@ const defaultBaseURL = "https://api.telegram.org"
 // setWebhook...). El long poll NO usa este valor: GetUpdates deriva su
 // propio deadline de timeout+5s (ver abajo).
 const defaultRequestTimeout = 10 * time.Second
+
+// Limites del rate limiter (AGENTS.md §18.1): ~25 req/seg globales
+// dejan margen sobre el limite real de la Bot API (~30 req/seg).
+const (
+	defaultRateLimitPerSecond = 25.0
+	defaultRateLimitBurst     = 25.0
+)
 
 // Option configura la creacion de un Adapter (usado en tests).
 type Option func(*Adapter)
@@ -33,12 +42,22 @@ func WithHTTPClient(c *http.Client) Option {
 	return func(a *Adapter) { a.client = c }
 }
 
+// WithRateLimiter ajusta el token bucket. En tests se usa un rate alto
+// para no bloquear; en produccion quedan los defaults de §18.1.
+func WithRateLimiter(rate, burst float64) Option {
+	return func(a *Adapter) { a.limit = newTokenBucket(rate, burst) }
+}
+
 // Adapter implementa Service contra la Bot API real. El token NUNCA se
 // loguea: solo se usa para construir el path de la request.
 type Adapter struct {
 	token   string
 	baseURL string
 	client  *http.Client
+
+	// limit es el token bucket global (§18.1); el resto del backend no
+	// debe preocuparse por limites de la Bot API (seccion 15 del spec).
+	limit *tokenBucket
 
 	mu        sync.Mutex
 	connected bool
@@ -54,6 +73,7 @@ func NewAdapter(token string, opts ...Option) *Adapter {
 		token:   token,
 		baseURL: defaultBaseURL,
 		client:  &http.Client{},
+		limit:   newTokenBucket(defaultRateLimitPerSecond, defaultRateLimitBurst),
 	}
 	for _, opt := range opts {
 		opt(a)
@@ -99,6 +119,10 @@ func (a *Adapter) doGet(ctx context.Context, method string, result any) error {
 // doGetQuery es doGet con query string. La Bot API admite parametros
 // por query en GET; se usa para getUpdates/setWebhook/deleteWebhook.
 func (a *Adapter) doGetQuery(ctx context.Context, method string, q url.Values, result any) error {
+	if err := a.limit.wait(ctx); err != nil {
+		return err
+	}
+
 	// Deadlines por llamada, no en el client: si el ctx no trae uno de
 	// su propio (long poll), aplica el default para no colgarse.
 	if _, ok := ctx.Deadline(); !ok {
@@ -117,6 +141,50 @@ func (a *Adapter) doGetQuery(ctx context.Context, method string, q url.Values, r
 		return fmt.Errorf("telegram: build request: %w", err)
 	}
 
+	body, err := a.doRequest(req)
+	if err != nil {
+		return err
+	}
+	return a.handleEnvelope(body, result)
+}
+
+// doPost ejecuta un POST con body JSON contra un metodo de la Bot API y
+// decodifica el envelope estandar. Es el transporte de las acciones de
+// moderacion (banChatMember, restrictChatMember, etc.): los parametros
+// anidados (ChatPermissions) no son seguros en query string.
+func (a *Adapter) doPost(ctx context.Context, method string, body any, result any) error {
+	if err := a.limit.wait(ctx); err != nil {
+		return err
+	}
+
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, defaultRequestTimeout)
+		defer cancel()
+	}
+
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("telegram: encode body: %w", err)
+	}
+
+	u := fmt.Sprintf("%s/bot%s/%s", a.baseURL, a.token, method)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("telegram: build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	respBody, err := a.doRequest(req)
+	if err != nil {
+		return err
+	}
+	return a.handleEnvelope(respBody, result)
+}
+
+// doRequest ejecuta la request y devuelve el body (max 1 MB). Separa
+// errores de red del manejo del envelope de la Bot API.
+func (a *Adapter) doRequest(req *http.Request) ([]byte, error) {
 	res, err := a.client.Do(req)
 	if err != nil {
 		// El *url.Error incluye la URL COMPLETA, con el token dentro
@@ -126,15 +194,20 @@ func (a *Adapter) doGetQuery(ctx context.Context, method string, q url.Values, r
 		if errors.As(err, &urlErr) {
 			err = urlErr.Err
 		}
-		return fmt.Errorf("%w: %v", ErrTelegramUnavailable, err)
+		return nil, fmt.Errorf("%w: %v", ErrTelegramUnavailable, err)
 	}
 	defer res.Body.Close()
 
 	body, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 	if err != nil {
-		return fmt.Errorf("telegram: read response: %w", err)
+		return nil, fmt.Errorf("telegram: read response: %w", err)
 	}
+	return body, nil
+}
 
+// handleEnvelope parsea el envelope estandar y mapea los errores de la
+// Bot API a errores de dominio (docs/telegram_api_reference.md §8).
+func (a *Adapter) handleEnvelope(body []byte, result any) error {
 	var envelope struct {
 		OK          bool            `json:"ok"`
 		Description string          `json:"description"`
@@ -160,8 +233,24 @@ func (a *Adapter) doGetQuery(ctx context.Context, method string, q url.Values, r
 			return &RateLimitError{RetryAfter: time.Duration(errBody.Parameters.RetryAfter) * time.Second}
 		case http.StatusConflict:
 			return ErrWebhookConflict
+		case http.StatusForbidden:
+			return ErrPermissionDenied
+		case http.StatusNotFound:
+			return ErrTelegramNotFound
+		case http.StatusBadRequest:
+			// 400 mezcla validacion y "accion imposible"; el mapeo
+			// depende del description (referencia §8).
+			desc := strings.ToLower(envelope.Description)
+			switch {
+			case strings.Contains(desc, "not found"):
+				return ErrTelegramNotFound
+			case strings.Contains(desc, "rights"), strings.Contains(desc, "permission"):
+				return ErrPermissionDenied
+			default:
+				return &TelegramAPIError{Code: envelope.ErrorCode, Description: envelope.Description}
+			}
 		}
-		return fmt.Errorf("telegram: api error %d: %s", envelope.ErrorCode, envelope.Description)
+		return &TelegramAPIError{Code: envelope.ErrorCode, Description: envelope.Description}
 	}
 
 	if result != nil && len(envelope.Result) > 0 {
@@ -170,6 +259,30 @@ func (a *Adapter) doGetQuery(ctx context.Context, method string, q url.Values, r
 		}
 	}
 	return nil
+}
+
+// doWithRetry ejecuta la llamada y, ante un 429 con retry_after, espera
+// ese tiempo y reintenta hasta maxRateLimitRetries veces (§18.1). Si el
+// retry_after es 0 (Telegram no lo mando) o el error no es de rate
+// limit, devuelve sin reintentar: nunca se reintenta a ciegas.
+func (a *Adapter) doWithRetry(ctx context.Context, fn func() error) error {
+	var err error
+	for attempt := 0; attempt <= maxRateLimitRetries; attempt++ {
+		err = fn()
+		if err == nil {
+			return nil
+		}
+		var rateErr *RateLimitError
+		if !errors.As(err, &rateErr) || rateErr.RetryAfter <= 0 {
+			return err
+		}
+		select {
+		case <-time.After(rateErr.RetryAfter):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return err
 }
 
 // GetUpdates hace long polling contra la Bot API. offset>0 confirma
