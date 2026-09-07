@@ -2,24 +2,50 @@
 
 change: frontend-panel
 created: 2026-09-06
-status: propose done — spec in-progress
+status: apply done — verify in-progress
 
 phases:
   explore: not-needed (bootstrap conocido)
   propose: done (proposal.md — decisiones resueltas)
-  spec: in-progress
-  design: pending
-  tasks: pending
-  apply: pending
+  spec: done (3 dominios: frontend-routing, frontend-auth, frontend-dashboard)
+  design: done (design.md — decisiones D1..D7)
+  tasks: done (tasks.md — 3 PRs encadenados)
+  apply: in-progress (PR1 auth done, PR2 routing/login done, PR3 dashboard done)
   verify: pending
   archive: pending
 
-branch: feat/frontend-panel (base feat/rest-api — misma chain, aún sin remote)
+branch: feat/frontend-panel-dashboard (base feat/frontend-panel-auth — misma chain, aún sin remote)
 
 delivery_strategy: ask-on-risk
 chain_strategy: feature-branch-chain
-review_400_budget: Frontend nuevo — se esperan >400 líneas; PRs encadenados (estructura+auth, dashboard+grupos)
+review_400_budget: Frontend nuevo — se esperan >400 líneas; PRs encadenados (estructura+auth, routing+login, dashboard+grupos)
+
+prs:
+  - pr: 1
+    branch: feat/frontend-panel
+    scope: deps + api-client + features/auth + AuthContext
+    commit: b46380a
+    status: done
+  - pr: 2
+    branch: feat/frontend-panel-auth
+    scope: router §16 + RequireAuth + Layout + LoginPage + 404 + stubs de páginas
+    commits: [fd43742 (docs SDD), e03ce44 (código)]
+    status: done
+  - pr: 3
+    branch: feat/frontend-panel-dashboard
+    scope: dashboard + detalle + placeholders + wiring (main.tsx, proxy, styles)
+    status: pending-commit
+
+test_status:
+  frontend: npm test 22/22 OK — npm run build OK
+  backend: go test ./... OK (sin cambios en backend)
 
 decisiones_usuario:
   - "RHF + Zod: incluir desde este cambio (login con validación cliente + patrón base para forms de pasos 13-14)"
   - "Librería UI: ninguna en este cambio (CSS plano); diferir shadcn/ui/Radix a cuando existan tablas reales (users/logs)"
+
+deviations:
+  - "api-client: API_BASE_URL por defecto '' (paths ya vienen con /api; el proxy de Vite resuelve en dev; VITE_API_BASE_URL opcional en prod)"
+  - "group contract: member_count number|null, bot_permissions Record<string,boolean> (forma real del backend)"
+  - "tests: mockFetchRoutes por URL (los mocks por orden se desalinean con el refresh automático del api-client); afterEach(cleanup) en setup.ts (Vitest sin globals:true)"
+  - "stubs de páginas de grupo (users/requests/logs) creados en PR2 para que las rutas §16 resuelvan; contenido real en cambios posteriores"

@@ -44,22 +44,22 @@ Chain strategy: feature-branch-chain
 
 ## Phase 3: Dashboard + detalle de grupo
 
-- [ ] 3.1 `frontend/src/features/groups/types.ts`: `Group` (contrato verificado en `groups_handlers.go`: id, telegram_id, title, username, type, member_count, bot_status, bot_permissions) + `memberResponse` si aplica
-- [ ] 3.2 `frontend/src/features/groups/api.ts`: `listGroups()`, `getGroup(id)`
-- [ ] 3.3 `frontend/src/features/groups/hooks.ts`: `useGroups`, `useGroup` (TanStack Query)
-- [ ] 3.4 `frontend/src/pages/DashboardPage.tsx`: lista grupos (nombre, username, ID, estado bot, perms), estados loading/vacío/error con reintento, `[Administrar]`→/groups/:id
-- [ ] 3.5 `frontend/src/pages/GroupsPage.tsx`: reutiliza Dashboard (lista completa)
-- [ ] 3.6 `frontend/src/pages/GroupDetailPage.tsx`: datos del grupo + nav a users/requests/logs
-- [ ] 3.7 `frontend/src/pages/GroupUsersPage.tsx`, `GroupRequestsPage.tsx`, `GroupLogsPage.tsx`: placeholders mínimos accesibles
+- [x] 3.1 `frontend/src/features/groups/types.ts`: `Group` (contrato verificado en `groups_handlers.go`). ⚠️ **deviation**: `member_count` es `number | null` (el backend lo serializa nullable) y `bot_permissions` es `Record<string, boolean>` (mapa, no array)
+- [x] 3.2 `frontend/src/features/groups/api.ts`: `listGroups()`, `getGroup(id)` — `getGroup` recibe el ID de Telegram (el backend busca por `telegram_id`)
+- [x] 3.3 `frontend/src/features/groups/hooks.ts`: `useGroups`, `useGroup` (TanStack Query, `retry: false` para que el UI ofrezca reintento manual)
+- [x] 3.4 `frontend/src/pages/DashboardPage.tsx`: lista grupos (nombre, username, ID, miembros, estado bot, permisos activos), estados loading/vacío/error con reintento, `[Administrar]`→/groups/:id — tests en `DashboardPage.test.tsx` (lista/vacío/error+retry)
+- [x] 3.5 `frontend/src/pages/GroupsPage.tsx`: reutiliza Dashboard (lista completa)
+- [x] 3.6 `frontend/src/pages/GroupDetailPage.tsx`: datos del grupo (useGroup) + nav a users/requests/logs, estados loading/error/vacío
+- [x] 3.7 `frontend/src/pages/GroupUsersPage.tsx`, `GroupRequestsPage.tsx`, `GroupLogsPage.tsx`: placeholders mínimos accesibles con link de vuelta al grupo
 
 ## Phase 4: Wiring + tests + verificación
 
-- [ ] 4.1 `frontend/src/main.tsx`: +QueryClientProvider, +AuthProvider (orden: Auth→Query)
-- [ ] 4.2 `frontend/vite.config.ts`: +`server.proxy['/api']`→`http://backend:8080` (dev; CORS)
-- [ ] 4.3 `frontend/src/styles.css`: estilos layout (sidebar, cards lista grupos, estados)
-- [ ] 4.4 Tests: api-client (401→refresh→retry, refresh fallido→logout), AuthContext (login/me/logout), LoginPage (validación+submit+error), RequireAuth (redirect/pasa), App (dashboard con grupos mock + 404) — Vitest+RTL, `api.ts` con `vi.mock`
-- [ ] 4.5 Verificación: `npm run build` (tsc --noEmit + vite build) y `npm test` verdes; reemplazar/ajustar `App.test.tsx` bootstrap; actualizar `.env.example` si hace falta `VITE_API_BASE_URL`
-- [ ] 4.6 Suite Go sigue verde (no se toca backend): `go test ./...` en backend/
+- [x] 4.1 `frontend/src/main.tsx`: +QueryClientProvider (retry false, staleTime 30s), +AuthProvider (orden: Query→Router→Auth), import de styles.css
+- [x] 4.2 `frontend/vite.config.ts`: +`server.proxy['/api']`→`http://backend:8080` (configurable con `VITE_PROXY_TARGET` para dev sin Docker)
+- [x] 4.3 `frontend/src/styles.css`: creado — layout sidebar, login, cards de grupos, detalle, 404, botones, estados (CSS plano, D6)
+- [x] 4.4 Tests: DashboardPage (carga/vacío/error+retry), AuthContext (login/me/logout), LoginPage (validación+submit+error), RequireAuth (redirect/pasa), App (login/dashboard/404) — Vitest+RTL, helpers `mockFetchRoutes` por URL
+- [x] 4.5 Verificación: `npm run build` OK, `npm test` 22/22; `App.test.tsx` reescrito con QueryClientProvider + fetch por ruta; `.env.example`: `VITE_API_BASE_URL` comentado (opcional; proxy por defecto)
+- [x] 4.6 Suite Go sigue verde (no se toca backend): `go test ./...` OK en backend/
 
 ## Phase 5: Cleanup / Docs
 
