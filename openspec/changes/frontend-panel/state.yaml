@@ -2,7 +2,7 @@
 
 change: frontend-panel
 created: 2026-09-06
-status: apply done — verify pending
+status: verify done (PASS WITH WARNINGS) — archive pending
 
 phases:
   explore: not-needed (bootstrap conocido)
@@ -11,7 +11,7 @@ phases:
   design: done (design.md — decisiones D1..D7)
   tasks: done (tasks.md — 3 PRs encadenados)
   apply: done (PR1 auth done, PR2 routing/login done, PR3 dashboard done)
-  verify: pending
+  verify: done (PASS WITH WARNINGS — verify-report.md; 22/22 tests, build OK, 2 UNTESTED + 5 PARTIAL de UI)
   archive: pending
 
 branch: feat/frontend-panel-dashboard (base feat/frontend-panel-auth — misma chain, aún sin remote)
