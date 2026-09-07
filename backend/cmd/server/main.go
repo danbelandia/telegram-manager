@@ -16,6 +16,7 @@ import (
 
 	"github.com/telegram-manager/backend/internal/api"
 	"github.com/telegram-manager/backend/internal/auth"
+	"github.com/telegram-manager/backend/internal/automation"
 	"github.com/telegram-manager/backend/internal/config"
 	"github.com/telegram-manager/backend/internal/database"
 	"github.com/telegram-manager/backend/internal/events"
@@ -137,6 +138,44 @@ func run() error {
 	)
 	slog.Info("publications scheduler started", "interval", schedulerInterval.String())
 
+	// Moderacion automatica (Fase 3, slice 1 — foundation): settings +
+	// warning_state + FloodRule + worker de auto-actions. El subscriber
+	// se registra en el bus; el worker corre en su propia goroutine.
+	// Gated por cfg.AutomationEnabled (kill switch operativo).
+	//
+	// Invariante (bugfix #172): permissionOkAdmin =
+	// g.BotStatus == StatusAdministrator; NUNCA claves can_*.
+	var (
+		automationSubscriber *automation.Subscriber
+		automationWorkerErrs chan error
+	)
+	if cfg.AutomationEnabled {
+		automationRepo := automation.NewRepository(db)
+		autoActionCh := make(chan automation.AutoAction, cfg.AutoActionBufferSize)
+		registry := automation.NewRegistry()
+		registry.Register(automation.NewFloodRule())
+		actioner := automation.NewAutoActioner(bot, logsRepo, groupsRepo, slog.Default())
+		automationService := automation.NewService(
+			automationRepo, automationRepo, registry,
+			logsRepo, groupsRepo, autoActionCh, slog.Default(),
+		)
+		automationWorker := automation.NewWorker(autoActionCh, actioner, slog.Default())
+		automationSubscriber = automation.NewSubscriber(bus, automationService, slog.Default())
+		automationSubscriber.Register()
+		automationWorkerErrs = make(chan error, cfg.WorkerConcurrency)
+		for i := 0; i < cfg.WorkerConcurrency; i++ {
+			go func() {
+				automationWorkerErrs <- automationWorker.Run(ctx)
+			}()
+		}
+		slog.Info("automation pipeline started",
+			"buffer_size", cfg.AutoActionBufferSize,
+			"workers", cfg.WorkerConcurrency,
+		)
+	} else {
+		slog.Info("automation pipeline disabled (AUTOMATION_ENABLED=false)")
+	}
+
 	// Solicitudes de ingreso: cada chat_join_request registra el usuario
 	// en users y la solicitud pendiente (AGENTS.md §10). Idempotente:
 	// UpsertPending usa el indice parcial (grupo, usuario) pending.
@@ -247,5 +286,7 @@ func run() error {
 		return fmt.Errorf("poller: %w", err)
 	case err := <-schedulerErrCh:
 		return fmt.Errorf("publications scheduler: %w", err)
+	case err := <-automationWorkerErrs:
+		return fmt.Errorf("automation worker: %w", err)
 	}
 }

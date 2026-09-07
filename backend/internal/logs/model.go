@@ -22,7 +22,11 @@ const (
 )
 
 // Acciones administrativas registradas (§11). Los eventos del sistema
-// (sin admin) tambien pueden registrar acciones propias.
+// (sin admin) tambien pueden registrar acciones propias. Las nuevas
+// constantes (ActionRuleTriggered, ActionAutomuteUser, ActionAutobanUser)
+// fueron agregadas para la moderacion automatica (Fase 3, slice 1):
+// el evento system-triggered se distingue del manual con ActorID=nil
+// (model.go §Entry) y la action constant identifica la causa.
 const (
 	ActionBanUser            = "BAN_USER"
 	ActionUnbanUser          = "UNBAN_USER"
@@ -35,6 +39,9 @@ const (
 	ActionApproveJoinRequest = "APPROVE_JOIN_REQUEST"
 	ActionRejectJoinRequest  = "REJECT_JOIN_REQUEST"
 	ActionPublishMessage     = "PUBLISH_MESSAGE"
+	ActionRuleTriggered      = "RULE_TRIGGERED"
+	ActionAutomuteUser       = "AUTOMUTE_USER"
+	ActionAutobanUser        = "AUTOBAN_USER"
 )
 
 // Entry es una fila de auditoria. ActorID es el id del admin del panel

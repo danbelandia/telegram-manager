@@ -25,6 +25,19 @@ type Config struct {
 	// del worker de publicaciones programadas (slice 3). Default 30s.
 	// Tests/operacion: bajar para mayor reactividad a costa de carga DB.
 	PublicationsSchedulerIntervalSeconds int
+	// AutomationEnabled (Fase 3, slice 1) corta el pipeline completo:
+	// si false, el subscriber NO se registra y el worker NO arranca.
+	// Default true. Operacion: poner en false para detener el modulo
+	// sin re-deploy (ej. investigar falsos positivos).
+	AutomationEnabled bool
+	// AutoActionBufferSize es el tamano del canal `autoActionCh` que
+	// el Service usa para encolar AutoActions. Default 100. Buffer
+	// lleno → non-blocking send + log warn + drop.
+	AutoActionBufferSize int
+	// WorkerConcurrency es la cantidad de workers que drenan el
+	// canal. Slice 1: 1 (secuencial). Subir en slice futuro si la
+	// carga lo justifica — respetando rate-limit del adapter.
+	WorkerConcurrency int
 }
 
 // Load lee las variables de entorno y valida que la configuracion
@@ -43,6 +56,9 @@ func Load() (Config, error) {
 		Port:                                 envOr("PORT", "8080"),
 		RunMigrations:                        envBoolOr("RUN_MIGRATIONS", true),
 		PublicationsSchedulerIntervalSeconds: envIntOr("PUBLICATIONS_SCHEDULER_INTERVAL_SECONDS", 30),
+		AutomationEnabled:                    envBoolOr("AUTOMATION_ENABLED", true),
+		AutoActionBufferSize:                 envIntOr("AUTOMATION_AUTOACTION_BUFFER_SIZE", 100),
+		WorkerConcurrency:                    envIntOr("AUTOMATION_WORKER_CONCURRENCY", 1),
 	}
 
 	if cfg.TelegramBotToken == "" {
@@ -81,6 +97,14 @@ func Load() (Config, error) {
 	if cfg.PublicationsSchedulerIntervalSeconds <= 0 {
 		return cfg, fmt.Errorf("config: PUBLICATIONS_SCHEDULER_INTERVAL_SECONDS must be > 0, got %d",
 			cfg.PublicationsSchedulerIntervalSeconds)
+	}
+	if cfg.AutoActionBufferSize <= 0 {
+		return cfg, fmt.Errorf("config: AUTOMATION_AUTOACTION_BUFFER_SIZE must be > 0, got %d",
+			cfg.AutoActionBufferSize)
+	}
+	if cfg.WorkerConcurrency < 1 {
+		return cfg, fmt.Errorf("config: AUTOMATION_WORKER_CONCURRENCY must be >= 1, got %d",
+			cfg.WorkerConcurrency)
 	}
 	return cfg, nil
 }
