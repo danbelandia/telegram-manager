@@ -262,6 +262,21 @@ h1 {
   margin: 0.2rem 0 0;
 }
 
+.detail-actions {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.detail-actions h2 {
+  font-size: 1rem;
+  margin: 0 0 0.75rem;
+}
+
+.detail-actions .user-lookup {
+  margin-bottom: 0;
+}
+
 .group-sections {
   display: flex;
   gap: 0.5rem;

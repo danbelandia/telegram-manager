@@ -1,7 +1,12 @@
-// Detalle de un grupo (spec frontend-dashboard req 3): carga con
-// useGroup, muestra datos administrables y navega a las secciones de
-// usuarios/solicitudes/logs (AGENTS 12). Estados loading/error/vacio.
+// Detalle de un grupo (spec frontend-dashboard req 3 + frontend-moderation
+// req 4-5): carga con useGroup, muestra datos administrables, navega a las
+// secciones hijas (AGENTS 12) y ejecuta acciones de chat lock/unlock con
+// confirmacion y de mensajes delete/pin por messageId (la Bot API no
+// lista mensajes, AGENTS 8; el admin provee el id).
+import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
+import { formatModerationError } from '../features/moderation/error'
+import { useDeleteMessage, useLockGroup, usePinMessage, useUnlockGroup } from '../features/moderation/hooks'
 import { useGroup } from '../features/groups/hooks'
 
 function formatMembers(count: number | null): string {
@@ -11,7 +16,44 @@ function formatMembers(count: number | null): string {
 
 export default function GroupDetailPage() {
   const { id } = useParams<{ id: string }>()
-  const { data: group, isPending, isError, error, refetch } = useGroup(id ?? '')
+  const groupId = id ?? ''
+  const { data: group, isPending, isError, error, refetch } = useGroup(groupId)
+
+  const lock = useLockGroup()
+  const unlock = useUnlockGroup()
+  const deleteMsg = useDeleteMessage()
+  const pin = usePinMessage()
+
+  const [messageId, setMessageId] = useState('')
+
+  const chatError = lock.error ?? unlock.error
+  const messageError = deleteMsg.error ?? pin.error
+  const chatPending = lock.isPending || unlock.isPending
+  const messagePending = deleteMsg.isPending || pin.isPending
+
+  const confirmLock = () => {
+    if (!window.confirm('¿Cerrar el envío de mensajes en este grupo?')) return
+    lock.mutate(groupId)
+  }
+
+  const confirmDelete = () => {
+    const parsed = Number(messageId)
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      window.alert('Ingresá un ID de mensaje válido (número positivo).')
+      return
+    }
+    if (!window.confirm(`¿Eliminar el mensaje ${parsed}? Esta acción es irreversible.`)) return
+    deleteMsg.mutate({ groupId, messageId: parsed })
+  }
+
+  const pinMessage = () => {
+    const parsed = Number(messageId)
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      window.alert('Ingresá un ID de mensaje válido (número positivo).')
+      return
+    }
+    pin.mutate({ groupId, messageId: parsed })
+  }
 
   if (isPending) {
     return <main className="page">Cargando grupo…</main>
@@ -80,10 +122,41 @@ export default function GroupDetailPage() {
         </div>
       </dl>
 
+      <section className="detail-actions">
+        <h2>Envío de mensajes</h2>
+        {chatError ? <p className="state-block state-error">{formatModerationError(chatError)}</p> : null}
+        <button type="button" className="btn" disabled={chatPending} onClick={() => unlock.mutate(groupId)}>
+          🔓 Abrir chat
+        </button>{' '}
+        <button type="button" className="btn btn-danger" disabled={chatPending} onClick={confirmLock}>
+          🔒 Cerrar chat
+        </button>
+      </section>
+
+      <section className="detail-actions">
+        <h2>Mensajes</h2>
+        {messageError ? <p className="state-block state-error">{formatModerationError(messageError)}</p> : null}
+        <div className="user-lookup">
+          <input
+            type="text"
+            inputMode="numeric"
+            placeholder="ID del mensaje en Telegram"
+            value={messageId}
+            onChange={(e) => setMessageId(e.target.value)}
+          />
+          <button type="button" className="btn btn-danger" disabled={messagePending} onClick={confirmDelete}>
+            Eliminar
+          </button>{' '}
+          <button type="button" className="btn" disabled={messagePending} onClick={pinMessage}>
+            Fijar
+          </button>
+        </div>
+      </section>
+
       <nav className="group-sections">
-        <Link to={`/groups/${id}/users`}>Usuarios</Link>
-        <Link to={`/groups/${id}/requests`}>Solicitudes de ingreso</Link>
-        <Link to={`/groups/${id}/logs`}>Logs</Link>
+        <Link to={`/groups/${groupId}/users`}>Usuarios</Link>
+        <Link to={`/groups/${groupId}/requests`}>Solicitudes de ingreso</Link>
+        <Link to={`/groups/${groupId}/logs`}>Logs</Link>
       </nav>
     </main>
   )
