@@ -56,8 +56,14 @@ type Service interface {
 	// API NO permite listar todos los miembros).
 	GetChatAdministrators(ctx context.Context, chatID int64) ([]ChatMember, error)
 	// SendMessage envia texto a chatID y devuelve el message_id de
-	// Telegram (publicaciones, Fase 2).
-	SendMessage(ctx context.Context, chatID int64, text string, disableWebPagePreview bool) (int64, error)
+	// Telegram (publicaciones, Fase 2). El parametro `keyboard` es
+	// opcional: si es no-nil se serializa como `reply_markup`; si es
+	// nil se omite del payload (`omitempty`).
+	SendMessage(ctx context.Context, chatID int64, text string, disableWebPagePreview bool, keyboard *InlineKeyboardMarkup) (int64, error)
+	// SendPhoto envia una foto por URL publica (Telegram la descarga,
+	// <= 5 MB) con `caption` opcional (<= 1024 caracteres) y
+	// `keyboard` opcional como en SendMessage. Devuelve el message_id.
+	SendPhoto(ctx context.Context, chatID int64, photoURL, caption string, keyboard *InlineKeyboardMarkup) (int64, error)
 }
 
 var (
