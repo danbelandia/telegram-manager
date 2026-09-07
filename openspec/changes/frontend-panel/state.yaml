@@ -2,7 +2,7 @@
 
 change: frontend-panel
 created: 2026-09-06
-status: apply done — verify in-progress
+status: apply done — verify pending
 
 phases:
   explore: not-needed (bootstrap conocido)
@@ -10,7 +10,7 @@ phases:
   spec: done (3 dominios: frontend-routing, frontend-auth, frontend-dashboard)
   design: done (design.md — decisiones D1..D7)
   tasks: done (tasks.md — 3 PRs encadenados)
-  apply: in-progress (PR1 auth done, PR2 routing/login done, PR3 dashboard done)
+  apply: done (PR1 auth done, PR2 routing/login done, PR3 dashboard done)
   verify: pending
   archive: pending
 
@@ -34,7 +34,8 @@ prs:
   - pr: 3
     branch: feat/frontend-panel-dashboard
     scope: dashboard + detalle + placeholders + wiring (main.tsx, proxy, styles)
-    status: pending-commit
+    commits: [f55ae18, 770732a]
+    status: done
 
 test_status:
   frontend: npm test 22/22 OK — npm run build OK
