@@ -1,0 +1,15 @@
+# Build context chico: excluí deps, artefactos y configs locales que
+# contaminan el contexto del `docker compose build frontend`. La imagen
+# ya instala lo que necesita via `RUN npm install`; el bind-mount de
+# ./frontend/src en compose provee hot reload sin pisar node_modules.
+node_modules
+dist
+.vite
+coverage
+.env
+.env.local
+*.log
+.vscode
+.idea
+.DS_Store
+.git

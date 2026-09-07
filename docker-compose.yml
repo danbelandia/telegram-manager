@@ -60,13 +60,17 @@ services:
     ports:
       - "5173:5173"
     volumes:
-      - ./frontend:/app
-      - node_modules:/app/node_modules
+      # Bind-mount SOLO de src/ para hot reload (Vite observa /app/src).
+      # package.json, vite.config.ts y node_modules viven en la imagen;
+      # cambios requieren `docker compose build frontend` (ver README).
+      # El antiguo `- node_modules:/app/node_modules` era un volumen
+      # anonimo VACIO que pisaba las deps de la imagen y rompia Vite
+      # en Windows/OneDrive — eliminado en slice 2.
+      - ./frontend/src:/app/src
     depends_on:
       backend:
         condition: service_healthy
     restart: unless-stopped
 
 volumes:
-  node_modules:
   postgres_data:

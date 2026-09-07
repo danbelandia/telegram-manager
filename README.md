@@ -113,6 +113,26 @@ hooks (~15) se difiere a un slice siguiente.
 > **No** tocar `features/*`, `lib/api-client.ts` ni `lib/auth-context.tsx`
 > en cambios de UI: la fundación UI es solo view layer.
 
+## Cambios de dependencias en el frontend
+
+El contenedor `frontend` ahora bind-monta **solo** `./frontend/src` y
+ejecuta `npm install` en cada arranque (`CMD ["sh", "-c", "npm install
+&& npm run dev -- --host 0.0.0.0"]`):
+
+- Cambios en archivos dentro de `frontend/src/` → hot reload automático
+  vía Vite watch, sin rebuild.
+- Cambios en `package.json` / `package-lock.json` → requieren
+  `docker compose build frontend` para que el `RUN npm install` de la
+  imagen incorpore la nueva dep antes del CMD del contenedor.
+- Cambios en `vite.config.ts`, `postcss.config.cjs` o `frontend/Dockerfile`
+  → también requieren `docker compose build frontend`.
+- Primer arranque tarda 10-30s extra por el `npm install`; arranques
+  subsecuentes usan la cache interna de npm.
+
+`frontend/.dockerignore` excluye `node_modules`, `dist`, `.env`,
+`.env.local`, `.git`, `.vite`, `coverage`, `*.log`, `.vscode`, `.idea`
+y `.DS_Store` para que el contexto de build no contamine la imagen.
+
 ## Publicaciones
 
 `POST /api/publications` permite crear y enviar una publicación
