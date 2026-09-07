@@ -34,6 +34,7 @@ const (
 	ActionUnlockGroup        = "UNLOCK_GROUP"
 	ActionApproveJoinRequest = "APPROVE_JOIN_REQUEST"
 	ActionRejectJoinRequest  = "REJECT_JOIN_REQUEST"
+	ActionPublishMessage     = "PUBLISH_MESSAGE"
 )
 
 // Entry es una fila de auditoria. ActorID es el id del admin del panel

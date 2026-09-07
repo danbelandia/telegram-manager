@@ -23,6 +23,7 @@ import (
 	"github.com/telegram-manager/backend/internal/joinrequests"
 	"github.com/telegram-manager/backend/internal/logs"
 	"github.com/telegram-manager/backend/internal/moderation"
+	"github.com/telegram-manager/backend/internal/publications"
 	"github.com/telegram-manager/backend/internal/telegram"
 	"github.com/telegram-manager/backend/internal/users"
 )
@@ -119,6 +120,11 @@ func run() error {
 	logsRepo := logs.NewRepository(db)
 	moderationService := moderation.NewService(groupsRepo, bot, joinRequestsRepo, logsRepo)
 
+	// Publicaciones (Fase 2, slice 1 — publish-now text): repositorio y
+	// servicio que orquesta Grupo→Permiso→Telegram→Log.
+	pubsRepo := publications.NewRepository(db)
+	pubsService := publications.NewService(groupsRepo, bot, pubsRepo, logsRepo)
+
 	// Solicitudes de ingreso: cada chat_join_request registra el usuario
 	// en users y la solicitud pendiente (AGENTS.md §10). Idempotente:
 	// UpsertPending usa el indice parcial (grupo, usuario) pending.
@@ -173,6 +179,7 @@ func run() error {
 			api.WithModeration(moderationService),
 			api.WithJoinRequests(joinRequestsRepo, moderationService),
 			api.WithLogs(logsRepo),
+			api.WithPublications(pubsService),
 		)
 
 	case "polling":
@@ -182,6 +189,7 @@ func run() error {
 			api.WithModeration(moderationService),
 			api.WithJoinRequests(joinRequestsRepo, moderationService),
 			api.WithLogs(logsRepo),
+			api.WithPublications(pubsService),
 		)
 		poller := telegram.NewPoller(bot, telegram.WithPollerLogger(slog.Default()))
 		pollerErrCh = make(chan error, 1)
