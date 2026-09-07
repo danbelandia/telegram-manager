@@ -1,8 +1,8 @@
 // Mensajes legibles de error para el dominio publicaciones (seccion 18
 // del spec). El backend ya devuelve textos comprensibles en
 // envelope.error; este helper solo cubre el caso en que el mensaje no
-// llegue y agrega mensajes de validacion cliente (slice 2) que cortan
-// el envio antes del POST.
+// llegue y agrega mensajes de validacion cliente (slice 2 + slice 3)
+// que cortan el envio antes del POST.
 
 /** Si el error no trae mensaje, devuelve uno generico en espanol. */
 export function formatPublicationsError(error: unknown): string {

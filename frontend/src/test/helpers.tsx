@@ -76,3 +76,19 @@ const noContent = () => Promise.resolve({
 })
 
 export { okJson, errorJson, noContent }
+
+// matchQuery helper: parsea los query params de un URL y devuelve true
+// si todos los pares clave/valor en `expected` matchean. Usado por
+// tests que necesitan distinguir GET con ?limit=&offset= del GET sin
+// filtro (slice 3 paginacion).
+export function matchQuery(url: string, expected: Record<string, string>): boolean {
+  try {
+    const u = new URL(url, 'http://x')
+    for (const [k, v] of Object.entries(expected)) {
+      if (u.searchParams.get(k) !== v) return false
+    }
+    return true
+  } catch {
+    return false
+  }
+}

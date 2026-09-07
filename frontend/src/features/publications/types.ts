@@ -5,6 +5,10 @@
 // Slice 2: `Publication` agrega `photo_url` y `buttons`; el body de
 // creacion pasa a ser multi-grupo (`group_ids: number[]`) y permite
 // contenido enriquecido (foto por URL + botones inline de URL).
+//
+// Slice 3: agrega `scheduled_at` opcional al body y `scheduled_at`
+// nullable al response; `PublishRequest` lleva `scheduled_at?` y el
+// filtro `limit`/`offset`.
 
 export type PublicationStatus = 'draft' | 'scheduled' | 'sending' | 'sent' | 'failed'
 
@@ -26,23 +30,29 @@ export interface Publication {
   photo_url: string | null
   /** Verbatim JSONB: array de filas, cada fila array de InlineButton. */
   buttons: InlineButton[][] | null
+  /** RFC3339; presente en filas `scheduled`. */
+  scheduled_at: string | null
   created_at: string
 }
 
-/** Body de POST /api/publications (slice 2: multi-grupo + foto + botones). */
+/** Body de POST /api/publications. Slice 3: `scheduled_at` opcional. */
 export interface PublishRequest {
   text: string
   photo_url?: string
   buttons?: InlineButton[][]
   group_ids: number[]
+  /** RFC3339 con offset; el backend normaliza a UTC y exige futuro. */
+  scheduled_at?: string
 }
 
-/** Filtro opcional del listado. */
+/** Filtro + paginacion del listado (slice 3: limit/offset). */
 export interface PublicationsFilter {
   group_id?: number
+  limit?: number
+  offset?: number
 }
 
-/** Envelope del handler para la respuesta multi-grupo (slice 2). */
+/** Envelope del handler para la respuesta multi-grupo. */
 export interface PublicationsListResponse {
   publications: Publication[]
 }

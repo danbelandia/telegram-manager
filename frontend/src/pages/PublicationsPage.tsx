@@ -1,7 +1,12 @@
-// Publicaciones (Fase 2, slice 2 — foto URL + botones inline + multi-grupo
-// + filtro). La pagina /publications lista publicaciones y permite crear
-// una nueva con contenido enriquecido y envio a varios grupos.
-// Validacion cliente antes de mutate() (text/url/grupos/botones).
+// Publicaciones (Fase 2, slice 3 — programacion + cancel + paginacion).
+// La pagina /publications lista publicaciones paginadas y permite:
+//   - "Publicar ahora": flujo inmediato slice 2 (multi-grupo + foto + botones).
+//   - "Programar": envia `scheduled_at` (RFC3339 con offset); el worker
+//     in-process las procesa.
+//   - Cancelar una fila `schededuled` (DELETE /api/publications/:id).
+//   - Paginar el historial (Prev / Next).
+//
+// Validacion cliente antes de mutate() (text/url/grupos/botones/scheduled_at).
 import { useMemo, useState } from 'react'
 import {
   formatPublicationsError,
@@ -9,7 +14,14 @@ import {
   validateGroupIdsClient,
   validatePhotoUrlClient,
 } from '../features/publications/error'
-import { useCreatePublication, usePublications } from '../features/publications/hooks'
+import {
+  useCancelPublication,
+  useCreatePublication,
+  usePublications,
+} from '../features/publications/hooks'
+import {
+  validateScheduledAtClient,
+} from '../features/publications/validateScheduledAtClient'
 import type {
   InlineButton,
   Publication,
@@ -29,6 +41,9 @@ const STATUS_LABEL: Record<PublicationStatus, string> = {
 const MAX_TEXT_NO_PHOTO = 4096
 const MAX_TEXT_WITH_PHOTO = 1024
 const MAX_GROUPS = 10
+const DEFAULT_LIST_LIMIT = 50
+
+type PublishMode = 'now' | 'schedule'
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })
@@ -49,13 +64,22 @@ function nonEmptyRows(rows: InlineButton[][]): InlineButton[][] {
 export default function PublicationsPage() {
   const groups = useGroups()
   const [filterGid, setFilterGid] = useState<number | 'all'>('all')
-  const publications = usePublications(filterGid === 'all' ? undefined : { group_id: filterGid })
-  const create = useCreatePublication()
+  const [offset, setOffset] = useState(0)
 
+  const publications = usePublications({
+    group_id: filterGid === 'all' ? undefined : filterGid,
+    limit: DEFAULT_LIST_LIMIT,
+    offset,
+  })
+  const create = useCreatePublication()
+  const cancel = useCancelPublication()
+
+  const [mode, setMode] = useState<PublishMode>('now')
   const [text, setText] = useState('')
   const [photoUrl, setPhotoUrl] = useState('')
   const [buttons, setButtons] = useState<InlineButton[][]>([])
   const [selectedGroupIds, setSelectedGroupIds] = useState<number[]>([])
+  const [scheduledLocal, setScheduledLocal] = useState('')
   const [clientError, setClientError] = useState<string | null>(null)
 
   const hasPhoto = photoUrl.trim().length > 0
@@ -63,7 +87,12 @@ export default function PublicationsPage() {
   const textOver = text.length > textMax
 
   const createError = create.error ? formatPublicationsError(create.error) : null
-  const created = create.isSuccess ? 'Publicación enviada.' : null
+  const cancelError = cancel.error ? formatPublicationsError(cancel.error) : null
+  const created = create.isSuccess
+    ? mode === 'schedule'
+      ? 'Publicación programada.'
+      : 'Publicación enviada.'
+    : null
 
   const toggleGroup = (gid: number) => {
     setSelectedGroupIds((cur) =>
@@ -108,12 +137,29 @@ export default function PublicationsPage() {
       return
     }
 
+    let scheduledAt: string | undefined
+    if (mode === 'schedule') {
+      const res = validateScheduledAtClient(scheduledLocal, new Date())
+      if (!res.ok) {
+        setClientError(res.error)
+        return
+      }
+      scheduledAt = res.iso
+    }
+
     create.mutate({
       text: trimmedText,
       photo_url: hasPhoto ? photoUrl.trim() : undefined,
       buttons: rows.length > 0 ? rows : undefined,
       group_ids: selectedGroupIds,
+      scheduled_at: scheduledAt,
     })
+  }
+
+  const handleCancel = (id: number) => {
+    const ok = window.confirm('¿Cancelar esta publicación programada?')
+    if (!ok) return
+    cancel.mutate(id)
   }
 
   const groupName = (telegramId: number): string =>
@@ -121,17 +167,46 @@ export default function PublicationsPage() {
 
   const selectedCount = selectedGroupIds.length
 
+  // Paginacion: Next deshabilitado cuando returned < limit.
+  const canPrev = offset > 0
+  const canNext = (publications.data?.length ?? 0) >= DEFAULT_LIST_LIMIT
+
   return (
     <main className="page">
       <h1>Publicaciones</h1>
 
       {created ? <p className="state-block state-ok">{created}</p> : null}
       {createError ? <p className="state-block state-error">{createError}</p> : null}
+      {cancelError ? <p className="state-block state-error">{cancelError}</p> : null}
       {clientError ? <p className="state-block state-error">{clientError}</p> : null}
 
       <section className="panel">
         <h2>Nueva publicación</h2>
         <form onSubmit={handleSubmit}>
+          <fieldset className="field">
+            <legend>Modo</legend>
+            <label className="radio">
+              <input
+                type="radio"
+                name="mode"
+                value="now"
+                checked={mode === 'now'}
+                onChange={() => setMode('now')}
+              />
+              Publicar ahora
+            </label>
+            <label className="radio">
+              <input
+                type="radio"
+                name="mode"
+                value="schedule"
+                checked={mode === 'schedule'}
+                onChange={() => setMode('schedule')}
+              />
+              Programar
+            </label>
+          </fieldset>
+
           <label className="field">
             Texto ({text.length}/{textMax})
             <textarea
@@ -181,6 +256,17 @@ export default function PublicationsPage() {
             )}
           </fieldset>
 
+          {mode === 'schedule' ? (
+            <label className="field">
+              Fecha y hora (zona horaria local del navegador)
+              <input
+                type="datetime-local"
+                value={scheduledLocal}
+                onChange={(e) => setScheduledLocal(e.target.value)}
+              />
+            </label>
+          ) : null}
+
           <div className="field">
             <span>Botones inline (URL, opcional)</span>
             <ButtonsEditor value={buttons} onChange={setButtons} />
@@ -191,7 +277,13 @@ export default function PublicationsPage() {
             className="btn btn-primary"
             disabled={create.isPending || !text.trim() || selectedCount === 0 || textOver}
           >
-            {create.isPending ? 'Publicando…' : 'Publicar ahora'}
+            {create.isPending
+              ? mode === 'schedule'
+                ? 'Programando…'
+                : 'Publicando…'
+              : mode === 'schedule'
+                ? 'Programar'
+                : 'Publicar ahora'}
           </button>
         </form>
       </section>
@@ -206,6 +298,7 @@ export default function PublicationsPage() {
             onChange={(e) => {
               const v = e.target.value
               setFilterGid(v === 'all' ? 'all' : Number(v))
+              setOffset(0) // reset paginacion al cambiar filtro
             }}
           >
             <option value="all">Todos</option>
@@ -247,16 +340,43 @@ export default function PublicationsPage() {
                   <th>Grupo</th>
                   <th>Estado</th>
                   <th>Fecha</th>
+                  <th>Acción</th>
                 </tr>
               </thead>
               <tbody>
                 {publications.data.map((pub) => (
-                  <PublicationRow key={pub.id} pub={pub} groupName={groupName} />
+                  <PublicationRow
+                    key={pub.id}
+                    pub={pub}
+                    groupName={groupName}
+                    onCancel={handleCancel}
+                    isCanceling={cancel.isPending && cancel.variables === pub.id}
+                  />
                 ))}
               </tbody>
             </table>
           </div>
         ) : null}
+
+        <nav className="pagination" aria-label="Paginación">
+          <button
+            type="button"
+            className="btn"
+            disabled={!canPrev}
+            onClick={() => setOffset(Math.max(0, offset - DEFAULT_LIST_LIMIT))}
+          >
+            ← Anterior
+          </button>
+          <span className="pagination-info">Página offset={offset}</span>
+          <button
+            type="button"
+            className="btn"
+            disabled={!canNext}
+            onClick={() => setOffset(offset + DEFAULT_LIST_LIMIT)}
+          >
+            Siguiente →
+          </button>
+        </nav>
       </section>
     </main>
   )
@@ -265,14 +385,19 @@ export default function PublicationsPage() {
 function PublicationRow({
   pub,
   groupName,
+  onCancel,
+  isCanceling,
 }: {
   pub: Publication
   groupName: (id: number) => string
+  onCancel: (id: number) => void
+  isCanceling: boolean
 }) {
   const buttonsPreview = useMemo(() => {
     if (!pub.buttons || pub.buttons.length === 0) return null
     return pub.buttons
   }, [pub.buttons])
+  const canCancel = pub.status === 'scheduled'
   return (
     <tr>
       <td title={pub.text}>{truncate(pub.text)}</td>
@@ -307,8 +432,25 @@ function PublicationRow({
       <td>{groupName(pub.telegram_id)}</td>
       <td>
         <span className={`badge badge-${pub.status}`}>{STATUS_LABEL[pub.status]}</span>
+        {pub.status === 'scheduled' && pub.scheduled_at ? (
+          <div className="state-block-weak">para {formatDate(pub.scheduled_at)}</div>
+        ) : null}
       </td>
       <td>{formatDate(pub.created_at)}</td>
+      <td>
+        {canCancel ? (
+          <button
+            type="button"
+            className="btn btn-danger"
+            onClick={() => onCancel(pub.id)}
+            disabled={isCanceling}
+          >
+            {isCanceling ? 'Cancelando…' : 'Cancelar'}
+          </button>
+        ) : (
+          '—'
+        )}
+      </td>
     </tr>
   )
 }
