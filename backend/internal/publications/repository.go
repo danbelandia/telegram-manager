@@ -8,9 +8,9 @@ import (
 	"time"
 )
 
-// maxListLimit limita el listado (GET /api/publications): sin paginacion
-// en slice 1, se devuelven los 50 mas recientes.
-const maxListLimit = 50
+// paginationResult tipa el resultado de List/ListByTelegramID para
+// tests; el shape real es []Publication (slice).
+type paginationResult = []Publication
 
 // Repository persiste publicaciones en PostgreSQL.
 type Repository struct {
@@ -58,16 +58,17 @@ WHERE id = $1`
 	return &p, nil
 }
 
-// List devuelve las publicaciones mas recientes (max 50, created_at
-// DESC). Sin filtro, sin paginacion en slice 1/2.
-func (r *Repository) List(ctx context.Context) ([]Publication, error) {
+// List devuelve las publicaciones mas recientes paginadas (created_at
+// DESC, LIMIT $1 OFFSET $2). Slice 3: paginacion obligatoria; el
+// handler aplica validatePagination/normalizePagination antes.
+func (r *Repository) List(ctx context.Context, limit, offset int) ([]Publication, error) {
 	const q = `
 SELECT id, telegram_id, text, status, message_id, scheduled_at, error_message, actor_id, photo_url, buttons, created_at, updated_at
 FROM publications
 ORDER BY created_at DESC
-LIMIT $1`
+LIMIT $1 OFFSET $2`
 
-	rows, err := r.db.QueryContext(ctx, q, maxListLimit)
+	rows, err := r.db.QueryContext(ctx, q, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("publications: list: %w", err)
 	}
@@ -87,19 +88,18 @@ LIMIT $1`
 	return pubs, nil
 }
 
-// ListByTelegramID devuelve las publicaciones mas recientes (max 50)
-// de un grupo especifico. Usa el indice idx_publications_telegram_id
-// (creado en la migracion 00004). Retorna slice vacio si el grupo no
-// tiene publicaciones (no es error).
-func (r *Repository) ListByTelegramID(ctx context.Context, telegramID int64) ([]Publication, error) {
+// ListByTelegramID devuelve las publicaciones paginadas de un grupo
+// especifico (created_at DESC, idx_publications_telegram_id). Retorna
+// slice vacio si el grupo no tiene publicaciones (no es error).
+func (r *Repository) ListByTelegramID(ctx context.Context, telegramID int64, limit, offset int) ([]Publication, error) {
 	const q = `
 SELECT id, telegram_id, text, status, message_id, scheduled_at, error_message, actor_id, photo_url, buttons, created_at, updated_at
 FROM publications
 WHERE telegram_id = $1
 ORDER BY created_at DESC
-LIMIT $2`
+LIMIT $2 OFFSET $3`
 
-	rows, err := r.db.QueryContext(ctx, q, telegramID, maxListLimit)
+	rows, err := r.db.QueryContext(ctx, q, telegramID, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("publications: list by group %d: %w", telegramID, err)
 	}
@@ -117,6 +117,125 @@ LIMIT $2`
 		return nil, fmt.Errorf("publications: list by group %d: %w", telegramID, err)
 	}
 	return pubs, nil
+}
+
+// ClaimScheduledDue (slice 3) ejecuta en una sola transaccion:
+//  1. SELECT ... FOR UPDATE SKIP LOCKED de las filas `scheduled` con
+//     scheduled_at <= now(), ordenadas por scheduled_at ASC, hasta `limit`.
+//  2. UPDATE de esas filas a `sending` + updated_at=now().
+//
+// Devuelve las filas reservadas (con `status` actualizado a 'sending').
+// SKIP LOCKED es Postgres >= 9.5; permite que varias instancias del
+// backend reclamen distintos subconjuntos de filas sin pisarse.
+//
+// Las llamadas al adapter de Telegram ocurren DESPUES del COMMIT, en
+// el worker (slice 3 spec REQ-3).
+func (r *Repository) ClaimScheduledDue(ctx context.Context, limit int) ([]Publication, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("publications: claim begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() // noop si Commit OK
+
+	const selectQ = `
+SELECT id, telegram_id, text, status, message_id, scheduled_at, error_message, actor_id, photo_url, buttons, created_at, updated_at
+FROM publications
+WHERE status = 'scheduled' AND scheduled_at <= now()
+ORDER BY scheduled_at ASC
+LIMIT $1
+FOR UPDATE SKIP LOCKED`
+
+	rows, err := tx.QueryContext(ctx, selectQ, limit)
+	if err != nil {
+		return nil, fmt.Errorf("publications: claim select: %w", err)
+	}
+	pubs := make([]Publication, 0)
+	for rows.Next() {
+		p, err := scanPublication(rows)
+		if err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("publications: claim scan: %w", err)
+		}
+		pubs = append(pubs, p)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, fmt.Errorf("publications: claim rows: %w", err)
+	}
+	rows.Close()
+
+	if len(pubs) == 0 {
+		// Nada para reclamar: commit igual para liberar el snapshot.
+		if err := tx.Commit(); err != nil {
+			return nil, fmt.Errorf("publications: claim commit empty: %w", err)
+		}
+		return pubs, nil
+	}
+
+	ids := make([]int64, len(pubs))
+	for i, p := range pubs {
+		ids[i] = p.ID
+	}
+	const updateQ = `
+UPDATE publications
+SET status = 'sending', updated_at = now()
+WHERE id = ANY($1)`
+	if _, err := tx.ExecContext(ctx, updateQ, int64ArrayParam(ids)); err != nil {
+		return nil, fmt.Errorf("publications: claim update: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("publications: claim commit: %w", err)
+	}
+
+	// Marcar `sending` en el slice devuelto para que el worker no
+	// consulte la DB otra vez antes de dispatch.
+	for i := range pubs {
+		pubs[i].Status = StatusSending
+		pubs[i].UpdatedAt = time.Now().UTC()
+	}
+	return pubs, nil
+}
+
+// Cancel (slice 3) hard-deletea una fila SOLO si status='scheduled'.
+// La lectura previa del status detecta la race con un tick del worker
+// (que ya marco `sending`): en ese caso retorna ErrCancelNotAllowed.
+//
+//   - id inexistente -> ErrNotFound
+//   - status != 'scheduled' -> ErrCancelNotAllowed
+//   - status == 'scheduled' -> DELETE; 1 fila afectada; nil error
+func (r *Repository) Cancel(ctx context.Context, id int64) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("publications: cancel begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var status string
+	err = tx.QueryRowContext(ctx, `SELECT status FROM publications WHERE id = $1 FOR UPDATE`, id).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("publications: cancel select: %w", err)
+	}
+	if status != string(StatusScheduled) {
+		return ErrCancelNotAllowed
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM publications WHERE id = $1`, id); err != nil {
+		return fmt.Errorf("publications: cancel delete: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("publications: cancel commit: %w", err)
+	}
+	return nil
+}
+
+// int64ArrayParam convierte un []int64 a un parametro de Postgres ANY($1)
+// compatible con el driver pgx via database/sql. pgx acepta []int64
+// directamente como text-encoded bigint[].
+func int64ArrayParam(ids []int64) any {
+	return ids
 }
 
 // UpdateStatus actualiza el estado de la publicacion tras la llamada a

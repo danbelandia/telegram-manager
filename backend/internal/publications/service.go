@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/telegram-manager/backend/internal/groups"
 	"github.com/telegram-manager/backend/internal/logs"
@@ -66,13 +67,17 @@ type LogWriter interface {
 
 // PubStore es la vista minima del repositorio de publicaciones
 // (*publications.Repository la satisface). Slice 2 agrega
-// ListByTelegramID para `GET /api/publications?group_id=X`.
+// ListByTelegramID para `GET /api/publications?group_id=X`. Slice 3
+// agrega limit/offset a los listados, ClaimScheduledDue (SKIP LOCKED)
+// para el worker in-process y Cancel para `DELETE /api/publications/:id`.
 type PubStore interface {
 	Create(ctx context.Context, p *Publication) error
 	GetByID(ctx context.Context, id int64) (*Publication, error)
-	List(ctx context.Context) ([]Publication, error)
-	ListByTelegramID(ctx context.Context, telegramID int64) ([]Publication, error)
+	List(ctx context.Context, limit, offset int) ([]Publication, error)
+	ListByTelegramID(ctx context.Context, telegramID int64, limit, offset int) ([]Publication, error)
 	UpdateStatus(ctx context.Context, id int64, status Status, messageID *int64, errMsg *string) error
+	ClaimScheduledDue(ctx context.Context, limit int) ([]Publication, error)
+	Cancel(ctx context.Context, id int64) error
 }
 
 // PublishPayload es el body que el handler entrega al servicio.
@@ -260,31 +265,59 @@ func (s *Service) publishOne(ctx context.Context, actorID, groupID int64, text s
 	row.Status = StatusSending
 	entry.Metadata = map[string]any{"publication_id": pub.ID}
 
-	messageID, err := s.dispatchWithPhoto(ctx, groupID, text, hasPhoto, photoURL, buttons)
+	// Slice 3: el path de envio + finalizacion (dispatch + UpdateStatus +
+	// log) vive en publishOneFinalize para que el worker reuse el
+	// mismo path sin tener que crear una nueva fila.
+	s.publishOneFinalize(ctx, pub, entry, hasPhoto, photoURL, buttons)
+	// Reflejar el estado final en el row devuelto.
+	row.Status = pub.Status
+	row.MessageID = pub.MessageID
+	row.ErrorMessage = pub.ErrorMessage
+	row.UpdatedAt = pub.UpdatedAt
+	return row, entry
+}
+
+// publishOneFinalize ejecuta el sub-patron comun a Publish y al worker:
+// permissionOk ya paso, fila ya existe en DB con status='sending'. Aqui
+// se hace el dispatch a Telegram, se persiste sent/failed y se emite
+// el log PUBLISH_MESSAGE.
+//
+// Vive como metodo para que el worker pueda llamarlo sin replicar la
+// logica. NO se chequea permissionOk aca: el caller (publishOne o el
+// worker via processClaimed) ya lo hizo. Asi evitamos tanto la doble
+// consulta a GetByTelegramID como una doble corrida de permissionOk
+// (que ya fue validada por publishOne y por el Check del claim).
+func (s *Service) publishOneFinalize(ctx context.Context, pub *Publication, entry *logs.Entry, hasPhoto bool, photoURL *string, buttons [][]telegram.InlineKeyboardButton) {
+	buttonsJSON, _ := MarshalButtons(buttons) // best-effort; ya estaba persistido
+
+	messageID, err := s.dispatchWithPhoto(ctx, pub.TelegramID, pub.Text, hasPhoto, photoURL, buttons)
 	if err != nil {
 		msg := err.Error()
 		_ = s.store.UpdateStatus(ctx, pub.ID, StatusFailed, nil, &msg)
-		row.Status = StatusFailed
-		row.ErrorMessage = &msg
+		pub.Status = StatusFailed
+		pub.ErrorMessage = &msg
 		entry.Status = statusForTelError(err)
 		entry.ErrorMessage = &msg
 		_ = s.logs.Create(ctx, entry)
-		return row, entry
+		return
 	}
 
 	if err := s.store.UpdateStatus(ctx, pub.ID, StatusSent, &messageID, nil); err != nil {
 		msg := "error actualizando estado"
-		row.ErrorMessage = &msg
-		_ = s.logFailureNoCtx(ctx, entry, logs.StatusInternalError, err)
-		row.Status = StatusFailed
-		return row, entry
+		pub.ErrorMessage = &msg
+		pub.Status = StatusFailed
+		entry.ErrorMessage = &msg
+		entry.Status = logs.StatusInternalError
+		_ = s.logs.Create(ctx, entry)
+		return
 	}
-	row.Status = StatusSent
-	row.MessageID = &messageID
+	pub.Status = StatusSent
+	pub.MessageID = &messageID
 	entry.Metadata["message_id"] = messageID
 	entry.Status = logs.StatusSuccess
+	// Conservar los bytes de buttons que ya estaban persistidos.
+	_ = buttonsJSON
 	_ = s.logs.Create(ctx, entry)
-	return row, entry
 }
 
 // dispatch decide si enviar SendPhoto (con foto) o SendMessage.
@@ -344,14 +377,67 @@ func (s *Service) GetByID(ctx context.Context, id int64) (*Publication, error) {
 	return s.store.GetByID(ctx, id)
 }
 
-// List devuelve las publicaciones mas recientes (max 50, desc).
-func (s *Service) List(ctx context.Context) ([]Publication, error) {
-	return s.store.List(ctx)
+// List devuelve las publicaciones paginadas (created_at DESC). El handler
+// valida limit/offset antes de invocar (slice 3: paginacion).
+func (s *Service) List(ctx context.Context, limit, offset int) ([]Publication, error) {
+	return s.store.List(ctx, limit, offset)
 }
 
-// ListByTelegramID devuelve las publicaciones mas recientes del grupo.
-func (s *Service) ListByTelegramID(ctx context.Context, telegramID int64) ([]Publication, error) {
-	return s.store.ListByTelegramID(ctx, telegramID)
+// ListByTelegramID devuelve las publicaciones paginadas de un grupo
+// especifico (created_at DESC, idx_publications_telegram_id).
+func (s *Service) ListByTelegramID(ctx context.Context, telegramID int64, limit, offset int) ([]Publication, error) {
+	return s.store.ListByTelegramID(ctx, telegramID, limit, offset)
+}
+
+// Schedule inserta N filas con status='scheduled' sin tocar Telegram.
+// Devuelve todas las filas en el orden de `payload.GroupIDs`. El caller
+// (worker, via claim) se encarga luego de llamar a publishOne por cada
+// fila cuando llegue su `scheduled_at`. `nowFn` se inyecta para
+// determinismo en tests (default time.Now si nil).
+func (s *Service) Schedule(ctx context.Context, actorID int64, payload PublishPayload, scheduledAt time.Time, nowFn func() time.Time) ([]Publication, error) {
+	if err := validatePayload(payload); err != nil {
+		return nil, err
+	}
+	if nowFn == nil {
+		nowFn = time.Now
+	}
+	if err := validateScheduledAt(scheduledAt, nowFn); err != nil {
+		return nil, err
+	}
+
+	results := make([]Publication, 0, len(payload.GroupIDs))
+	for _, groupID := range payload.GroupIDs {
+		row := Publication{
+			TelegramID: groupID,
+			Text:       payload.Text,
+			Status:     StatusScheduled,
+			ActorID:    &actorID,
+			PhotoURL:   nilIfEmpty(payload.PhotoURL),
+		}
+		if raw, err := MarshalButtons(payload.Buttons); err == nil {
+			row.Buttons = raw
+		}
+		utc := scheduledAt.UTC()
+		row.ScheduledAt = &utc
+		if err := s.store.Create(ctx, &row); err != nil {
+			return nil, fmt.Errorf("publications: schedule: create: %w", err)
+		}
+		results = append(results, row)
+	}
+	return results, nil
+}
+
+// CancelScheduled borra una publicacion `scheduled`. Reglas:
+//   - inexistente -> ErrNotFound (404).
+//   - status != 'scheduled' -> ErrCancelNotAllowed (409).
+//   - status == 'scheduled' -> hard delete; el siguiente tick la ignora.
+func (s *Service) CancelScheduled(ctx context.Context, id int64) error {
+	_, err := s.store.GetByID(ctx, id)
+	if err != nil {
+		// Ya incluye ErrNotFound (404) o un error interno.
+		return err
+	}
+	return s.store.Cancel(ctx, id)
 }
 
 // validatePayload corre UNA sola vez al inicio de PublishMany (fail-fast

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -115,25 +116,95 @@ func (f *fakePubStore) GetByID(ctx context.Context, id int64) (*Publication, err
 	return p, nil
 }
 
-func (f *fakePubStore) List(ctx context.Context) ([]Publication, error) {
+func (f *fakePubStore) List(ctx context.Context, limit, offset int) ([]Publication, error) {
 	out := make([]Publication, 0, len(f.pubs))
 	for _, p := range f.pubs {
 		out = append(out, *p)
 	}
-	return out, nil
+	// Orden estable por created_at DESC para coincidir con la DB.
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return paginate(out, limit, offset), nil
 }
 
-// ListByTelegramID filtra por telegram_id manteniendo el orden de
-// iteracion del map (no estable, pero suficiente para los asserts de
-// los tests, que cuentan cantidades).
-func (f *fakePubStore) ListByTelegramID(ctx context.Context, telegramID int64) ([]Publication, error) {
+// ListByTelegramID filtra por telegram_id y pagina con limit/offset.
+func (f *fakePubStore) ListByTelegramID(ctx context.Context, telegramID int64, limit, offset int) ([]Publication, error) {
 	out := make([]Publication, 0)
 	for _, p := range f.pubs {
 		if p.TelegramID == telegramID {
 			out = append(out, *p)
 		}
 	}
-	return out, nil
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return paginate(out, limit, offset), nil
+}
+
+// ClaimScheduledDue (slice 3): replica el patron SKIP LOCKED devolviendo
+// las filas `scheduled` cuya `scheduled_at <= now`. Marca `sending` en
+// memoria. No hay locks reales (es un fake) pero el comportamiento es
+// equivalente para los tests.
+func (f *fakePubStore) ClaimScheduledDue(ctx context.Context, limit int) ([]Publication, error) {
+	now := time.Now()
+	claimed := make([]Publication, 0, limit)
+	for _, p := range f.pubs {
+		if p.Status != StatusScheduled || p.ScheduledAt == nil {
+			continue
+		}
+		if p.ScheduledAt.After(now) {
+			continue
+		}
+		if len(claimed) >= limit {
+			break
+		}
+		p.Status = StatusSending
+		p.UpdatedAt = now
+		claimed = append(claimed, *p)
+	}
+	sort.SliceStable(claimed, func(i, j int) bool {
+		return claimLess(claimed[i], claimed[j])
+	})
+	return claimed, nil
+}
+
+// Cancel (slice 3): hard delete SOLO si status == scheduled. Otros
+// status -> ErrCancelNotAllowed. Inexistente -> ErrNotFound.
+func (f *fakePubStore) Cancel(ctx context.Context, id int64) error {
+	p, ok := f.pubs[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if p.Status != StatusScheduled {
+		return ErrCancelNotAllowed
+	}
+	delete(f.pubs, id)
+	return nil
+}
+
+// paginate aplica limit/offset sobre un slice ya ordenado.
+func paginate(in []Publication, limit, offset int) []Publication {
+	if offset >= len(in) {
+		return []Publication{}
+	}
+	end := offset + limit
+	if end > len(in) {
+		end = len(in)
+	}
+	return in[offset:end]
+}
+
+// claimLess ordena filas por scheduled_at ASC con los punteros nil al
+// final (no deberia haberlos en filas `scheduled`, pero es defensivo).
+func claimLess(a, b Publication) bool {
+	if a.ScheduledAt == nil {
+		return false
+	}
+	if b.ScheduledAt == nil {
+		return true
+	}
+	return a.ScheduledAt.Before(*b.ScheduledAt)
 }
 
 func (f *fakePubStore) UpdateStatus(ctx context.Context, id int64, status Status, messageID *int64, errMsg *string) error {
@@ -318,7 +389,7 @@ func TestService_List(t *testing.T) {
 		t.Fatalf("Publish 2 error: %v", err)
 	}
 
-	list, err := svc.List(context.Background())
+	list, err := svc.List(context.Background(), 50, 0)
 	if err != nil {
 		t.Fatalf("List() error: %v", err)
 	}
@@ -711,7 +782,7 @@ func TestService_ListByTelegramID_Filtra(t *testing.T) {
 		t.Fatalf("Publish g2: %v", err)
 	}
 
-	g1, err := svc.ListByTelegramID(context.Background(), -1001)
+	g1, err := svc.ListByTelegramID(context.Background(), -1001, 50, 0)
 	if err != nil {
 		t.Fatalf("ListByTelegramID: %v", err)
 	}
@@ -724,7 +795,7 @@ func TestService_ListByTelegramID_Filtra(t *testing.T) {
 		}
 	}
 
-	g2, err := svc.ListByTelegramID(context.Background(), -1002)
+	g2, err := svc.ListByTelegramID(context.Background(), -1002, 50, 0)
 	if err != nil {
 		t.Fatalf("ListByTelegramID: %v", err)
 	}
@@ -732,7 +803,7 @@ func TestService_ListByTelegramID_Filtra(t *testing.T) {
 		t.Errorf("g2 len = %d, want 1", len(g2))
 	}
 
-	empty, err := svc.ListByTelegramID(context.Background(), -9999)
+	empty, err := svc.ListByTelegramID(context.Background(), -9999, 50, 0)
 	if err != nil {
 		t.Fatalf("ListByTelegramID: %v", err)
 	}
@@ -776,4 +847,185 @@ func jsonEqual(a, b []byte) bool {
 	ax, _ := json.Marshal(x)
 	ay, _ := json.Marshal(y)
 	return string(ax) == string(ay)
+}
+
+// --- Tests de slice 3: Schedule + CancelScheduled ---
+
+// TestService_Schedule_InsertsScheduled_SinLlamarTelegram: la rama de
+// scheduling inserta N filas con status=scheduled y NO invoca SendMessage/SendPhoto.
+func TestService_Schedule_InsertsScheduled_SinLlamarTelegram(t *testing.T) {
+	tg := &fakeTelegramPub{messageID: 1}
+	store := newFakePubStore()
+	svc, logFake := newPubService(t, tg, store, map[int64]*groups.Group{
+		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
+		-1002: {TelegramID: -1002, BotStatus: groups.StatusAdministrator},
+	})
+
+	now := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
+	scheduledAt := now.Add(2 * time.Hour)
+
+	rows, err := svc.Schedule(context.Background(), 7,
+		PublishPayload{Text: "Hola", GroupIDs: []int64{-1001, -1002}},
+		scheduledAt, fixedNow(now))
+	if err != nil {
+		t.Fatalf("Schedule() error: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2", len(rows))
+	}
+	for i, r := range rows {
+		if r.Status != StatusScheduled {
+			t.Errorf("rows[%d].status = %s, want scheduled", i, r.Status)
+		}
+		if r.ScheduledAt == nil || !r.ScheduledAt.Equal(scheduledAt) {
+			t.Errorf("rows[%d].scheduled_at = %v, want %v", i, r.ScheduledAt, scheduledAt)
+		}
+	}
+	// CRITICO: Telegram NO se llama en la rama schedule.
+	if len(tg.calls) != 0 {
+		t.Errorf("tg.calls = %d, want 0 (Schedule no debe llamar Telegram)", len(tg.calls))
+	}
+	if len(tg.sent) != 0 {
+		t.Errorf("tg.sent = %d, want 0", len(tg.sent))
+	}
+	// Sin logs: la auditoria la emite el worker cuando procesa cada fila.
+	if len(logFake.entries) != 0 {
+		t.Errorf("logs = %d, want 0 (auditoria es del worker)", len(logFake.entries))
+	}
+	// store tiene las filas persistidas.
+	if len(store.pubs) != 2 {
+		t.Errorf("store.pubs = %d, want 2", len(store.pubs))
+	}
+}
+
+// TestService_Schedule_PastDate_ErrScheduledInPast: validar fecha pasada
+// es fail-fast: ni inserta ni llama Telegram.
+func TestService_Schedule_PastDate_ErrScheduledInPast(t *testing.T) {
+	tg := &fakeTelegramPub{}
+	store := newFakePubStore()
+	svc, _ := newPubService(t, tg, store, map[int64]*groups.Group{
+		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
+	})
+
+	now := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
+	_, err := svc.Schedule(context.Background(), 7,
+		PublishPayload{Text: "Hola", GroupIDs: []int64{-1001}},
+		now.Add(-time.Minute), fixedNow(now))
+	if !errors.Is(err, ErrScheduledInPast) {
+		t.Fatalf("error = %v, want ErrScheduledInPast", err)
+	}
+	if len(tg.calls) != 0 {
+		t.Errorf("tg.calls = %d, want 0", len(tg.calls))
+	}
+	if len(store.pubs) != 0 {
+		t.Errorf("store.pubs = %d, want 0 (no se persiste)", len(store.pubs))
+	}
+}
+
+// TestService_Schedule_EqualNow_ErrScheduledInPast: tolerancia cero,
+// igual a now() tambien es pasado.
+func TestService_Schedule_EqualNow_ErrScheduledInPast(t *testing.T) {
+	tg := &fakeTelegramPub{}
+	svc, _ := newPubService(t, tg, newFakePubStore(), nil)
+
+	now := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
+	_, err := svc.Schedule(context.Background(), 7,
+		PublishPayload{Text: "x", GroupIDs: []int64{-1001}},
+		now, fixedNow(now))
+	if !errors.Is(err, ErrScheduledInPast) {
+		t.Errorf("error = %v, want ErrScheduledInPast (tolerancia cero)", err)
+	}
+}
+
+// TestService_Schedule_Validation_TextEmpty: el fail-fast de payload
+// corre ANTES de validar scheduled_at.
+func TestService_Schedule_Validation_TextEmpty(t *testing.T) {
+	tg := &fakeTelegramPub{}
+	svc, _ := newPubService(t, tg, newFakePubStore(), nil)
+
+	now := time.Now()
+	_, err := svc.Schedule(context.Background(), 7,
+		PublishPayload{Text: "", GroupIDs: []int64{-1001}},
+		now.Add(time.Hour), fixedNow(now))
+	if !errors.Is(err, ErrTextEmpty) {
+		t.Errorf("error = %v, want ErrTextEmpty", err)
+	}
+}
+
+// TestService_CancelScheduled_OK: borra la fila cuando status=scheduled.
+func TestService_CancelScheduled_OK(t *testing.T) {
+	tg := &fakeTelegramPub{}
+	store := newFakePubStore()
+	svc, _ := newPubService(t, tg, store, nil)
+
+	now := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
+	rows, err := svc.Schedule(context.Background(), 7,
+		PublishPayload{Text: "x", GroupIDs: []int64{-1001}},
+		now.Add(time.Hour), fixedNow(now))
+	if err != nil {
+		t.Fatalf("Schedule: %v", err)
+	}
+	id := rows[0].ID
+
+	if err := svc.CancelScheduled(context.Background(), id); err != nil {
+		t.Errorf("CancelScheduled error = %v, want nil", err)
+	}
+	if _, ok := store.pubs[id]; ok {
+		t.Errorf("fila %d sigue en store, want borrada", id)
+	}
+}
+
+// TestService_CancelScheduled_Sent_ReturnsErrCancelNotAllowed: no se
+// puede cancelar una fila ya enviada (preserva audit trail).
+func TestService_CancelScheduled_Sent_ReturnsErrCancelNotAllowed(t *testing.T) {
+	tg := &fakeTelegramPub{messageID: 1}
+	store := newFakePubStore()
+	svc, _ := newPubService(t, tg, store, map[int64]*groups.Group{
+		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
+	})
+
+	pub, err := svc.Publish(context.Background(), 7, -1001, "hola", nil, nil)
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if pub.Status != StatusSent {
+		t.Fatalf("setup: pub.Status = %s, want sent", pub.Status)
+	}
+	if err := svc.CancelScheduled(context.Background(), pub.ID); !errors.Is(err, ErrCancelNotAllowed) {
+		t.Errorf("error = %v, want ErrCancelNotAllowed", err)
+	}
+	// La fila sigue en el store.
+	if _, ok := store.pubs[pub.ID]; !ok {
+		t.Errorf("fila %d borrada, want intacta", pub.ID)
+	}
+}
+
+// TestService_CancelScheduled_NotFound: id inexistente -> ErrNotFound.
+func TestService_CancelScheduled_NotFound(t *testing.T) {
+	tg := &fakeTelegramPub{}
+	svc, _ := newPubService(t, tg, newFakePubStore(), nil)
+	if err := svc.CancelScheduled(context.Background(), 999); !errors.Is(err, ErrNotFound) {
+		t.Errorf("error = %v, want ErrNotFound", err)
+	}
+}
+
+// TestService_List_PropagatesLimitOffset: limit/offset llegan al store.
+func TestService_List_PropagatesLimitOffset(t *testing.T) {
+	tg := &fakeTelegramPub{messageID: 1}
+	store := newFakePubStore()
+	svc, _ := newPubService(t, tg, store, map[int64]*groups.Group{
+		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
+	})
+	for i := 0; i < 5; i++ {
+		if _, err := svc.Publish(context.Background(), 7, -1001, "x", nil, nil); err != nil {
+			t.Fatalf("Publish %d: %v", i, err)
+		}
+	}
+	list, err := svc.List(context.Background(), 2, 1)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 2 {
+		t.Errorf("len = %d, want 2", len(list))
+	}
 }

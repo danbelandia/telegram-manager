@@ -101,6 +101,20 @@ var (
 	ErrGroupsLimit = errors.New("maximo 10 grupos por publicacion")
 	// ErrNotFound: la publicacion no existe.
 	ErrNotFound = errors.New("publications: not found")
+
+	// Errores nuevos de slice 3:
+	// ErrScheduledInPast: scheduled_at es <= now() (400 VALIDATION_ERROR).
+	ErrScheduledInPast = errors.New("scheduled_at debe ser una fecha futura")
+	// ErrInvalidPagination: limit<1, limit>100 o offset<0 (400 VALIDATION_ERROR).
+	ErrInvalidPagination = errors.New("limit debe estar entre 1 y 100 y offset debe ser >= 0")
+	// ErrCancelNotAllowed: cancelar una fila no-scheduled (409 INVALID_STATUS).
+	ErrCancelNotAllowed = errors.New("no se puede cancelar una publicacion ya enviada o en curso")
+)
+
+// Limites de paginacion del listado (slice 3).
+const (
+	defaultListLimit = 50
+	maxListLimit     = 100
 )
 
 // MarshalButtons serializa una estructura de botones ([][]InlineKeyboardButton)
@@ -125,4 +139,61 @@ func UnmarshalButtons(raw json.RawMessage) ([][]telegram.InlineKeyboardButton, e
 		return nil, err
 	}
 	return rows, nil
+}
+
+// NormalizeScheduledAt parsea un RFC3339 con offset y normaliza a UTC.
+// Acepta tanto "2027-01-01T10:00:00Z" como "2027-01-01T17:00:00+03:00".
+// Si el parseo falla o el timestamp es <= now(), retorna ErrScheduledInPast
+// (el handler lo mapea a 400 VALIDATION_ERROR). `nowFn` se inyecta para
+// determinismo en tests; default time.Now.
+func NormalizeScheduledAt(raw string, nowFn func() time.Time) (*time.Time, error) {
+	if nowFn == nil {
+		nowFn = time.Now
+	}
+	t, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return nil, ErrScheduledInPast
+	}
+	if err := validateScheduledAt(t, nowFn); err != nil {
+		return nil, err
+	}
+	utc := t.UTC()
+	return &utc, nil
+}
+
+// validateScheduledAt exige que el timestamp sea estrictamente futuro.
+// Tolerancia cero: igual a now() o pasado -> ErrScheduledInPast.
+func validateScheduledAt(t time.Time, nowFn func() time.Time) error {
+	if nowFn == nil {
+		nowFn = time.Now
+	}
+	if !t.After(nowFn()) {
+		return ErrScheduledInPast
+	}
+	return nil
+}
+
+// ValidatePagination valida limit/offset del listado. Fuera de rango ->
+// ErrInvalidPagination (handler lo mapea a 400).
+//   - limit < 1 o limit > 100 -> error.
+//   - offset < 0 -> error.
+//
+// Si ambos son cero (caso "no se enviaron query params"), NormalizePagination
+// aplica los defaults (limit=50, offset=0).
+func ValidatePagination(limit, offset int) error {
+	if limit < 1 || limit > maxListLimit || offset < 0 {
+		return ErrInvalidPagination
+	}
+	return nil
+}
+
+// NormalizePagination aplica defaults a limit/offset. Si ambos son
+// cero (caso "no query params"), usa defaultListLimit. Si solo limit
+// es 0 (caso "solo offset"), es un 400; esa validacion la hace el
+// handler antes de llamar aca, asi que aqui nunca llega ese caso.
+func NormalizePagination(limit, offset int) (int, int) {
+	if limit == 0 && offset == 0 {
+		return defaultListLimit, 0
+	}
+	return limit, offset
 }

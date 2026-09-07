@@ -5,6 +5,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 )
 
 // Config reune la configuracion del servidor.
@@ -20,23 +21,28 @@ type Config struct {
 	CookieSecure          bool
 	Port                  string
 	RunMigrations         bool
+	// PublicationsSchedulerIntervalSeconds es el intervalo entre ticks
+	// del worker de publicaciones programadas (slice 3). Default 30s.
+	// Tests/operacion: bajar para mayor reactividad a costa de carga DB.
+	PublicationsSchedulerIntervalSeconds int
 }
 
 // Load lee las variables de entorno y valida que la configuracion
 // critica exista. Falla rapido (devuelve error) si falta algo.
 func Load() (Config, error) {
 	cfg := Config{
-		TelegramBotToken:      os.Getenv("TELEGRAM_BOT_TOKEN"),
-		TelegramMode:          envOr("TELEGRAM_MODE", "polling"),
-		TelegramWebhookURL:    os.Getenv("TELEGRAM_WEBHOOK_URL"),
-		TelegramWebhookSecret: os.Getenv("TELEGRAM_WEBHOOK_SECRET"),
-		DatabaseURL:           os.Getenv("DATABASE_URL"),
-		JWTSecret:             os.Getenv("JWT_SECRET"),
-		AdminUsername:         os.Getenv("ADMIN_USERNAME"),
-		AdminPassword:         os.Getenv("ADMIN_PASSWORD"),
-		CookieSecure:          envBoolOr("COOKIE_SECURE", false),
-		Port:                  envOr("PORT", "8080"),
-		RunMigrations:         envBoolOr("RUN_MIGRATIONS", true),
+		TelegramBotToken:                     os.Getenv("TELEGRAM_BOT_TOKEN"),
+		TelegramMode:                         envOr("TELEGRAM_MODE", "polling"),
+		TelegramWebhookURL:                   os.Getenv("TELEGRAM_WEBHOOK_URL"),
+		TelegramWebhookSecret:                os.Getenv("TELEGRAM_WEBHOOK_SECRET"),
+		DatabaseURL:                          os.Getenv("DATABASE_URL"),
+		JWTSecret:                            os.Getenv("JWT_SECRET"),
+		AdminUsername:                        os.Getenv("ADMIN_USERNAME"),
+		AdminPassword:                        os.Getenv("ADMIN_PASSWORD"),
+		CookieSecure:                         envBoolOr("COOKIE_SECURE", false),
+		Port:                                 envOr("PORT", "8080"),
+		RunMigrations:                        envBoolOr("RUN_MIGRATIONS", true),
+		PublicationsSchedulerIntervalSeconds: envIntOr("PUBLICATIONS_SCHEDULER_INTERVAL_SECONDS", 30),
 	}
 
 	if cfg.TelegramBotToken == "" {
@@ -72,6 +78,10 @@ func Load() (Config, error) {
 			return cfg, err
 		}
 	}
+	if cfg.PublicationsSchedulerIntervalSeconds <= 0 {
+		return cfg, fmt.Errorf("config: PUBLICATIONS_SCHEDULER_INTERVAL_SECONDS must be > 0, got %d",
+			cfg.PublicationsSchedulerIntervalSeconds)
+	}
 	return cfg, nil
 }
 
@@ -106,4 +116,16 @@ func envBoolOr(key string, fallback bool) bool {
 		return fallback
 	}
 	return v == "true" || v == "1"
+}
+
+func envIntOr(key string, fallback int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return fallback
+	}
+	return n
 }
