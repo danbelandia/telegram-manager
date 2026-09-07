@@ -23,5 +23,11 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
+    // W1 fix (sdd/publications-slice3/verify-report #190): pool vmThreads +
+    // isolate true elimina los 2 flakeos paralelos reportados en jsdom
+    // cuando varios tests pelean por el portal de notificaciones.
+    pool: 'vmThreads',
+    isolate: true,
+    globals: true,
   },
 })
