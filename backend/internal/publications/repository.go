@@ -24,15 +24,16 @@ func NewRepository(db *sql.DB) *Repository {
 
 // Create inserta una publicacion (status inicial: sending) y setea el
 // ID generado. No toca texto: la validacion de longitud vive en el
-// servicio (D5).
+// servicio (D5). Slice 2: persiste `photo_url` y `buttons` (JSONB
+// NULL-able). Si `Buttons` viene vacio se envia NULL a la DB.
 func (r *Repository) Create(ctx context.Context, p *Publication) error {
 	const q = `
-INSERT INTO publications (telegram_id, text, status, actor_id)
-VALUES ($1, $2, $3, $4)
+INSERT INTO publications (telegram_id, text, status, actor_id, photo_url, buttons)
+VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id, created_at, updated_at`
 
 	err := r.db.QueryRowContext(ctx, q,
-		p.TelegramID, p.Text, string(p.Status), p.ActorID,
+		p.TelegramID, p.Text, string(p.Status), p.ActorID, p.PhotoURL, []byte(p.Buttons),
 	).Scan(&p.ID, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("publications: create: %w", err)
@@ -43,7 +44,7 @@ RETURNING id, created_at, updated_at`
 // GetByID devuelve la publicacion por su ID interno, o ErrNotFound.
 func (r *Repository) GetByID(ctx context.Context, id int64) (*Publication, error) {
 	const q = `
-SELECT id, telegram_id, text, status, message_id, scheduled_at, error_message, actor_id, created_at, updated_at
+SELECT id, telegram_id, text, status, message_id, scheduled_at, error_message, actor_id, photo_url, buttons, created_at, updated_at
 FROM publications
 WHERE id = $1`
 
@@ -58,10 +59,10 @@ WHERE id = $1`
 }
 
 // List devuelve las publicaciones mas recientes (max 50, created_at
-// DESC). Sin paginacion en slice 1 (spec req GET /api/publications).
+// DESC). Sin filtro, sin paginacion en slice 1/2.
 func (r *Repository) List(ctx context.Context) ([]Publication, error) {
 	const q = `
-SELECT id, telegram_id, text, status, message_id, scheduled_at, error_message, actor_id, created_at, updated_at
+SELECT id, telegram_id, text, status, message_id, scheduled_at, error_message, actor_id, photo_url, buttons, created_at, updated_at
 FROM publications
 ORDER BY created_at DESC
 LIMIT $1`
@@ -82,6 +83,38 @@ LIMIT $1`
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("publications: list: %w", err)
+	}
+	return pubs, nil
+}
+
+// ListByTelegramID devuelve las publicaciones mas recientes (max 50)
+// de un grupo especifico. Usa el indice idx_publications_telegram_id
+// (creado en la migracion 00004). Retorna slice vacio si el grupo no
+// tiene publicaciones (no es error).
+func (r *Repository) ListByTelegramID(ctx context.Context, telegramID int64) ([]Publication, error) {
+	const q = `
+SELECT id, telegram_id, text, status, message_id, scheduled_at, error_message, actor_id, photo_url, buttons, created_at, updated_at
+FROM publications
+WHERE telegram_id = $1
+ORDER BY created_at DESC
+LIMIT $2`
+
+	rows, err := r.db.QueryContext(ctx, q, telegramID, maxListLimit)
+	if err != nil {
+		return nil, fmt.Errorf("publications: list by group %d: %w", telegramID, err)
+	}
+	defer rows.Close()
+
+	pubs := make([]Publication, 0)
+	for rows.Next() {
+		p, err := scanPublication(rows)
+		if err != nil {
+			return nil, fmt.Errorf("publications: list by group %d: %w", telegramID, err)
+		}
+		pubs = append(pubs, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("publications: list by group %d: %w", telegramID, err)
 	}
 	return pubs, nil
 }
@@ -115,16 +148,21 @@ type rowScanner interface {
 }
 
 // scanPublication mapea una fila de publications al struct Publication.
+// photo_url y buttons pueden ser NULL (la columna fue agregada en la
+// migracion 00005); se devuelven como nil/vacio sin error.
 func scanPublication(row rowScanner) (Publication, error) {
 	var (
 		p        Publication
 		status   string
 		createAt time.Time
 		updateAt time.Time
+		buttons  []byte
 	)
 	err := row.Scan(
 		&p.ID, &p.TelegramID, &p.Text, &status, &p.MessageID,
-		&p.ScheduledAt, &p.ErrorMessage, &p.ActorID, &createAt, &updateAt,
+		&p.ScheduledAt, &p.ErrorMessage, &p.ActorID,
+		&p.PhotoURL, &buttons,
+		&createAt, &updateAt,
 	)
 	if err != nil {
 		return Publication{}, err
@@ -132,5 +170,12 @@ func scanPublication(row rowScanner) (Publication, error) {
 	p.Status = Status(status)
 	p.CreatedAt = createAt
 	p.UpdatedAt = updateAt
+	if len(buttons) > 0 {
+		// json.RawMessage es []byte subyacente; copia para evitar que
+		// el driver reuse el buffer del row.
+		buf := make([]byte, len(buttons))
+		copy(buf, buttons)
+		p.Buttons = buf
+	}
 	return p, nil
 }

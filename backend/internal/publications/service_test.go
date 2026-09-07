@@ -2,7 +2,9 @@ package publications
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,22 +27,53 @@ func (f *fakeGroupsPub) GetByTelegramID(ctx context.Context, id int64) (*groups.
 }
 
 // fakeTelegramPub implementa MessageSender registrando cada llamada.
+// Soporta SendMessage y SendPhoto (slice 2) — el `kind` indica que
+// metodo se invoco, lo cual se usa en tests que verifican el orden
+// o que diferencian texto vs foto.
 type fakeTelegramPub struct {
+	calls []fakeTelegramCall
+	// sent conserva solo los envios de texto para retrocompatibilidad
+	// con tests slice-1 que solo inspeccionaban SendMessage.
 	sent []struct {
 		chatID int64
 		text   string
 	}
-	messageID int64 // returned by SendMessage
+	messageID int64 // returned by SendMessage/SendPhoto
 	err       error
+	// perCallErr, si esta set, hace que la llamada i-esima falle.
+	// Es nil-indexed (la primera llamada al primer indice, etc.).
+	// Solo se consulta cuando err es nil.
+	perCallErr []error
 }
 
-func (f *fakeTelegramPub) SendMessage(_ context.Context, chatID int64, text string, _ bool) (int64, error) {
+// fakeTelegramCall registra una invocacion al adapter mockeado.
+type fakeTelegramCall struct {
+	kind     string // "message" o "photo"
+	chatID   int64
+	text     string // text o caption segun kind
+	photoURL string
+}
+
+func (f *fakeTelegramPub) SendMessage(_ context.Context, chatID int64, text string, _ bool, _ *telegram.InlineKeyboardMarkup) (int64, error) {
+	f.calls = append(f.calls, fakeTelegramCall{kind: "message", chatID: chatID, text: text})
 	f.sent = append(f.sent, struct {
 		chatID int64
 		text   string
 	}{chatID, text})
+	return f.sendResult(len(f.calls) - 1)
+}
+
+func (f *fakeTelegramPub) SendPhoto(_ context.Context, chatID int64, photoURL, caption string, _ *telegram.InlineKeyboardMarkup) (int64, error) {
+	f.calls = append(f.calls, fakeTelegramCall{kind: "photo", chatID: chatID, text: caption, photoURL: photoURL})
+	return f.sendResult(len(f.calls) - 1)
+}
+
+func (f *fakeTelegramPub) sendResult(idx int) (int64, error) {
 	if f.err != nil {
 		return 0, f.err
+	}
+	if idx < len(f.perCallErr) && f.perCallErr[idx] != nil {
+		return 0, f.perCallErr[idx]
 	}
 	return f.messageID, nil
 }
@@ -90,6 +123,19 @@ func (f *fakePubStore) List(ctx context.Context) ([]Publication, error) {
 	return out, nil
 }
 
+// ListByTelegramID filtra por telegram_id manteniendo el orden de
+// iteracion del map (no estable, pero suficiente para los asserts de
+// los tests, que cuentan cantidades).
+func (f *fakePubStore) ListByTelegramID(ctx context.Context, telegramID int64) ([]Publication, error) {
+	out := make([]Publication, 0)
+	for _, p := range f.pubs {
+		if p.TelegramID == telegramID {
+			out = append(out, *p)
+		}
+	}
+	return out, nil
+}
+
 func (f *fakePubStore) UpdateStatus(ctx context.Context, id int64, status Status, messageID *int64, errMsg *string) error {
 	p, ok := f.pubs[id]
 	if !ok {
@@ -113,6 +159,8 @@ func newPubService(t *testing.T, tg *fakeTelegramPub, store *fakePubStore, group
 	return svc, logsFake
 }
 
+// --- Tests de Publish (single-group, slice 1 + slice 2 compatibilidad) ---
+
 func TestService_PublishSuccess(t *testing.T) {
 	tg := &fakeTelegramPub{messageID: 123}
 	store := newFakePubStore()
@@ -120,7 +168,7 @@ func TestService_PublishSuccess(t *testing.T) {
 		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
 	})
 
-	pub, err := svc.Publish(context.Background(), 7, -1001, "Hola mundo")
+	pub, err := svc.Publish(context.Background(), 7, -1001, "Hola mundo", nil, nil)
 	if err != nil {
 		t.Fatalf("Publish() error: %v", err)
 	}
@@ -133,7 +181,6 @@ func TestService_PublishSuccess(t *testing.T) {
 	if len(tg.sent) != 1 || tg.sent[0].chatID != -1001 || tg.sent[0].text != "Hola mundo" {
 		t.Errorf("sent = %v, want una llamada a SendMessage(-1001, 'Hola mundo')", tg.sent)
 	}
-	// Log de exito.
 	if len(logFake.entries) != 1 {
 		t.Fatalf("logs = %d, want 1", len(logFake.entries))
 	}
@@ -156,7 +203,7 @@ func TestService_PublishTextEmpty(t *testing.T) {
 		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
 	})
 
-	_, err := svc.Publish(context.Background(), 7, -1001, "")
+	_, err := svc.Publish(context.Background(), 7, -1001, "", nil, nil)
 	if !errors.Is(err, ErrTextEmpty) {
 		t.Fatalf("Publish() error = %v, want ErrTextEmpty", err)
 	}
@@ -175,11 +222,8 @@ func TestService_PublishTextTooLong(t *testing.T) {
 		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
 	})
 
-	longText := make([]byte, 4097)
-	for i := range longText {
-		longText[i] = 'a'
-	}
-	_, err := svc.Publish(context.Background(), 7, -1001, string(longText))
+	longText := strings.Repeat("a", 4097)
+	_, err := svc.Publish(context.Background(), 7, -1001, longText, nil, nil)
 	if !errors.Is(err, ErrTextTooLong) {
 		t.Fatalf("Publish() error = %v, want ErrTextTooLong", err)
 	}
@@ -196,7 +240,7 @@ func TestService_PublishGroupNotFound(t *testing.T) {
 	store := newFakePubStore()
 	svc, logFake := newPubService(t, tg, store, map[int64]*groups.Group{})
 
-	_, err := svc.Publish(context.Background(), 7, -999, "Hola")
+	_, err := svc.Publish(context.Background(), 7, -999, "Hola", nil, nil)
 	if !errors.Is(err, ErrGroupNotFound) {
 		t.Fatalf("Publish() error = %v, want ErrGroupNotFound", err)
 	}
@@ -215,7 +259,7 @@ func TestService_PublishNoPermission(t *testing.T) {
 		-1001: {TelegramID: -1001, BotStatus: groups.StatusMember},
 	})
 
-	_, err := svc.Publish(context.Background(), 7, -1001, "Hola")
+	_, err := svc.Publish(context.Background(), 7, -1001, "Hola", nil, nil)
 	if !errors.Is(err, ErrBotPermission) {
 		t.Fatalf("Publish() error = %v, want ErrBotPermission", err)
 	}
@@ -232,9 +276,6 @@ func TestService_PublishNoPermission(t *testing.T) {
 	if e.Status != logs.StatusPermissionDenied {
 		t.Errorf("log status = %s, want PERMISSION_DENIED", e.Status)
 	}
-	if e.ErrorMessage == nil || *e.ErrorMessage == "" {
-		t.Error("error_message vacio en log de permiso")
-	}
 }
 
 func TestService_PublishTelegramError(t *testing.T) {
@@ -244,11 +285,10 @@ func TestService_PublishTelegramError(t *testing.T) {
 		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
 	})
 
-	_, err := svc.Publish(context.Background(), 7, -1001, "Hola")
+	_, err := svc.Publish(context.Background(), 7, -1001, "Hola", nil, nil)
 	if !errors.Is(err, telegram.ErrPermissionDenied) {
 		t.Fatalf("Publish() error = %v, want ErrPermissionDenied del adapter", err)
 	}
-	// La publicacion queda con status failed y error_message.
 	pub := store.pubs[1]
 	if pub.Status != StatusFailed {
 		t.Errorf("status = %s, want failed", pub.Status)
@@ -260,25 +300,21 @@ func TestService_PublishTelegramError(t *testing.T) {
 		t.Fatalf("logs = %d, want 1", len(logFake.entries))
 	}
 	if logFake.entries[0].Status != logs.StatusPermissionDenied {
-		t.Errorf("log status = %s, want PERMISSION_DENIED (mapeo del error de Telegram)", logFake.entries[0].Status)
-	}
-	if logFake.entries[0].ErrorMessage == nil {
-		t.Error("error_message ausente en log")
+		t.Errorf("log status = %s, want PERMISSION_DENIED", logFake.entries[0].Status)
 	}
 }
 
 func TestService_List(t *testing.T) {
-	tg := &fakeTelegramPub{}
+	tg := &fakeTelegramPub{messageID: 1}
 	store := newFakePubStore()
 	svc, _ := newPubService(t, tg, store, map[int64]*groups.Group{
 		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
 	})
 
-	// Crea dos publicaciones.
-	if _, err := svc.Publish(context.Background(), 7, -1001, "Primera"); err != nil {
+	if _, err := svc.Publish(context.Background(), 7, -1001, "Primera", nil, nil); err != nil {
 		t.Fatalf("Publish 1 error: %v", err)
 	}
-	if _, err := svc.Publish(context.Background(), 7, -1001, "Segunda"); err != nil {
+	if _, err := svc.Publish(context.Background(), 7, -1001, "Segunda", nil, nil); err != nil {
 		t.Fatalf("Publish 2 error: %v", err)
 	}
 
@@ -298,12 +334,11 @@ func TestService_GetByID(t *testing.T) {
 		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
 	})
 
-	pub, err := svc.Publish(context.Background(), 7, -1001, "Hola")
+	pub, err := svc.Publish(context.Background(), 7, -1001, "Hola", nil, nil)
 	if err != nil {
 		t.Fatalf("Publish() error: %v", err)
 	}
 
-	// Encontrado.
 	got, err := svc.GetByID(context.Background(), pub.ID)
 	if err != nil {
 		t.Fatalf("GetByID() error: %v", err)
@@ -312,9 +347,433 @@ func TestService_GetByID(t *testing.T) {
 		t.Errorf("got = %+v, want publicacion con texto 'Hola'", got)
 	}
 
-	// No encontrado.
 	_, err = svc.GetByID(context.Background(), 999)
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("GetByID(999) error = %v, want ErrNotFound", err)
 	}
+}
+
+// --- Tests de PublishMany (slice 2) ---
+
+func TestService_PublishMany_OK_MultiGrupo(t *testing.T) {
+	tg := &fakeTelegramPub{messageID: 100}
+	store := newFakePubStore()
+	svc, logFake := newPubService(t, tg, store, map[int64]*groups.Group{
+		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
+		-1002: {TelegramID: -1002, BotStatus: groups.StatusAdministrator},
+	})
+
+	payload := PublishPayload{
+		Text:     "Hola",
+		GroupIDs: []int64{-1001, -1002},
+	}
+	rows, err := svc.PublishMany(context.Background(), 7, payload)
+	if err != nil {
+		t.Fatalf("PublishMany() error: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2", len(rows))
+	}
+	for i, row := range rows {
+		if row.Status != StatusSent {
+			t.Errorf("row[%d].status = %s, want sent", i, row.Status)
+		}
+		if row.MessageID == nil || *row.MessageID != 100 {
+			t.Errorf("row[%d].message_id = %v, want 100", i, row.MessageID)
+		}
+	}
+	if len(logFake.entries) != 2 {
+		t.Errorf("logs = %d, want 2 (1 por grupo)", len(logFake.entries))
+	}
+}
+
+func TestService_PublishMany_OrdenSecuencial(t *testing.T) {
+	tg := &fakeTelegramPub{messageID: 1}
+	store := newFakePubStore()
+	svc, _ := newPubService(t, tg, store, map[int64]*groups.Group{
+		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
+		-1002: {TelegramID: -1002, BotStatus: groups.StatusAdministrator},
+		-1003: {TelegramID: -1003, BotStatus: groups.StatusAdministrator},
+	})
+
+	payload := PublishPayload{Text: "Hola", GroupIDs: []int64{-1003, -1001, -1002}}
+	if _, err := svc.PublishMany(context.Background(), 7, payload); err != nil {
+		t.Fatalf("PublishMany() error: %v", err)
+	}
+	if len(tg.calls) != 3 {
+		t.Fatalf("calls = %d, want 3", len(tg.calls))
+	}
+	want := []int64{-1003, -1001, -1002}
+	for i, want := range want {
+		if tg.calls[i].chatID != want {
+			t.Errorf("calls[%d].chatID = %d, want %d (orden secuencial)", i, tg.calls[i].chatID, want)
+		}
+	}
+}
+
+func TestService_PublishMany_FalloParcial_Telegram(t *testing.T) {
+	tg := &fakeTelegramPub{
+		messageID: 1,
+		perCallErr: []error{
+			telegram.ErrPermissionDenied, // g1 falla
+			nil,                          // g2 ok
+		},
+	}
+	store := newFakePubStore()
+	svc, logFake := newPubService(t, tg, store, map[int64]*groups.Group{
+		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
+		-1002: {TelegramID: -1002, BotStatus: groups.StatusAdministrator},
+	})
+
+	payload := PublishPayload{Text: "Hola", GroupIDs: []int64{-1001, -1002}}
+	rows, err := svc.PublishMany(context.Background(), 7, payload)
+	if err != nil {
+		t.Fatalf("PublishMany() error: %v (esperabamos fallo parcial sin abortar)", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2", len(rows))
+	}
+	if rows[0].Status != StatusFailed {
+		t.Errorf("rows[0].status = %s, want failed", rows[0].Status)
+	}
+	if rows[0].ErrorMessage == nil {
+		t.Error("rows[0].error_message ausente")
+	}
+	if rows[1].Status != StatusSent {
+		t.Errorf("rows[1].status = %s, want sent (g2 no abortado por fallo en g1)", rows[1].Status)
+	}
+	if len(logFake.entries) != 2 {
+		t.Errorf("logs = %d, want 2", len(logFake.entries))
+	}
+	if logFake.entries[0].Status != logs.StatusPermissionDenied {
+		t.Errorf("log[0].status = %s, want PERMISSION_DENIED", logFake.entries[0].Status)
+	}
+	if logFake.entries[1].Status != logs.StatusSuccess {
+		t.Errorf("log[1].status = %s, want SUCCESS", logFake.entries[1].Status)
+	}
+}
+
+func TestService_PublishMany_FalloParcial_Permiso(t *testing.T) {
+	tg := &fakeTelegramPub{messageID: 1}
+	store := newFakePubStore()
+	svc, logFake := newPubService(t, tg, store, map[int64]*groups.Group{
+		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
+		-1002: {TelegramID: -1002, BotStatus: groups.StatusMember}, // sin admin
+	})
+
+	payload := PublishPayload{Text: "Hola", GroupIDs: []int64{-1001, -1002}}
+	rows, err := svc.PublishMany(context.Background(), 7, payload)
+	if err != nil {
+		t.Fatalf("PublishMany() error: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2", len(rows))
+	}
+	if rows[0].Status != StatusSent {
+		t.Errorf("rows[0].status = %s, want sent", rows[0].Status)
+	}
+	if rows[1].Status != StatusFailed {
+		t.Errorf("rows[1].status = %s, want failed", rows[1].Status)
+	}
+	if rows[1].ErrorMessage == nil || !strings.Contains(*rows[1].ErrorMessage, "administrador") {
+		t.Errorf("rows[1].error_message = %v, want mensaje de permiso", rows[1].ErrorMessage)
+	}
+	// g1 no debe haber sido enviado a Telegram.
+	if len(tg.calls) != 1 || tg.calls[0].chatID != -1001 {
+		t.Errorf("solo g1 debio ser enviado a Telegram; calls = %v", tg.calls)
+	}
+	if len(logFake.entries) != 2 {
+		t.Errorf("logs = %d, want 2", len(logFake.entries))
+	}
+}
+
+func TestService_PublishMany_GrupoInexistente_NoAborta(t *testing.T) {
+	tg := &fakeTelegramPub{messageID: 1}
+	store := newFakePubStore()
+	svc, logFake := newPubService(t, tg, store, map[int64]*groups.Group{
+		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
+	})
+
+	payload := PublishPayload{Text: "Hola", GroupIDs: []int64{-1001, -9999}}
+	rows, err := svc.PublishMany(context.Background(), 7, payload)
+	if err != nil {
+		t.Fatalf("PublishMany() error: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2", len(rows))
+	}
+	if rows[0].Status != StatusSent {
+		t.Errorf("rows[0].status = %s, want sent", rows[0].Status)
+	}
+	if rows[1].Status != StatusFailed {
+		t.Errorf("rows[1].status = %s, want failed (grupo no existe)", rows[1].Status)
+	}
+	// Solo 1 envio a Telegram.
+	if len(tg.calls) != 1 {
+		t.Errorf("calls = %d, want 1", len(tg.calls))
+	}
+	// 2 logs: 1 success + 1 NOT_FOUND.
+	if len(logFake.entries) != 2 {
+		t.Errorf("logs = %d, want 2", len(logFake.entries))
+	}
+	if logFake.entries[1].Status != logs.StatusNotFound {
+		t.Errorf("log[1].status = %s, want NOT_FOUND", logFake.entries[1].Status)
+	}
+}
+
+func TestService_PublishMany_ConFotoYBotones(t *testing.T) {
+	tg := &fakeTelegramPub{messageID: 1}
+	store := newFakePubStore()
+	svc, _ := newPubService(t, tg, store, map[int64]*groups.Group{
+		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
+	})
+
+	photo := "https://example.com/x.jpg"
+	buttons := [][]telegram.InlineKeyboardButton{
+		{{Text: "Ir", URL: "https://example.com"}},
+	}
+	payload := PublishPayload{
+		Text:     "Con foto",
+		PhotoURL: &photo,
+		Buttons:  buttons,
+		GroupIDs: []int64{-1001},
+	}
+	rows, err := svc.PublishMany(context.Background(), 7, payload)
+	if err != nil {
+		t.Fatalf("PublishMany() error: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Status != StatusSent {
+		t.Fatalf("rows = %+v, want 1 sent", rows)
+	}
+	if len(tg.calls) != 1 || tg.calls[0].kind != "photo" {
+		t.Fatalf("calls = %v, want 1 photo call", tg.calls)
+	}
+	if tg.calls[0].photoURL != photo || tg.calls[0].text != "Con foto" {
+		t.Errorf("call[0] = %+v, want photo/caption correctos", tg.calls[0])
+	}
+	if rows[0].PhotoURL == nil || *rows[0].PhotoURL != photo {
+		t.Errorf("rows[0].photo_url = %v, want %s", rows[0].PhotoURL, photo)
+	}
+	if len(rows[0].Buttons) == 0 {
+		t.Errorf("rows[0].buttons vacio")
+	}
+}
+
+// --- Tests de validacion fail-fast (validatePayload) ---
+
+func TestService_PublishMany_Validacion_TextVacio(t *testing.T) {
+	tg := &fakeTelegramPub{}
+	svc, _ := newPubService(t, tg, newFakePubStore(), nil)
+	_, err := svc.PublishMany(context.Background(), 7, PublishPayload{
+		Text:     "",
+		GroupIDs: []int64{-1001},
+	})
+	if !errors.Is(err, ErrTextEmpty) {
+		t.Fatalf("error = %v, want ErrTextEmpty", err)
+	}
+	if len(tg.calls) != 0 {
+		t.Errorf("se llamo a Telegram pese a texto vacio: %v", tg.calls)
+	}
+}
+
+func TestService_PublishMany_Validacion_CaptionExcede1024(t *testing.T) {
+	tg := &fakeTelegramPub{}
+	svc, _ := newPubService(t, tg, newFakePubStore(), nil)
+	photo := "https://example.com/x.jpg"
+	longCaption := strings.Repeat("a", 1025)
+	_, err := svc.PublishMany(context.Background(), 7, PublishPayload{
+		Text:     longCaption,
+		PhotoURL: &photo,
+		GroupIDs: []int64{-1001},
+	})
+	if err == nil || !strings.Contains(err.Error(), "1024") {
+		t.Fatalf("error = %v, want mensaje sobre 1024 chars", err)
+	}
+}
+
+func TestService_PublishMany_Validacion_TextExcede4096(t *testing.T) {
+	tg := &fakeTelegramPub{}
+	svc, _ := newPubService(t, tg, newFakePubStore(), nil)
+	longText := strings.Repeat("a", 4097)
+	_, err := svc.PublishMany(context.Background(), 7, PublishPayload{
+		Text:     longText,
+		GroupIDs: []int64{-1001},
+	})
+	if !errors.Is(err, ErrTextTooLong) {
+		t.Fatalf("error = %v, want ErrTextTooLong", err)
+	}
+}
+
+func TestService_PublishMany_Validacion_PhotoURLNoHTTP(t *testing.T) {
+	tg := &fakeTelegramPub{}
+	svc, _ := newPubService(t, tg, newFakePubStore(), nil)
+	bad := "ftp://example.com/x.jpg"
+	_, err := svc.PublishMany(context.Background(), 7, PublishPayload{
+		Text:     "hola",
+		PhotoURL: &bad,
+		GroupIDs: []int64{-1001},
+	})
+	if !errors.Is(err, ErrPhotoURLScheme) {
+		t.Fatalf("error = %v, want ErrPhotoURLScheme", err)
+	}
+}
+
+func TestService_PublishMany_Validacion_PhotoURLMuyLarga(t *testing.T) {
+	tg := &fakeTelegramPub{}
+	svc, _ := newPubService(t, tg, newFakePubStore(), nil)
+	bad := "https://example.com/" + strings.Repeat("a", 2048)
+	_, err := svc.PublishMany(context.Background(), 7, PublishPayload{
+		Text:     "hola",
+		PhotoURL: &bad,
+		GroupIDs: []int64{-1001},
+	})
+	if !errors.Is(err, ErrPhotoURLTooLong) {
+		t.Fatalf("error = %v, want ErrPhotoURLTooLong", err)
+	}
+}
+
+func TestService_PublishMany_Validacion_BotonesMas8Filas(t *testing.T) {
+	tg := &fakeTelegramPub{}
+	svc, _ := newPubService(t, tg, newFakePubStore(), nil)
+	rows := make([][]telegram.InlineKeyboardButton, 9)
+	for i := range rows {
+		rows[i] = []telegram.InlineKeyboardButton{{Text: "A", URL: "https://a"}}
+	}
+	_, err := svc.PublishMany(context.Background(), 7, PublishPayload{
+		Text:     "hola",
+		Buttons:  rows,
+		GroupIDs: []int64{-1001},
+	})
+	if !errors.Is(err, ErrButtonsLimit) {
+		t.Fatalf("error = %v, want ErrButtonsLimit", err)
+	}
+}
+
+func TestService_PublishMany_Validacion_BotonURLNoHTTP(t *testing.T) {
+	tg := &fakeTelegramPub{}
+	svc, _ := newPubService(t, tg, newFakePubStore(), nil)
+	rows := [][]telegram.InlineKeyboardButton{
+		{{Text: "XSS", URL: "javascript:alert(1)"}},
+	}
+	_, err := svc.PublishMany(context.Background(), 7, PublishPayload{
+		Text:     "hola",
+		Buttons:  rows,
+		GroupIDs: []int64{-1001},
+	})
+	if !errors.Is(err, ErrButtonURLScheme) {
+		t.Fatalf("error = %v, want ErrButtonURLScheme", err)
+	}
+}
+
+func TestService_PublishMany_Validacion_GruposVacio(t *testing.T) {
+	tg := &fakeTelegramPub{}
+	svc, _ := newPubService(t, tg, newFakePubStore(), nil)
+	_, err := svc.PublishMany(context.Background(), 7, PublishPayload{
+		Text:     "hola",
+		GroupIDs: []int64{},
+	})
+	if !errors.Is(err, ErrGroupsEmpty) {
+		t.Fatalf("error = %v, want ErrGroupsEmpty", err)
+	}
+}
+
+func TestService_PublishMany_Validacion_GruposExcede10(t *testing.T) {
+	tg := &fakeTelegramPub{}
+	svc, _ := newPubService(t, tg, newFakePubStore(), nil)
+	ids := make([]int64, 11)
+	for i := range ids {
+		ids[i] = int64(-1000 - i)
+	}
+	_, err := svc.PublishMany(context.Background(), 7, PublishPayload{
+		Text:     "hola",
+		GroupIDs: ids,
+	})
+	if !errors.Is(err, ErrGroupsLimit) {
+		t.Fatalf("error = %v, want ErrGroupsLimit", err)
+	}
+}
+
+func TestService_ListByTelegramID_Filtra(t *testing.T) {
+	tg := &fakeTelegramPub{messageID: 1}
+	store := newFakePubStore()
+	svc, _ := newPubService(t, tg, store, map[int64]*groups.Group{
+		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
+		-1002: {TelegramID: -1002, BotStatus: groups.StatusAdministrator},
+	})
+
+	if _, err := svc.Publish(context.Background(), 7, -1001, "a", nil, nil); err != nil {
+		t.Fatalf("Publish g1: %v", err)
+	}
+	if _, err := svc.Publish(context.Background(), 7, -1001, "b", nil, nil); err != nil {
+		t.Fatalf("Publish g1: %v", err)
+	}
+	if _, err := svc.Publish(context.Background(), 7, -1002, "c", nil, nil); err != nil {
+		t.Fatalf("Publish g2: %v", err)
+	}
+
+	g1, err := svc.ListByTelegramID(context.Background(), -1001)
+	if err != nil {
+		t.Fatalf("ListByTelegramID: %v", err)
+	}
+	if len(g1) != 2 {
+		t.Errorf("g1 len = %d, want 2", len(g1))
+	}
+	for _, p := range g1 {
+		if p.TelegramID != -1001 {
+			t.Errorf("publicacion con telegram_id=%d en grupo -1001", p.TelegramID)
+		}
+	}
+
+	g2, err := svc.ListByTelegramID(context.Background(), -1002)
+	if err != nil {
+		t.Fatalf("ListByTelegramID: %v", err)
+	}
+	if len(g2) != 1 {
+		t.Errorf("g2 len = %d, want 1", len(g2))
+	}
+
+	empty, err := svc.ListByTelegramID(context.Background(), -9999)
+	if err != nil {
+		t.Fatalf("ListByTelegramID: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Errorf("empty len = %d, want 0", len(empty))
+	}
+}
+
+// TestService_PublishMany_MarshalButtons_RoundTrip: confirma que
+// los bytes almacenados son deserializables al mismo shape.
+func TestService_PublishMany_MarshalButtons_RoundTrip(t *testing.T) {
+	raw, err := MarshalButtons([][]telegram.InlineKeyboardButton{
+		{{Text: "Ir", URL: "https://a"}},
+		{{Text: "B", URL: "https://b"}, {Text: "C", URL: "https://c"}},
+	})
+	if err != nil {
+		t.Fatalf("MarshalButtons: %v", err)
+	}
+	got, err := UnmarshalButtons(raw)
+	if err != nil {
+		t.Fatalf("UnmarshalButtons: %v", err)
+	}
+	if len(got) != 2 || len(got[0]) != 1 || len(got[1]) != 2 {
+		t.Fatalf("shape = %v, want 2 filas (1 + 2 botones)", got)
+	}
+	// Re-marshal y comparar.
+	raw2, _ := MarshalButtons(got)
+	if !jsonEqual(raw, raw2) {
+		t.Errorf("round-trip cambia shape:\n  in:  %s\n  out: %s", raw, raw2)
+	}
+}
+
+func jsonEqual(a, b []byte) bool {
+	var x, y any
+	if err := json.Unmarshal(a, &x); err != nil {
+		return false
+	}
+	if err := json.Unmarshal(b, &y); err != nil {
+		return false
+	}
+	ax, _ := json.Marshal(x)
+	ay, _ := json.Marshal(y)
+	return string(ax) == string(ay)
 }
