@@ -33,8 +33,9 @@ func testDB(t *testing.T) *sql.DB {
 		t.Fatalf("migrate test db: %v", err)
 	}
 	// Los tests comparten la base: cada test arranca con la tabla
-	// vacia para no depender del estado que dejo el anterior.
-	if _, err := db.ExecContext(context.Background(), "TRUNCATE groups"); err != nil {
+	// vacia para no depender del estado que dejo el anterior. CASCADE
+	// porque publications (00004) tiene FK a groups.telegram_id.
+	if _, err := db.ExecContext(context.Background(), "TRUNCATE groups CASCADE"); err != nil {
 		t.Fatalf("truncate groups: %v", err)
 	}
 	return db
