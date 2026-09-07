@@ -1,10 +1,24 @@
-// Detalle de un grupo (spec frontend-dashboard req 3 + frontend-moderation
-// req 4-5): carga con useGroup, muestra datos administrables, navega a las
-// secciones hijas (AGENTS 12) y ejecuta acciones de chat lock/unlock con
-// confirmacion y de mensajes delete/pin por messageId (la Bot API no
-// lista mensajes, AGENTS 8; el admin provee el id).
+// GroupDetailPage migrado a Mantine (frontend-refresh slice 1 — design D14,
+// spec REQ-9). Header con Title + telegram_id + Badge de estado del bot.
+// `<Tabs>` con 4 paneles: Detalle (info + permisos), Membresia y moderacion
+// (lock/unlock + delete/pin + link a /users), Solicitudes (link a /requests),
+// Logs (link a /logs). Los hooks de moderacion y useGroup se mantienen sin
+// cambios (NO se tocan features/* — el alcance del slice es solo view layer).
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
+import {
+  Anchor,
+  Badge,
+  Box,
+  Button,
+  Group,
+  Skeleton,
+  Stack,
+  Tabs,
+  Text,
+  TextInput,
+  Title,
+} from '@mantine/core'
 import { formatModerationError } from '../features/moderation/error'
 import { useDeleteMessage, useLockGroup, usePinMessage, useUnlockGroup } from '../features/moderation/hooks'
 import { formatPermissions } from '../features/groups/permissions'
@@ -57,105 +71,177 @@ export default function GroupDetailPage() {
   }
 
   if (isPending) {
-    return <main className="page">Cargando grupo…</main>
+    return (
+      <Stack gap="md">
+        <Skeleton height={28} width="40%" />
+        <Skeleton height={16} width="60%" />
+        <Skeleton height={120} />
+      </Stack>
+    )
   }
 
   if (isError) {
     return (
-      <main className="page">
-        <h1>Grupo</h1>
-        <div className="state-block state-error">
-          <p>{error instanceof Error ? error.message : 'No se pudo cargar el grupo.'}</p>
-          <button type="button" className="btn" onClick={() => refetch()}>
-            Reintentar
-          </button>
-        </div>
-      </main>
+      <Stack gap="md">
+        <Title order={2}>Grupo</Title>
+        <Text c="red">
+          {error instanceof Error ? error.message : 'No se pudo cargar el grupo.'}
+        </Text>
+        <Button variant="default" w={140} onClick={() => refetch()}>
+          Reintentar
+        </Button>
+      </Stack>
     )
   }
 
   if (!group) {
     return (
-      <main className="page">
-        <h1>Grupo</h1>
-        <p className="state-block">Grupo no encontrado.</p>
-        <Link to="/groups" className="btn">
+      <Stack gap="md">
+        <Title order={2}>Grupo</Title>
+        <Text c="dimmed">Grupo no encontrado.</Text>
+        <Button component={Link} to="/groups" variant="default" w={140}>
           Volver a grupos
-        </Link>
-      </main>
+        </Button>
+      </Stack>
     )
   }
 
+  const permissions = formatPermissions(group.bot_permissions)
+
   return (
-    <main className="page">
-      <Link to="/groups" className="back-link">
+    <Stack gap="md">
+      <Anchor component={Link} to="/groups" size="sm">
         ← Grupos
-      </Link>
+      </Anchor>
 
-      <h1>{group.title}</h1>
-      {group.username ? <p className="group-card-username">@{group.username}</p> : null}
+      <Box>
+        <Title order={2}>{group.title}</Title>
+        {group.username ? (
+          <Text size="sm" c="dimmed">
+            @{group.username}
+          </Text>
+        ) : null}
+        <Group gap="sm" mt="xs" align="center">
+          <Text size="sm" c="dimmed">
+            ID:
+          </Text>
+          <Text size="sm">{group.telegram_id}</Text>
+          <Badge variant="light" color="blue">
+            Bot: {group.bot_status}
+          </Badge>
+        </Group>
+      </Box>
 
-      <dl className="group-detail">
-        <div>
-          <dt>ID de Telegram</dt>
-          <dd>{group.telegram_id}</dd>
-        </div>
-        <div>
-          <dt>Tipo</dt>
-          <dd>{group.type}</dd>
-        </div>
-        <div>
-          <dt>Miembros</dt>
-          <dd>{formatMembers(group.member_count)}</dd>
-        </div>
-        <div>
-          <dt>Bot</dt>
-          <dd>{group.bot_status}</dd>
-        </div>
-        <div>
-          <dt>Permisos del bot</dt>
-          <dd>
-            {formatPermissions(group.bot_permissions).join(', ') || 'Sin permisos'}
-          </dd>
-        </div>
-      </dl>
-
-      <section className="detail-actions">
-        <h2>Envío de mensajes</h2>
-        {chatError ? <p className="state-block state-error">{formatModerationError(chatError)}</p> : null}
-        <button type="button" className="btn" disabled={chatPending} onClick={() => unlock.mutate(groupId)}>
-          🔓 Abrir chat
-        </button>{' '}
-        <button type="button" className="btn btn-danger" disabled={chatPending} onClick={confirmLock}>
-          🔒 Cerrar chat
-        </button>
-      </section>
-
-      <section className="detail-actions">
-        <h2>Mensajes</h2>
-        {messageError ? <p className="state-block state-error">{formatModerationError(messageError)}</p> : null}
-        <div className="user-lookup">
-          <input
-            type="text"
+      <Stack gap="xs">
+        <Title order={4}>Acciones de moderación</Title>
+        {chatError ? (
+          <Text c="red" size="sm">
+            {formatModerationError(chatError)}
+          </Text>
+        ) : null}
+        <Group>
+          <Button variant="default" disabled={chatPending} onClick={() => unlock.mutate(groupId)}>
+            🔓 Abrir chat
+          </Button>
+          <Button color="red" disabled={chatPending} onClick={confirmLock}>
+            🔒 Cerrar chat
+          </Button>
+        </Group>
+        {messageError ? (
+          <Text c="red" size="sm">
+            {formatModerationError(messageError)}
+          </Text>
+        ) : null}
+        <Group align="flex-end">
+          <TextInput
+            label="ID del mensaje en Telegram"
+            placeholder="ID del mensaje"
             inputMode="numeric"
-            placeholder="ID del mensaje en Telegram"
             value={messageId}
-            onChange={(e) => setMessageId(e.target.value)}
+            onChange={(e) => setMessageId(e.currentTarget.value)}
+            style={{ flex: 1 }}
           />
-          <button type="button" className="btn btn-danger" disabled={messagePending} onClick={confirmDelete}>
+          <Button color="red" disabled={messagePending} onClick={confirmDelete}>
             Eliminar
-          </button>{' '}
-          <button type="button" className="btn" disabled={messagePending} onClick={pinMessage}>
+          </Button>
+          <Button variant="default" disabled={messagePending} onClick={pinMessage}>
             Fijar
-          </button>
-        </div>
-      </section>
+          </Button>
+        </Group>
+      </Stack>
 
-      <nav className="group-sections">
-        <Link to={`/groups/${groupId}/users`}>Membresía y moderación</Link>
-        <Link to={`/groups/${groupId}/requests`}>Solicitudes de ingreso</Link>
-        <Link to={`/groups/${groupId}/logs`}>Logs</Link>
-      </nav>
-    </main>
+      <Tabs defaultValue="detalle">
+        <Tabs.List>
+          <Tabs.Tab value="detalle">Detalle</Tabs.Tab>
+          <Tabs.Tab value="solicitudes">Solicitudes</Tabs.Tab>
+          <Tabs.Tab value="logs">Logs</Tabs.Tab>
+        </Tabs.List>
+
+        <Tabs.Panel value="detalle" pt="md">
+          <Stack gap="md">
+            <Stack gap={4}>
+              <Text size="sm" c="dimmed">
+                Tipo
+              </Text>
+              <Text>{group.type}</Text>
+            </Stack>
+            <Stack gap={4}>
+              <Text size="sm" c="dimmed">
+                Miembros
+              </Text>
+              <Text>{formatMembers(group.member_count)}</Text>
+            </Stack>
+            <Stack gap={4}>
+              <Text size="sm" c="dimmed">
+                Permisos del bot
+              </Text>
+              <Text>
+                {permissions.length > 0 ? permissions.join(', ') : 'Sin permisos'}
+              </Text>
+            </Stack>
+            <Button
+              component={Link}
+              to={`/groups/${groupId}/users`}
+              variant="light"
+              w={260}
+            >
+              Membresía y moderación
+            </Button>
+          </Stack>
+        </Tabs.Panel>
+
+        <Tabs.Panel value="solicitudes" pt="md">
+          <Stack gap="md">
+            <Text c="dimmed">
+              Las solicitudes de ingreso se gestionan en una vista dedicada.
+            </Text>
+            <Button
+              component={Link}
+              to={`/groups/${groupId}/requests`}
+              variant="default"
+              w={260}
+            >
+              Ver solicitudes
+            </Button>
+          </Stack>
+        </Tabs.Panel>
+
+        <Tabs.Panel value="logs" pt="md">
+          <Stack gap="md">
+            <Text c="dimmed">
+              El historial de acciones administrativas vive en la vista de logs.
+            </Text>
+            <Button
+              component={Link}
+              to={`/groups/${groupId}/logs`}
+              variant="default"
+              w={260}
+            >
+              Ver logs
+            </Button>
+          </Stack>
+        </Tabs.Panel>
+      </Tabs>
+    </Stack>
   )
 }

@@ -1,14 +1,19 @@
 // Tests del GroupDetailPage (spec frontend-dashboard req 3 +
 // frontend-moderation req 4-5): detalle del grupo, acciones de chat
 // lock/unlock con confirmacion y delete/pin por messageId (confirm para
-// delete, cancelado no llama a la API).
+// delete, cancelado no llama a la API). Wrapper incluye MantineProvider
+// + Notifications porque el componente migrado usa Tabs / Stack /
+// TextInput / Skeleton de Mantine v7 (frontend-refresh slice 1).
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MantineProvider } from '@mantine/core'
+import { Notifications } from '@mantine/notifications'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import GroupDetailPage from './GroupDetailPage'
 import { errorJson, mockFetchRoutes, okJson } from '../test/helpers'
+import { mantineTheme } from '../theme'
 
 const group = {
   id: 'g123',
@@ -30,13 +35,16 @@ const group = {
 function renderDetail(entries: string[] = ['/groups/123']) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={entries}>
-        <Routes>
-          <Route path="/groups/:id" element={<GroupDetailPage />} />
-        </Routes>
-      </MemoryRouter>
-    </QueryClientProvider>,
+    <MantineProvider theme={mantineTheme} defaultColorScheme="light">
+      <Notifications position="top-right" />
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={entries}>
+          <Routes>
+            <Route path="/groups/:id" element={<GroupDetailPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
+    </MantineProvider>,
   )
 }
 
