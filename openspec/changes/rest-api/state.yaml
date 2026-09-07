@@ -2,7 +2,7 @@
 
 change: rest-api
 created: 2026-09-06
-status: tasks done — pendiente apply (decision requerida: chained PRs)
+status: apply PR1 done — PR2 pendiente
 
 phases:
   explore: done (obs 132)
@@ -10,8 +10,7 @@ phases:
   spec: done (obs 134)
   design: done (obs 135)
   tasks: done (obs 136)
-  apply: pending (PR1 → PR2 → PR3)
-  apply: pending
+  apply: in progress (PR1 done → PR2 → PR3)
   verify: pending
   archive: pending
 
@@ -27,7 +26,9 @@ artifacts:
   - engram: sdd/rest-api/explore (obs 132), sdd/rest-api/proposal (obs 133), sdd/rest-api/spec (obs 134), sdd/rest-api/design (obs 135), sdd/rest-api/tasks (obs 136)
 
 commits:
-  - (ninguno aún)
+  - 42a9dbe feat(telegram): transporte doPost, rate limiter y acciones de moderacion [PR1]
+  - f95f1d9 docs(sdd): cambio rest-api — ciclo explore/propose/spec/design/tasks
+  - 0c7829b chore(sdd): auth — remover artifacts del cambio archivado
 
 branch: feat/rest-api (base feat/auth — misma chain, aún sin remote)
 
