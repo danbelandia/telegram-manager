@@ -1,13 +1,27 @@
 // Publicaciones (Fase 2, slice 3 — programacion + cancel + paginacion).
-// La pagina /publications lista publicaciones paginadas y permite:
-//   - "Publicar ahora": flujo inmediato slice 2 (multi-grupo + foto + botones).
-//   - "Programar": envia `scheduled_at` (RFC3339 con offset); el worker
-//     in-process las procesa.
-//   - Cancelar una fila `schededuled` (DELETE /api/publications/:id).
-//   - Paginar el historial (Prev / Next).
-//
-// Validacion cliente antes de mutate() (text/url/grupos/botones/scheduled_at).
+// Migrado a Mantine v7 (frontend-refresh slice 2 ad-hoc para esta
+// pagina): la pagina completa usa Stack/Group/Card/Textarea/TextInput/
+// Radio/Checkbox/Table/Badge/Alert. La logica de negocio no cambia
+// (validation cliente + hooks existentes en features/publications/).
 import { useMemo, useState } from 'react'
+import {
+  Alert,
+  Badge,
+  Button,
+  Checkbox,
+  Group,
+  Loader,
+  NativeSelect,
+  Paper,
+  Radio,
+  Stack,
+  Table,
+  Text,
+  Textarea,
+  TextInput,
+  Title,
+} from '@mantine/core'
+import { IconCalendar, IconSend, IconTrash } from '@tabler/icons-react'
 import {
   formatPublicationsError,
   validateButtonsClient,
@@ -36,6 +50,14 @@ const STATUS_LABEL: Record<PublicationStatus, string> = {
   sending: 'Enviando',
   sent: 'Enviada',
   failed: 'Fallida',
+}
+
+const STATUS_COLOR: Record<PublicationStatus, string> = {
+  draft: 'gray',
+  scheduled: 'blue',
+  sending: 'yellow',
+  sent: 'green',
+  failed: 'red',
 }
 
 const MAX_TEXT_NO_PHOTO = 4096
@@ -172,213 +194,235 @@ export default function PublicationsPage() {
   const canNext = (publications.data?.length ?? 0) >= DEFAULT_LIST_LIMIT
 
   return (
-    <main className="page">
-      <h1>Publicaciones</h1>
+    <Stack gap="lg" p="md">
+      <Title order={1}>Publicaciones</Title>
 
-      {created ? <p className="state-block state-ok">{created}</p> : null}
-      {createError ? <p className="state-block state-error">{createError}</p> : null}
-      {cancelError ? <p className="state-block state-error">{cancelError}</p> : null}
-      {clientError ? <p className="state-block state-error">{clientError}</p> : null}
+      <Stack gap="sm">
+        {created ? (
+          <Alert color="green" variant="light">
+            {created}
+          </Alert>
+        ) : null}
+        {createError ? (
+          <Alert color="red" variant="light" data-testid="create-error">
+            {createError}
+          </Alert>
+        ) : null}
+        {cancelError ? (
+          <Alert color="red" variant="light" data-testid="cancel-error">
+            {cancelError}
+          </Alert>
+        ) : null}
+        {clientError ? (
+          <Alert color="red" variant="light" data-testid="client-error">
+            {clientError}
+          </Alert>
+        ) : null}
+      </Stack>
 
-      <section className="panel">
-        <h2>Nueva publicación</h2>
+      <Paper withBorder p="lg" radius="md">
         <form onSubmit={handleSubmit}>
-          <fieldset className="field">
-            <legend>Modo</legend>
-            <label className="radio">
-              <input
-                type="radio"
-                name="mode"
-                value="now"
-                checked={mode === 'now'}
-                onChange={() => setMode('now')}
-              />
-              Publicar ahora
-            </label>
-            <label className="radio">
-              <input
-                type="radio"
-                name="mode"
-                value="schedule"
-                checked={mode === 'schedule'}
-                onChange={() => setMode('schedule')}
-              />
-              Programar
-            </label>
-          </fieldset>
+          <Stack gap="lg">
+            <Title order={3}>Nueva publicación</Title>
 
-          <label className="field">
-            Texto ({text.length}/{textMax})
-            <textarea
+            <Radio.Group
+              label="Modo"
+              value={mode}
+              onChange={(v) => setMode(v as PublishMode)}
+            >
+              <Group mt="xs" gap="lg">
+                <Radio value="now" label="Publicar ahora" />
+                <Radio value="schedule" label="Programar" />
+              </Group>
+            </Radio.Group>
+
+            <Textarea
+              label={`Texto (${text.length}/${textMax})`}
               value={text}
-              onChange={(e) => setText(e.target.value)}
-              rows={5}
-              maxLength={textMax}
+              onChange={(e) => setText(e.currentTarget.value)}
               placeholder="Escribí el mensaje a publicar…"
+              minRows={5}
+              autosize
+              maxRows={20}
+              maxLength={textMax}
+              radius="lg"
+              error={textOver ? `Excede el límite (${textMax}).${hasPhoto ? ' Con foto el máximo es 1024 (caption).' : ''}` : undefined}
+              styles={{ input: { fontSize: '0.95rem' } }}
             />
-            {textOver ? (
-              <span className="form-error">
-                Excede el límite ({textMax}).{hasPhoto ? ' Con foto el máximo es 1024 (caption).' : ''}
-              </span>
-            ) : null}
-          </label>
 
-          <label className="field">
-            Foto (URL pública, opcional, ≤ 5 MB)
-            <input
+            <TextInput
               type="url"
+              label="Foto (URL pública, opcional, ≤ 5 MB)"
               value={photoUrl}
-              onChange={(e) => setPhotoUrl(e.target.value)}
+              onChange={(e) => setPhotoUrl(e.currentTarget.value)}
               placeholder="https://ejemplo.com/imagen.jpg"
+              radius="md"
             />
-          </label>
 
-          <fieldset className="field">
-            <legend>Grupos ({selectedCount}/{MAX_GROUPS})</legend>
-            {groups.data?.length === 0 ? (
-              <p className="state-block-weak">Cargando grupos…</p>
-            ) : (
-              <div className="group-checkboxes">
-                {groups.data?.map((g) => (
-                  <label key={g.telegram_id} className="checkbox">
-                    <input
-                      type="checkbox"
+            <Stack gap="xs">
+              <Text fw={500} size="sm">
+                Grupos ({selectedCount}/{MAX_GROUPS})
+              </Text>
+              {groups.data?.length === 0 ? (
+                <Group gap="xs">
+                  <Loader size="xs" />
+                  <Text size="sm" c="dimmed">Cargando grupos…</Text>
+                </Group>
+              ) : (
+                <Stack gap={6}>
+                  {groups.data?.map((g) => (
+                    <Checkbox
+                      key={g.telegram_id}
+                      label={g.title}
                       checked={selectedGroupIds.includes(g.telegram_id)}
                       onChange={() => toggleGroup(g.telegram_id)}
                       disabled={
                         !selectedGroupIds.includes(g.telegram_id) && selectedCount >= MAX_GROUPS
                       }
                     />
-                    {g.title}
-                  </label>
-                ))}
-              </div>
-            )}
-          </fieldset>
+                  ))}
+                </Stack>
+              )}
+            </Stack>
 
-          {mode === 'schedule' ? (
-            <label className="field">
-              Fecha y hora (zona horaria local del navegador)
-              <input
+            {mode === 'schedule' ? (
+              <TextInput
                 type="datetime-local"
+                label="Fecha y hora (zona horaria local del navegador)"
                 value={scheduledLocal}
-                onChange={(e) => setScheduledLocal(e.target.value)}
+                onChange={(e) => setScheduledLocal(e.currentTarget.value)}
+                leftSection={<IconCalendar size={16} />}
+                radius="md"
               />
-            </label>
-          ) : null}
+            ) : null}
 
-          <div className="field">
-            <span>Botones inline (URL, opcional)</span>
-            <ButtonsEditor value={buttons} onChange={setButtons} />
-          </div>
+            <Stack gap="xs">
+              <Text fw={500} size="sm">
+                Botones inline (URL, opcional)
+              </Text>
+              <ButtonsEditor value={buttons} onChange={setButtons} />
+            </Stack>
 
-          <button
-            type="submit"
-            className="btn btn-primary"
-            disabled={create.isPending || !text.trim() || selectedCount === 0 || textOver}
-          >
-            {create.isPending
-              ? mode === 'schedule'
-                ? 'Programando…'
-                : 'Publicando…'
-              : mode === 'schedule'
-                ? 'Programar'
-                : 'Publicar ahora'}
-          </button>
+            <Group justify="flex-end">
+              <Button
+                type="submit"
+                leftSection={<IconSend size={16} />}
+                disabled={create.isPending || !text.trim() || selectedCount === 0 || textOver}
+                loading={create.isPending}
+              >
+                {create.isPending
+                  ? mode === 'schedule'
+                    ? 'Programando…'
+                    : 'Publicando…'
+                  : mode === 'schedule'
+                    ? 'Programar'
+                    : 'Publicar ahora'}
+              </Button>
+            </Group>
+          </Stack>
         </form>
-      </section>
+      </Paper>
 
-      <section>
-        <h2>Historial</h2>
+      <Paper withBorder p="lg" radius="md">
+        <Stack gap="md">
+          <Title order={3}>Historial</Title>
 
-        <label className="field">
-          Filtrar por grupo
-          <select
+          <NativeSelect
+            label="Filtrar por grupo"
+            name="filter-group"
             value={filterGid === 'all' ? 'all' : String(filterGid)}
             onChange={(e) => {
-              const v = e.target.value
+              const v = e.currentTarget.value
               setFilterGid(v === 'all' ? 'all' : Number(v))
               setOffset(0) // reset paginacion al cambiar filtro
             }}
-          >
-            <option value="all">Todos</option>
-            {groups.data?.map((g) => (
-              <option key={g.telegram_id} value={String(g.telegram_id)}>
-                {g.title}
-              </option>
-            ))}
-          </select>
-        </label>
+            data={[
+              { value: 'all', label: 'Todos' },
+              ...(groups.data?.map((g) => ({
+                value: String(g.telegram_id),
+                label: g.title,
+              })) ?? []),
+            ]}
+            radius="md"
+          />
 
-        {publications.isPending ? <p className="state-block">Cargando publicaciones…</p> : null}
+          {publications.isPending ? (
+            <Group gap="xs">
+              <Loader size="sm" />
+              <Text size="sm" c="dimmed">Cargando publicaciones…</Text>
+            </Group>
+          ) : null}
 
-        {publications.isError ? (
-          <div className="state-block state-error">
-            <p>
-              {publications.error instanceof Error
-                ? publications.error.message
-                : 'No se pudieron cargar las publicaciones.'}
-            </p>
-            <button type="button" className="btn" onClick={() => publications.refetch()}>
-              Reintentar
-            </button>
-          </div>
-        ) : null}
+          {publications.isError ? (
+            <Alert color="red" variant="light">
+              <Stack gap="xs">
+                <Text size="sm">
+                  {publications.error instanceof Error
+                    ? publications.error.message
+                    : 'No se pudieron cargar las publicaciones.'}
+                </Text>
+                <Group>
+                  <Button variant="default" size="xs" onClick={() => publications.refetch()}>
+                    Reintentar
+                  </Button>
+                </Group>
+              </Stack>
+            </Alert>
+          ) : null}
 
-        {publications.data && publications.data.length === 0 ? (
-          <p className="state-block">No hay publicaciones.</p>
-        ) : null}
+          {publications.data && publications.data.length === 0 ? (
+            <Text size="sm" c="dimmed">No hay publicaciones.</Text>
+          ) : null}
 
-        {publications.data && publications.data.length > 0 ? (
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Mensaje</th>
-                  <th>Foto</th>
-                  <th>Botones</th>
-                  <th>Grupo</th>
-                  <th>Estado</th>
-                  <th>Fecha</th>
-                  <th>Acción</th>
-                </tr>
-              </thead>
-              <tbody>
-                {publications.data.map((pub) => (
-                  <PublicationRow
-                    key={pub.id}
-                    pub={pub}
-                    groupName={groupName}
-                    onCancel={handleCancel}
-                    isCanceling={cancel.isPending && cancel.variables === pub.id}
-                  />
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : null}
+          {publications.data && publications.data.length > 0 ? (
+            <Table.ScrollContainer minWidth={900}>
+              <Table striped highlightOnHover withTableBorder withColumnBorders verticalSpacing="sm">
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Mensaje</Table.Th>
+                    <Table.Th>Foto</Table.Th>
+                    <Table.Th>Botones</Table.Th>
+                    <Table.Th>Grupo</Table.Th>
+                    <Table.Th>Estado</Table.Th>
+                    <Table.Th>Fecha</Table.Th>
+                    <Table.Th>Acción</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {publications.data.map((pub) => (
+                    <PublicationRow
+                      key={pub.id}
+                      pub={pub}
+                      groupName={groupName}
+                      onCancel={handleCancel}
+                      isCanceling={cancel.isPending && cancel.variables === pub.id}
+                    />
+                  ))}
+                </Table.Tbody>
+              </Table>
+            </Table.ScrollContainer>
+          ) : null}
 
-        <nav className="pagination" aria-label="Paginación">
-          <button
-            type="button"
-            className="btn"
-            disabled={!canPrev}
-            onClick={() => setOffset(Math.max(0, offset - DEFAULT_LIST_LIMIT))}
-          >
-            ← Anterior
-          </button>
-          <span className="pagination-info">Página offset={offset}</span>
-          <button
-            type="button"
-            className="btn"
-            disabled={!canNext}
-            onClick={() => setOffset(offset + DEFAULT_LIST_LIMIT)}
-          >
-            Siguiente →
-          </button>
-        </nav>
-      </section>
-    </main>
+          <Group justify="space-between">
+            <Button
+              variant="default"
+              disabled={!canPrev}
+              onClick={() => setOffset(Math.max(0, offset - DEFAULT_LIST_LIMIT))}
+            >
+              ← Anterior
+            </Button>
+            <Text size="sm" c="dimmed">Página offset={offset}</Text>
+            <Button
+              variant="default"
+              disabled={!canNext}
+              onClick={() => setOffset(offset + DEFAULT_LIST_LIMIT)}
+            >
+              Siguiente →
+            </Button>
+          </Group>
+        </Stack>
+      </Paper>
+    </Stack>
   )
 }
 
@@ -399,9 +443,9 @@ function PublicationRow({
   }, [pub.buttons])
   const canCancel = pub.status === 'scheduled'
   return (
-    <tr>
-      <td title={pub.text}>{truncate(pub.text)}</td>
-      <td>
+    <Table.Tr>
+      <Table.Td title={pub.text}>{truncate(pub.text)}</Table.Td>
+      <Table.Td>
         {pub.photo_url ? (
           <img
             src={pub.photo_url}
@@ -411,46 +455,52 @@ function PublicationRow({
         ) : (
           '—'
         )}
-      </td>
-      <td>
+      </Table.Td>
+      <Table.Td>
         {buttonsPreview && buttonsPreview.length > 0 ? (
-          <div className="button-chips">
+          <Stack gap={4}>
             {buttonsPreview.map((row, i) => (
-              <div key={i} className="button-chip-row">
+              <Group gap={4} key={i}>
                 {row.map((btn, j) => (
-                  <span key={j} className="button-chip" title={btn.url}>
+                  <Badge key={j} variant="light" title={btn.url}>
                     {btn.text || '(sin texto)'}
-                  </span>
+                  </Badge>
                 ))}
-              </div>
+              </Group>
             ))}
-          </div>
+          </Stack>
         ) : (
           '—'
         )}
-      </td>
-      <td>{groupName(pub.telegram_id)}</td>
-      <td>
-        <span className={`badge badge-${pub.status}`}>{STATUS_LABEL[pub.status]}</span>
+      </Table.Td>
+      <Table.Td>{groupName(pub.telegram_id)}</Table.Td>
+      <Table.Td>
+        <Badge color={STATUS_COLOR[pub.status]} variant="light">
+          {STATUS_LABEL[pub.status]}
+        </Badge>
         {pub.status === 'scheduled' && pub.scheduled_at ? (
-          <div className="state-block-weak">para {formatDate(pub.scheduled_at)}</div>
+          <Text size="xs" c="dimmed" mt={4}>
+            para {formatDate(pub.scheduled_at)}
+          </Text>
         ) : null}
-      </td>
-      <td>{formatDate(pub.created_at)}</td>
-      <td>
+      </Table.Td>
+      <Table.Td>{formatDate(pub.created_at)}</Table.Td>
+      <Table.Td>
         {canCancel ? (
-          <button
-            type="button"
-            className="btn btn-danger"
+          <Button
+            size="xs"
+            color="red"
+            variant="light"
+            leftSection={<IconTrash size={14} />}
             onClick={() => onCancel(pub.id)}
             disabled={isCanceling}
           >
             {isCanceling ? 'Cancelando…' : 'Cancelar'}
-          </button>
+          </Button>
         ) : (
           '—'
         )}
-      </td>
-    </tr>
+      </Table.Td>
+    </Table.Tr>
   )
 }

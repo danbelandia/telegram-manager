@@ -4,6 +4,9 @@
 // por fila, text<=64, url http(s) — la validacion final vive en el
 // servicio, este componente solo evita que el cliente envie algo
 // trivialmente invalido.
+// Migrado a Mantine v7 (frontend-refresh slice 2 ad-hoc).
+import { ActionIcon, Button, Group, Paper, Stack, Text, TextInput } from '@mantine/core'
+import { IconPlus, IconTrash } from '@tabler/icons-react'
 import type { InlineButton } from './types'
 
 interface ButtonsEditorProps {
@@ -49,71 +52,114 @@ export default function ButtonsEditor({ value, onChange }: ButtonsEditorProps) {
     )
   }
 
+  if (value.length === 0) {
+    return (
+      <Stack gap="sm">
+        <Text size="sm" c="dimmed">
+          Botones inline (URL): máximo 8 filas × 8 botones.
+        </Text>
+        <Group>
+          <Button
+            type="button"
+            variant="default"
+            leftSection={<IconPlus size={16} />}
+            onClick={addRow}
+          >
+            + Agregar fila de botones
+          </Button>
+        </Group>
+      </Stack>
+    )
+  }
+
   return (
-    <div className="buttons-editor">
-      <p className="state-block-weak">Botones inline (URL): máximo 8 filas × 8 botones.</p>
-      {value.length === 0 ? (
-        <button type="button" className="btn" onClick={addRow}>
-          + Agregar fila de botones
-        </button>
-      ) : (
-        <>
-          {value.map((row, rowIdx) => (
-            <div key={rowIdx} className="buttons-editor-row">
-              <div className="buttons-editor-row-header">
-                <strong>Fila {rowIdx + 1}</strong>
-                <button
+    <Stack gap="sm">
+      <Text size="sm" c="dimmed">
+        Botones inline (URL): máximo 8 filas × 8 botones.
+      </Text>
+
+      <Stack gap="sm">
+        {value.map((row, rowIdx) => (
+          <Paper key={rowIdx} withBorder p="md" radius="md">
+            <Stack gap="sm">
+              <Group justify="space-between">
+                <Text fw={600} size="sm">Fila {rowIdx + 1}</Text>
+                <Button
                   type="button"
-                  className="btn btn-danger"
+                  size="xs"
+                  color="red"
+                  variant="light"
+                  leftSection={<IconTrash size={14} />}
                   onClick={() => removeRow(rowIdx)}
                   aria-label={`Quitar fila ${rowIdx + 1}`}
                 >
                   Quitar fila
-                </button>
-              </div>
-              {row.map((btn, btnIdx) => (
-                <div key={btnIdx} className="buttons-editor-btn">
-                  <input
-                    type="text"
-                    placeholder="Texto del botón"
-                    value={btn.text}
-                    maxLength={64}
-                    onChange={(e) => updateButton(rowIdx, btnIdx, 'text', e.target.value)}
-                    aria-label={`Texto del botón ${rowIdx + 1}.${btnIdx + 1}`}
-                  />
-                  <input
-                    type="url"
-                    placeholder="https://..."
-                    value={btn.url}
-                    maxLength={256}
-                    onChange={(e) => updateButton(rowIdx, btnIdx, 'url', e.target.value)}
-                    aria-label={`URL del botón ${rowIdx + 1}.${btnIdx + 1}`}
-                  />
-                  <button
-                    type="button"
-                    className="btn btn-danger"
-                    onClick={() => removeButton(rowIdx, btnIdx)}
-                    aria-label={`Quitar botón ${rowIdx + 1}.${btnIdx + 1}`}
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-              <button
-                type="button"
-                className="btn"
-                onClick={() => addButton(rowIdx)}
-                disabled={row.length >= 8}
-              >
-                + Agregar botón a la fila
-              </button>
-            </div>
-          ))}
-          <button type="button" className="btn" onClick={addRow} disabled={value.length >= 8}>
-            + Agregar fila de botones
-          </button>
-        </>
-      )}
-    </div>
+                </Button>
+              </Group>
+
+              <Stack gap="xs">
+                {row.map((btn, btnIdx) => (
+                  <Group key={btnIdx} gap="xs" wrap="nowrap" align="flex-start">
+                    <TextInput
+                      style={{ flex: 1 }}
+                      placeholder="Texto del botón"
+                      value={btn.text}
+                      maxLength={64}
+                      onChange={(e) => updateButton(rowIdx, btnIdx, 'text', e.currentTarget.value)}
+                      aria-label={`Texto del botón ${rowIdx + 1}.${btnIdx + 1}`}
+                      radius="md"
+                    />
+                    <TextInput
+                      style={{ flex: 1 }}
+                      type="url"
+                      placeholder="https://..."
+                      value={btn.url}
+                      maxLength={256}
+                      onChange={(e) => updateButton(rowIdx, btnIdx, 'url', e.currentTarget.value)}
+                      aria-label={`URL del botón ${rowIdx + 1}.${btnIdx + 1}`}
+                      radius="md"
+                    />
+                    <ActionIcon
+                      type="button"
+                      color="red"
+                      variant="light"
+                      onClick={() => removeButton(rowIdx, btnIdx)}
+                      aria-label={`Quitar botón ${rowIdx + 1}.${btnIdx + 1}`}
+                    >
+                      <IconTrash size={14} />
+                    </ActionIcon>
+                  </Group>
+                ))}
+              </Stack>
+
+              <Group>
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="default"
+                  leftSection={<IconPlus size={14} />}
+                  onClick={() => addButton(rowIdx)}
+                  disabled={row.length >= 8}
+                >
+                  + Agregar botón a la fila
+                </Button>
+              </Group>
+            </Stack>
+          </Paper>
+        ))}
+      </Stack>
+
+      <Group>
+        <Button
+          type="button"
+          variant="default"
+          leftSection={<IconPlus size={16} />}
+          onClick={addRow}
+          disabled={value.length >= 8}
+        >
+          + Agregar fila de botones
+        </Button>
+      </Group>
+    </Stack>
   )
 }

@@ -5,6 +5,16 @@ import '@testing-library/jest-dom/vitest'
 import { cleanup } from '@testing-library/react'
 import { afterEach } from 'vitest'
 
+// Mantine v7 usa ResizeObserver (Tabler icons lo requiere para
+// layout). jsdom no lo provee — stubbamos un observer no-op.
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+;(globalThis as { ResizeObserver?: unknown }).ResizeObserver =
+  (globalThis as { ResizeObserver?: unknown }).ResizeObserver ?? ResizeObserverStub
+
 afterEach(() => {
   cleanup()
 })

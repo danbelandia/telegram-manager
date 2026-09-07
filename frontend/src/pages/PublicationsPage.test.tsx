@@ -4,13 +4,11 @@
 // foto + botones, filtro por grupo que recarga con `?group_id=`, modo
 // Programar, validacion de fecha pasada, Cancelar visible solo en
 // scheduled, y Prev/Next funcional.
-import { render, screen, waitFor } from '@testing-library/react'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { MemoryRouter } from 'react-router-dom'
+import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import PublicationsPage from './PublicationsPage'
-import { errorJson, matchQuery, mockFetchRoutes, okJson } from '../test/helpers'
+import { errorJson, matchQuery, mockFetchRoutes, okJson, renderWithProviders } from '../test/helpers'
 
 const groups = [
   {
@@ -78,12 +76,7 @@ const pubs = [
 ]
 
 function renderPage() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={['/publications']}>{<PublicationsPage />}</MemoryRouter>
-    </QueryClientProvider>,
-  )
+  return renderWithProviders(<PublicationsPage />, ['/publications'])
 }
 
 describe('PublicationsPage', () => {
