@@ -1,0 +1,41 @@
+# State — rest-api
+
+change: rest-api
+created: 2026-09-06
+status: tasks done — pendiente apply (decision requerida: chained PRs)
+
+phases:
+  explore: done (obs 132)
+  propose: done (obs 133)
+  spec: done (obs 134)
+  design: done (obs 135)
+  tasks: done (obs 136)
+  apply: pending (PR1 → PR2 → PR3)
+  apply: pending
+  verify: pending
+  archive: pending
+
+artifacts:
+  - openspec/changes/rest-api/exploration.md
+  - openspec/changes/rest-api/proposal.md
+  - openspec/changes/rest-api/specs/telegram-moderation/spec.md
+  - openspec/changes/rest-api/specs/admin-logs/spec.md
+  - openspec/changes/rest-api/specs/group-administration/spec.md
+  - openspec/changes/rest-api/specs/join-requests/spec.md
+  - openspec/changes/rest-api/design.md
+  - openspec/changes/rest-api/tasks.md
+  - engram: sdd/rest-api/explore (obs 132), sdd/rest-api/proposal (obs 133), sdd/rest-api/spec (obs 134), sdd/rest-api/design (obs 135), sdd/rest-api/tasks (obs 136)
+
+commits:
+  - (ninguno aún)
+
+branch: feat/rest-api (base feat/auth — misma chain, aún sin remote)
+
+delivery_strategy: ask-on-risk
+chain_strategy: feature-branch-chain
+review_400_budget: Alto riesgo — se esperan >400 líneas; PRs encadenados por work unit (guard §E)
+
+decisiones_usuario:
+  P1 group_members: documentar y omitir la tabla (Telegram no permite listar miembros)
+  P2 users: implementar lookup puntual getChatMember + admins getChatAdministrators
+  alcance: "Todo el paso 10 de una vez" (4 capabilities en el mismo cambio)
