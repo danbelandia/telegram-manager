@@ -6,6 +6,10 @@ Capa de integración que expone las acciones administrativas de la Bot
 API de Telegram (AGENTS.md §15) como métodos tipados de un Service,
 ejecutadas con POST+JSON, protegidas por un rate limiter token bucket
 (§18.1) y con errores de dominio mapeados desde los errores de la API.
+Además de moderación, el adapter cubre los métodos de publicación a
+grupos (`SendMessage`, `SendPhoto`) introducidos en slice 2 de
+publications, respetando los mismos principios (token en path, rate
+limiter, errores tipados).
 
 ## Requirements
 
@@ -103,3 +107,103 @@ paralelo sin control.
 - WHEN se ejecuta un método de moderación
 - THEN tras 3 reintentos devuelve `RateLimitError` sin seguir
   reintentando a ciegas
+
+---
+
+## Slice 2 Additions (2026-09-07 — SendPhoto + InlineKeyboard + SendMessage signature)
+
+Las siguientes requirements fueron agregadas por el slice 2 de
+publications. El núcleo de la spec canónica (los 4 requirements de
+moderación arriba) **no cambia**: las nuevas requirements extienden el
+`Service` con tipos públicos serializables a la Bot API y con los
+métodos de publicación que requieren el mismo transporte y rate limit
+que la moderación.
+
+### ADDED Requirements
+
+### Requirement: Tipos InlineKeyboardMarkup e InlineKeyboardButton
+
+El paquete `telegram` MUST exponer tipos públicos serializables al
+JSON esperado por la Bot API:
+
+```go
+type InlineKeyboardButton struct {
+    Text string `json:"text"`
+    URL  string `json:"url"`
+}
+type InlineKeyboardMarkup struct {
+    InlineKeyboard [][]InlineKeyboardButton `json:"inline_keyboard"`
+}
+```
+
+El nombre del tag JSON del campo array MUST ser `inline_keyboard` y
+los nombres de los campos del botón MUST ser `text` y `url`. La
+serialización MUST ser validada por tests con un payload JSON exacto
+que coincida con el formato de la Bot API.
+
+#### Scenario: Serialización a JSON de la Bot API
+
+- GIVEN un `InlineKeyboardMarkup` con dos filas (1 botón + 2 botones)
+- WHEN se serializa con `json.Marshal`
+- THEN el resultado contiene la clave
+  `"inline_keyboard": [[{"text":"A","url":"https://..."}], [{"text":"B","url":"https://..."},{"text":"C","url":"https://..."}]]`
+
+### Requirement: SendMessage en el adapter (con teclado opcional)
+
+El `telegram.Service` MUST exponer
+`SendMessage(ctx, chatID int64, text string, disableWebPagePreview bool, keyboard *InlineKeyboardMarkup) (int64, error)`
+que invoque el método `sendMessage` de la Bot API. El parámetro
+`keyboard` es opcional: si no es nil, se serializa como `reply_markup`
+en el body. Si es nil, se omite del payload (`omitempty`). La llamada
+MUST pasar por `doWithRetry` (429 con max 3 reintentos) y respetar el
+rate limiter token bucket (§18.1). El retorno es el `message_id` de
+Telegram.
+
+#### Scenario: SendMessage con teclado
+
+- GIVEN un `*InlineKeyboardMarkup` con una fila de un botón
+- WHEN se llama `SendMessage(ctx, chatID, text, false, keyboard)`
+- THEN el body del request contiene `reply_markup.inline_keyboard`
+  con la fila serializada correctamente; el método devuelve el
+  `message_id` sin error
+
+#### Scenario: SendMessage sin teclado omite reply_markup
+
+- GIVEN `keyboard = nil`
+- WHEN se serializa el body del request
+- THEN el campo `reply_markup` no está presente (omitempty)
+
+#### Scenario: 429 con retry_after
+
+- GIVEN un stub que responde 429 con `retry_after=2`
+- WHEN se llama `SendMessage`
+- THEN se espera 2s, se reintenta, y si el reintento es exitoso
+  devuelve el `message_id`
+
+### Requirement: Adapter SendPhoto
+
+El `telegram.Service` MUST exponer
+`SendPhoto(ctx, chatID int64, photoURL, caption string, keyboard *InlineKeyboardMarkup) (int64, error)`
+que invoca el método `sendPhoto` de la Bot API. La foto se envía por
+**URL pública** (Telegram la descarga; ≤ 5 MB). El caption MUST
+aceptar hasta 1024 caracteres. El `keyboard` opcional: si no es nil,
+se serializa como `reply_markup` (con `omitempty` se omite cuando nil).
+La llamada MUST pasar por `doWithRetry` (429 con max 3 reintentos) y
+respetar el token bucket. Devuelve el `message_id` de Telegram. En
+error, el `error_message` propagado MUST ser legible (sin filtrar el
+token del bot).
+
+#### Scenario: SendPhoto exitoso
+
+- GIVEN un adapter con token válido y stub que responde con
+  `{ok:true, result:{message_id:42}}`
+- WHEN se llama `SendPhoto(ctx, chatID, "https://x/y.jpg", "hola", nil)`
+- THEN el método HTTP invocado es `sendPhoto`, los campos enviados son
+  `chat_id`, `photo` (=URL), `caption`="hola"; retorna `(42, nil)`
+
+#### Scenario: SendPhoto con teclado
+
+- GIVEN un `*InlineKeyboardMarkup` no nil con una fila de dos botones
+- WHEN se llama `SendPhoto(..., keyboard)`
+- THEN el body contiene `reply_markup.inline_keyboard` con la
+  estructura JSON exacta esperada por la Bot API
