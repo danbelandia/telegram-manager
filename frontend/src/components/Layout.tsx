@@ -1,49 +1,122 @@
-// Layout persistente del panel (wireframe AGENTS 16): sidebar + header
-// y las rutas hijas se renderizan en <Outlet /> — no se duplica en cada
-// pagina (guia frontend seccion 8).
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+// Layout autenticado del panel (frontend-refresh slice 1 — design D6).
+// Reemplaza el `<div className="layout">` ad-hoc por AppShell de Mantine:
+// header 60px con brand + ColorSchemeToggle + boton Logout, navbar 260px
+// con los NavLinks a rutas globales + icono Tabler, y `<Outlet/>` en
+// AppShell.Main para las rutas hijas (spec frontend-routing).
+// El wrapping `<RequireAuth><Layout/></RequireAuth>` se conserva en App.tsx
+// — LoginPage queda FUERA del AppShell.
+// Layout autenticado del panel (frontend-refresh slice 1 — design D6).
+// Reemplaza el `<div className="layout">` ad-hoc por AppShell de Mantine:
+// header 60px con brand + ColorSchemeToggle + boton Logout, navbar 260px
+// con los NavLinks a rutas globales + icono Tabler, y `<Outlet/>` en
+// AppShell.Main para las rutas hijas (spec frontend-routing).
+// El wrapping `<RequireAuth><Layout/></RequireAuth>` se conserva en App.tsx
+// — LoginPage queda FUERA del AppShell.
+import {
+  AppShell,
+  Burger,
+  Group,
+  NavLink,
+  Stack,
+  Text,
+  Title,
+  Button,
+} from '@mantine/core'
+import { useDisclosure } from '@mantine/hooks'
+import {
+  IconLayoutDashboard,
+  IconUsersGroup,
+  IconSend,
+  IconLogout,
+} from '@tabler/icons-react'
+import { Link, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth-context'
+import { notifySuccess } from '../lib/notifications'
+import ColorSchemeToggle from './ColorSchemeToggle'
 
-const navLinkClass = ({ isActive }: { isActive: boolean }) =>
-  `layout-nav-link${isActive ? ' layout-nav-link-active' : ''}`
+type NavItem = {
+  to: string
+  label: string
+  icon: React.ComponentType<{ size?: number }>
+}
+
+const NAV_ITEMS: ReadonlyArray<NavItem> = [
+  { to: '/dashboard', label: 'Dashboard', icon: IconLayoutDashboard },
+  { to: '/groups', label: 'Grupos', icon: IconUsersGroup },
+  { to: '/publications', label: 'Publicaciones', icon: IconSend },
+]
 
 export default function Layout() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
+  const [mobileOpened, { toggle: toggleMobile }] = useDisclosure(false)
 
   const handleLogout = async () => {
     await logout()
+    notifySuccess('Sesión cerrada')
     navigate('/login', { replace: true })
   }
 
   return (
-    <div className="layout">
-      <aside className="layout-sidebar">
-        <div className="layout-brand">Telegram Manager</div>
-        <nav className="layout-nav">
-          <NavLink to="/dashboard" end className={navLinkClass}>
-            Dashboard
-          </NavLink>
-          <NavLink to="/groups" className={navLinkClass}>
-            Grupos
-          </NavLink>
-          <NavLink to="/publications" className={navLinkClass}>
-            Publicaciones
-          </NavLink>
-        </nav>
-      </aside>
+    <AppShell
+      header={{ height: 60 }}
+      navbar={{
+        width: 260,
+        breakpoint: 'sm',
+        collapsed: { mobile: !mobileOpened },
+      }}
+      padding="md"
+    >
+      <AppShell.Header>
+        <Group h="100%" px="md" justify="space-between" wrap="nowrap">
+          <Group gap="sm" wrap="nowrap">
+            <Burger
+              opened={mobileOpened}
+              onClick={toggleMobile}
+              hiddenFrom="sm"
+              size="sm"
+            />
+            <Title order={4} fw={700}>
+              Telegram Manager
+            </Title>
+          </Group>
+          <Group gap="sm" wrap="nowrap">
+            {user ? (
+              <Text size="sm" c="dimmed" visibleFrom="sm">
+                {user.username}
+              </Text>
+            ) : null}
+            <ColorSchemeToggle />
+            <Button
+              variant="default"
+              leftSection={<IconLogout size={16} />}
+              onClick={handleLogout}
+              data-testid="logout-button"
+            >
+              Salir
+            </Button>
+          </Group>
+        </Group>
+      </AppShell.Header>
 
-      <div className="layout-main">
-        <header className="layout-header">
-          {user ? <span className="layout-user">{user.username}</span> : null}
-          <button type="button" className="btn btn-secondary" onClick={handleLogout}>
-            Salir
-          </button>
-        </header>
-        <main className="layout-content">
-          <Outlet />
-        </main>
-      </div>
-    </div>
+      <AppShell.Navbar p="md">
+        <Stack gap="xs">
+          {NAV_ITEMS.map((item) => (
+            <NavLink
+              key={item.to}
+              component={Link}
+              to={item.to}
+              label={item.label}
+              leftSection={<item.icon size={18} />}
+              data-testid={`nav-${item.to.replace('/', '') || 'root'}`}
+            />
+          ))}
+        </Stack>
+      </AppShell.Navbar>
+
+      <AppShell.Main>
+        <Outlet />
+      </AppShell.Main>
+    </AppShell>
   )
 }
