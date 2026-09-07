@@ -7,6 +7,7 @@ import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { formatModerationError } from '../features/moderation/error'
 import { useDeleteMessage, useLockGroup, usePinMessage, useUnlockGroup } from '../features/moderation/hooks'
+import { formatPermissions } from '../features/groups/permissions'
 import { useGroup } from '../features/groups/hooks'
 
 function formatMembers(count: number | null): string {
@@ -112,12 +113,9 @@ export default function GroupDetailPage() {
           <dd>{group.bot_status}</dd>
         </div>
         <div>
-          <dt>Permisos</dt>
+          <dt>Permisos del bot</dt>
           <dd>
-            {Object.entries(group.bot_permissions)
-              .filter(([, v]) => v)
-              .map(([k]) => k)
-              .join(', ') || 'Sin permisos'}
+            {formatPermissions(group.bot_permissions).join(', ') || 'Sin permisos'}
           </dd>
         </div>
       </dl>

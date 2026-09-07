@@ -46,7 +46,14 @@ describe('DashboardPage', () => {
     expect(screen.getByText('@muonline')).toBeInTheDocument()
     expect(screen.getByText('ID: -100123456789')).toBeInTheDocument()
     expect(screen.getByText('Miembros: 4.821')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Administrar' })).toHaveAttribute('href', '/groups/1')
+    // El detalle se resuelve por telegram_id, no por el id de BD (bug
+    // corregido: antes el link apuntaba a /groups/1 -> "grupo no encontrado").
+    expect(screen.getByRole('link', { name: 'Administrar' })).toHaveAttribute(
+      'href',
+      '/groups/-100123456789',
+    )
+    // Los permisos se muestran legibles, no como claves tecnicas can_*.
+    expect(screen.getByText('Eliminar mensajes, Restringir miembros')).toBeInTheDocument()
   })
 
   it('muestra estado vacio cuando no hay grupos', async () => {

@@ -1,7 +1,9 @@
 // Dashboard: lista de grupos administrables (AGENTS 6). TanStack Query
 // con estados loading/vacio/error y reintento manual; cada grupo lleva
-// "Administrar" -> /groups/:id (spec frontend-dashboard).
+// "Administrar" -> /groups/:telegram_id (spec frontend-dashboard; el
+// backend resuelve el detalle por telegram_id, no por id de BD).
 import { Link } from 'react-router-dom'
+import { formatPermissions } from '../features/groups/permissions'
 import { useGroups } from '../features/groups/hooks'
 
 function formatMembers(count: number | null): string {
@@ -10,9 +12,7 @@ function formatMembers(count: number | null): string {
 }
 
 function GroupPermissions({ permissions }: { permissions: Record<string, boolean> }) {
-  const active = Object.entries(permissions)
-    .filter(([, value]) => value)
-    .map(([key]) => key)
+  const active = formatPermissions(permissions)
   if (active.length === 0) return <span>Sin permisos</span>
   return <span>{active.join(', ')}</span>
 }
@@ -61,7 +61,7 @@ export default function DashboardPage() {
                   <GroupPermissions permissions={g.bot_permissions} />
                 </div>
               </div>
-              <Link to={`/groups/${g.id}`} className="btn btn-primary">
+              <Link to={`/groups/${g.telegram_id}`} className="btn btn-primary">
                 Administrar
               </Link>
             </li>

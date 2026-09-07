@@ -55,6 +55,12 @@ describe('GroupDetailPage', () => {
     expect(await screen.findByText('MU Online Comunidad')).toBeInTheDocument()
     expect(screen.getByText('-100123')).toBeInTheDocument()
     expect(screen.getByText('4.821')).toBeInTheDocument()
+    // Permisos legibles en es-AR (la API los manda como claves can_*).
+    expect(
+      screen.getByText(
+        'Restringir miembros, Eliminar mensajes, Fijar mensajes, Invitar usuarios, Cambiar la información del grupo',
+      ),
+    ).toBeInTheDocument()
   })
 
   it('muestra grupo inexistente cuando el backend responde NOT_FOUND', async () => {
