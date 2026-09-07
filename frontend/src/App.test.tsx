@@ -1,20 +1,26 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
+import { MantineProvider } from '@mantine/core'
+import { Notifications } from '@mantine/notifications'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 import { AuthProvider } from './lib/auth-context'
+import { mantineTheme } from './theme'
 
 function renderApp(initialEntries: string[] = ['/']) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={initialEntries}>
-        <AuthProvider>
-          <App />
-        </AuthProvider>
-      </MemoryRouter>
-    </QueryClientProvider>,
+    <MantineProvider theme={mantineTheme} defaultColorScheme="light">
+      <Notifications position="top-right" />
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={initialEntries}>
+          <AuthProvider>
+            <App />
+          </AuthProvider>
+        </MemoryRouter>
+      </QueryClientProvider>
+    </MantineProvider>,
   )
 }
 

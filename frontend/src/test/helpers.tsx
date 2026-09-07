@@ -1,9 +1,16 @@
 // Helpers de test compartidos: envolver componentes con los providers
-// que la app usa (Auth + Query) y mockear la capa de auth.
+// que la app usa (Auth + Query + Router + Mantine + Notifications) y
+// mockear la capa de auth. `renderWithProviders` ahora provee el contexto
+// de Mantine para que los componentes que usan `<Button>`, `<TextInput>`,
+// etc. rendericen sin error de "MantineProvider was not found" (spec
+// REQ-11 — frontend-refresh slice 1).
 import { render } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { MantineProvider } from '@mantine/core'
+import { Notifications } from '@mantine/notifications'
 import { vi } from 'vitest'
+import { mantineTheme } from '../theme'
 
 export { render }
 
@@ -19,12 +26,18 @@ export function createTestQueryClient(): QueryClient {
   })
 }
 
+// Provider comun de la app: QueryClient + Router + Mantine + Notifications.
+// Notifications se monta para que los helpers notifySuccess/notifyError
+// puedan invocarse sin tirar en tests.
 export function renderWithProviders(ui: React.ReactNode, initialEntries: string[] = ['/']) {
   return render(ui, {
     wrapper: ({ children }) => (
-      <MemoryRouter initialEntries={initialEntries}>
-        <QueryClientProvider client={createTestQueryClient()}>{children}</QueryClientProvider>
-      </MemoryRouter>
+      <MantineProvider theme={mantineTheme} defaultColorScheme="light">
+        <Notifications position="top-right" />
+        <QueryClientProvider client={createTestQueryClient()}>
+          <MemoryRouter initialEntries={initialEntries}>{children}</MemoryRouter>
+        </QueryClientProvider>
+      </MantineProvider>
     ),
   })
 }
