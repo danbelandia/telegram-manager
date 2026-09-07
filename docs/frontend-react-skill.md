@@ -102,14 +102,19 @@ frontend/src/
 
 ## 6. Acciones destructivas
 
-- Toda acción irreversible o sensible (banear, expulsar, cerrar el
-  chat) pasa por un diálogo de confirmación explícito antes de llamar
+- Toda acción irreversible o sensible (banear, mutear, cerrar el chat,
+  eliminar mensaje) pasa por una confirmación explícita antes de llamar
   a la API — esto traduce a UI el requisito de la sección 4 del spec
-  ("confirmación para acciones destructivas importantes").
+  ("confirmación para acciones destructivas importantes"). En el MVP se
+  usa `window.confirm` (patrón de `GroupUsersPage`/`GroupDetailPage`),
+  no un diálogo custom: es lo más simple y tests lo stubbean directo.
 - El botón de confirmar queda deshabilitado mientras la request está en
-  vuelo, y muestra el resultado (éxito o el mensaje de error legible
-  que define la sección 18 del spec) antes de cerrar el diálogo — nunca
-  cerrar el diálogo de forma optimista sin esperar la respuesta.
+  vuelo (`mutation.isPending`), y el resultado (éxito o mensaje de
+  error §18) se muestra debajo — **no** cerrar de forma optimista.
+- Los errores de `mutate()` son asíncronos: **no** envolver la llamada
+  en try/catch (no captura nada). Leerlos de `mutation.error` y
+  formatearlos con `formatModerationError` (features/moderation/error),
+  que usa el mensaje legible del backend (§18) si llega.
 
 ## 7. Componentes de UI
 
@@ -154,3 +159,19 @@ frontend/src/
   (login, confirmación de ban) — no perseguir cobertura alta en
   componentes puramente visuales, consistente con el criterio de
   testing de la sección 21 del spec de backend.
+- Patrones establecidos (`features/moderation`):
+  - **Mock de fetch por substring de URL** (`src/test/helpers.tsx`):
+    `mockFetchRoutes({ '/api/.../users': () => okJson(...) })`. Las
+    claves anidadas (`.../users/42/ban`) deben ir **antes** que las que
+    son prefijo de ellas (`.../users`), porque matchea en orden de
+    inserción.
+  - **Confirmación**: `window.confirm = vi.fn(() => true|false)` antes
+    de renderizar. Tener cuidado con `vi.stubGlobal('confirm', ...)` y
+    `vi.spyOn(window, 'confirm')` — en jsdom no siempre aplican; la
+    asignación directa funciona.
+  - **Rutas con parámetros** (`/groups/:id`): envolver el componente en
+    `<MemoryRouter><Routes><Route path=... /></Routes></MemoryRouter>`
+    para que `useParams` reciba el id — renderizar el componente suelto
+    deja `useParams` vacío.
+  - **Errores de mutación**: asserton `mutation.error` derivado
+    (`approve.error ?? reject.error`), no excepciones sincrónicas.
