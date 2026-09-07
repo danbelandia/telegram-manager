@@ -1,8 +1,22 @@
-// Dashboard: lista de grupos administrables (AGENTS 6). TanStack Query
-// con estados loading/vacio/error y reintento manual; cada grupo lleva
-// "Administrar" -> /groups/:telegram_id (spec frontend-dashboard; el
-// backend resuelve el detalle por telegram_id, no por id de BD).
+// Dashboard migrado a Mantine (frontend-refresh slice 1 — design REQ-7).
+// SimpleGrid de Cards por grupo (titulo, tipo, miembros, permisos, bot
+// status, boton "Administrar"). Estados: Skeleton en loading, Alert de
+// error con reintento, Text vacio. Conserva los textos que las pruebas
+// existentes buscan (titulo, @username, "ID: -100...", "Miembros: 4.821",
+// permisos formateados, link Administrar → /groups/:telegram_id).
 import { Link } from 'react-router-dom'
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  Group,
+  SimpleGrid,
+  Skeleton,
+  Stack,
+  Text,
+  Title,
+} from '@mantine/core'
 import { formatPermissions } from '../features/groups/permissions'
 import { useGroups } from '../features/groups/hooks'
 
@@ -13,61 +27,94 @@ function formatMembers(count: number | null): string {
 
 function GroupPermissions({ permissions }: { permissions: Record<string, boolean> }) {
   const active = formatPermissions(permissions)
-  if (active.length === 0) return <span>Sin permisos</span>
-  return <span>{active.join(', ')}</span>
+  if (active.length === 0) return <Text size="sm">Sin permisos</Text>
+  return (
+    <Text size="sm" c="dimmed">
+      {active.join(', ')}
+    </Text>
+  )
+}
+
+function DashboardSkeleton() {
+  return (
+    <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="md">
+      {[0, 1, 2].map((i) => (
+        <Card key={i} withBorder padding="md" radius="md">
+          <Skeleton height={20} width="60%" mb="sm" />
+          <Skeleton height={14} width="40%" mb="xs" />
+          <Skeleton height={14} width="80%" mb="md" />
+          <Skeleton height={32} width={120} />
+        </Card>
+      ))}
+    </SimpleGrid>
+  )
 }
 
 export default function DashboardPage() {
   const { data: groups, isPending, isError, error, refetch } = useGroups()
 
   return (
-    <main className="page">
-      <h1>Dashboard</h1>
+    <Stack gap="md">
+      <Title order={2}>Dashboard</Title>
 
-      {isPending ? <p>Cargando grupos…</p> : null}
+      {isPending ? <DashboardSkeleton /> : null}
 
       {isError ? (
-        <div className="state-block state-error">
-          <p>
-            {error instanceof Error
-              ? error.message
-              : 'No se pudieron cargar los grupos. Intente de nuevo.'}
-          </p>
-          <button type="button" className="btn" onClick={() => refetch()}>
-            Reintentar
-          </button>
-        </div>
+        <Alert color="red" variant="light" title="Error">
+          <Stack gap="xs">
+            <Text size="sm">
+              {error instanceof Error
+                ? error.message
+                : 'No se pudieron cargar los grupos. Intente de nuevo.'}
+            </Text>
+            <Button variant="default" w={140} onClick={() => refetch()}>
+              Reintentar
+            </Button>
+          </Stack>
+        </Alert>
       ) : null}
 
       {!isPending && !isError && groups && groups.length === 0 ? (
-        <p className="state-block">
+        <Text c="dimmed">
           Todavía no hay grupos. Añadí el bot a un grupo y dale permisos de administrador.
-        </p>
+        </Text>
       ) : null}
 
       {!isPending && !isError && groups && groups.length > 0 ? (
-        <ul className="group-list">
+        <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="md">
           {groups.map((g) => (
-            <li key={g.id} className="group-card">
-              <div className="group-card-info">
-                <div className="group-card-title">
-                  {g.title}
-                  {g.username ? <span className="group-card-username">@{g.username}</span> : null}
-                </div>
-                <div className="group-card-meta">
-                  <span>ID: {g.telegram_id}</span>
-                  <span>Miembros: {formatMembers(g.member_count)}</span>
-                  <span>Bot: {g.bot_status}</span>
-                  <GroupPermissions permissions={g.bot_permissions} />
-                </div>
-              </div>
-              <Link to={`/groups/${g.telegram_id}`} className="btn btn-primary">
+            <Card key={g.id} withBorder padding="md" radius="md" data-testid="group-card">
+              <Stack gap={4} mb="sm">
+                <Group gap="xs" wrap="nowrap" align="baseline">
+                  <Title order={4} fw={600}>
+                    {g.title}
+                  </Title>
+                  {g.username ? (
+                    <Text size="sm" c="dimmed">
+                      @{g.username}
+                    </Text>
+                  ) : null}
+                </Group>
+                <Text size="sm" c="dimmed">
+                  ID: {g.telegram_id}
+                </Text>
+                <Text size="sm" c="dimmed">
+                  Miembros: {formatMembers(g.member_count)}
+                </Text>
+                <Group gap="xs">
+                  <Badge variant="light" color="blue">
+                    Bot: {g.bot_status}
+                  </Badge>
+                </Group>
+                <GroupPermissions permissions={g.bot_permissions} />
+              </Stack>
+              <Button component={Link} to={`/groups/${g.telegram_id}`} variant="light">
                 Administrar
-              </Link>
-            </li>
+              </Button>
+            </Card>
           ))}
-        </ul>
+        </SimpleGrid>
       ) : null}
-    </main>
+    </Stack>
   )
 }

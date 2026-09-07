@@ -1,21 +1,30 @@
 // Tests del DashboardPage (spec frontend-dashboard): lista grupos con
 // estados loading/vacio/error + reintento. Se usa mockFetchRoutes (por
 // URL) para que los mocks no se desalineen con el refresh del api-client.
+// El wrapper provee MantineProvider + Notifications porque el componente
+// migrado usa Card / Stack / SimpleGrid / Skeleton de Mantine v7
+// (frontend-refresh slice 1).
 import { render, screen } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
+import { MantineProvider } from '@mantine/core'
+import { Notifications } from '@mantine/notifications'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import DashboardPage from './DashboardPage'
 import { errorJson, mockFetchRoutes, okJson } from '../test/helpers'
+import { mantineTheme } from '../theme'
 
 function renderDashboard() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter>
-        <DashboardPage />
-      </MemoryRouter>
-    </QueryClientProvider>,
+    <MantineProvider theme={mantineTheme} defaultColorScheme="light">
+      <Notifications position="top-right" />
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <DashboardPage />
+        </MemoryRouter>
+      </QueryClientProvider>
+    </MantineProvider>,
   )
 }
 
@@ -84,5 +93,40 @@ describe('DashboardPage', () => {
 
     // El botón dispara refetch -> se vuelve a llamar a /api/groups.
     await vi.waitFor(() => expect(spy).toHaveBeenCalled())
+  })
+
+  it('smoke: renderiza una Card por grupo con data-testid (slice 1 foundation)', async () => {
+    mockFetchRoutes({
+      '/api/groups': () =>
+        okJson([
+          {
+            id: 'a',
+            telegram_id: -1001,
+            title: 'Grupo A',
+            username: null,
+            type: 'supergroup',
+            member_count: 100,
+            bot_status: 'administrator',
+            bot_permissions: {},
+          },
+          {
+            id: 'b',
+            telegram_id: -1002,
+            title: 'Grupo B',
+            username: null,
+            type: 'supergroup',
+            member_count: 200,
+            bot_status: 'member',
+            bot_permissions: {},
+          },
+        ]),
+    })
+
+    renderDashboard()
+
+    const cards = await screen.findAllByTestId('group-card')
+    expect(cards).toHaveLength(2)
+    expect(cards[0]).toHaveTextContent('Grupo A')
+    expect(cards[1]).toHaveTextContent('Grupo B')
   })
 })
