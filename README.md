@@ -3,11 +3,12 @@
 Plataforma para administrar grupos de Telegram: bot, backend en Go, panel
 React + TypeScript y PostgreSQL.
 
-> **Estado: MVP Fase 1 completo** (AGENTS.md §26-27): administración de
-> grupos, membresía y moderación básica, solicitudes de ingreso, logs y
-> autenticación del panel. Las fases 2-4 (publicaciones, moderación
-> automática, automatizaciones) son posteriores y **no** están en esta
-> versión.
+> **Estado: MVP Fase 1 + Fase 2 slice 1-2** (AGENTS.md §26-27 + §22):
+> administración de grupos, membresía y moderación básica, solicitudes
+> de ingreso, logs, autenticación del panel y **publicaciones con
+> foto por URL, botones inline de URL y envío multi-grupo**. Las fases
+> 2 slice 3 (scheduling), fase 3 (moderación automática) y fase 4
+> (automatizaciones) son posteriores y **no** están en esta versión.
 
 ## Quick path
 
@@ -79,9 +80,55 @@ y el login falla con **HTTP 405**. Dejá la variable vacía o comentada.
 | `/groups/:telegram_id/users` | Membresía y moderación (admins + lookup por ID, ban/mute) |
 | `/groups/:telegram_id/requests` | Solicitudes de ingreso (aprobar/rechazar) |
 | `/groups/:telegram_id/logs` | Auditoría de acciones administrativas |
+| `/publications` | Publicar ahora con foto URL + botones inline, multi-grupo, filtro por grupo en historial |
 
 Nota: el `:telegram_id` de las URLs es el ID de Telegram del grupo (ej.
 `-100123456789`), no un id interno.
+
+## Publicaciones
+
+`POST /api/publications` permite crear y enviar una publicación
+inmediata (sin scheduling). El panel solo publica; no recibe
+`callback_data` ni responde a botones in-chat.
+
+**Body** (slice 2):
+
+```json
+{
+  "text": "¡Hola!",
+  "photo_url": "https://ejemplo.com/imagen.jpg",
+  "buttons": [[{ "text": "Ir", "url": "https://ejemplo.com" }]],
+  "group_ids": [-100123, -100456]
+}
+```
+
+- `text` (obligatorio). Si hay foto, ≤ 1024 caracteres (caption de
+  `sendPhoto`); si no, ≤ 4096.
+- `photo_url` (opcional). URL pública http/https, ≤ 2048 caracteres.
+  La foto la descarga Telegram; si falla (URL inaccesible, > 5 MB,
+  dimensiones inválidas) la fila queda `failed` con `error_message`
+  legible — no se valida accesibilidad antes del POST.
+- `buttons` (opcional). Inline keyboard URL-only, máximo 8 filas ×
+  8 botones por fila. Cada botón: `text` ≤ 64, `url` http/https ≤
+  256. El panel **no** soporta `callback_data` (es comportamiento
+  bot-in-chat; queda para futuras automatizaciones).
+- `group_ids` (obligatorio). Array de 1 a 10 `groups.telegram_id`.
+
+**Envío multi-grupo**: las publicaciones se procesan **secuencialmente**
+(§18.1: el token bucket del adapter ordena), nunca en paralelo. Si un
+grupo falla (404/403/error de Telegram), el resto se procesa igual:
+la respuesta es `201 Created` con un arreglo `data.publications` y cada
+fila trae su propio `status` (`sent` | `failed`). Las filas `failed`
+incluyen `error_message`.
+
+**Listado**: `GET /api/publications` devuelve las 50 más recientes
+(`created_at` DESC). Acepta `?group_id=<int64>` para filtrar por
+grupo (usa el índice `idx_publications_telegram_id`).
+
+**Permisos**: el bot debe ser administrador del grupo (`bot_status ==
+administrator`). El check nunca consulta claves `can_*` (bugfix
+previo). Si Telegram rechaza el envío por permisos, la fila queda
+`failed` con `error_message` real (no se simula el permiso).
 
 ## Limitaciones reales de la Bot API
 
