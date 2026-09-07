@@ -77,7 +77,15 @@ export default function GroupUsersPage() {
         ← Volver al grupo
       </Link>
 
-      <h1>Usuarios del grupo</h1>
+      <h1>Membresía y moderación</h1>
+
+      {/* Nota de alcance: la Bot API no lista miembros; el panel muestra
+          admins + lookup puntual (AGENTS 7, decision P2). */}
+      <p className="state-block">
+        Telegram no expone la lista completa de miembros. Acá se muestran los administradores
+        del grupo y se puede buscar cualquier miembro por su ID de Telegram para moderarlo
+        (banear, mutear, desbanear, desmutear).
+      </p>
 
       {/* Lookup puntual (la Bot API no lista todos los miembros). */}
       <form

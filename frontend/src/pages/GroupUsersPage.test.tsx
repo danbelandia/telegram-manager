@@ -50,6 +50,17 @@ describe('GroupUsersPage', () => {
     vi.unstubAllGlobals()
   })
 
+  it('reencuadra la seccion con el titulo y la nota de alcance', async () => {
+    mockFetchRoutes({ '/api/groups/123/users': () => okJson(admins) })
+
+    renderUsers()
+
+    expect(await screen.findByRole('heading', { name: 'Membresía y moderación' })).toBeInTheDocument()
+    expect(
+      screen.getByText(/Telegram no expone la lista completa de miembros/i),
+    ).toBeInTheDocument()
+  })
+
   it('lista los administradores del grupo', async () => {
     mockFetchRoutes({
       '/api/groups/123/users?userId=': async () => {

@@ -152,7 +152,7 @@ export default function GroupDetailPage() {
       </section>
 
       <nav className="group-sections">
-        <Link to={`/groups/${groupId}/users`}>Usuarios</Link>
+        <Link to={`/groups/${groupId}/users`}>Membresía y moderación</Link>
         <Link to={`/groups/${groupId}/requests`}>Solicitudes de ingreso</Link>
         <Link to={`/groups/${groupId}/logs`}>Logs</Link>
       </nav>

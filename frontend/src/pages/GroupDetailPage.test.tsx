@@ -61,6 +61,10 @@ describe('GroupDetailPage', () => {
         'Restringir miembros, Eliminar mensajes, Fijar mensajes, Invitar usuarios, Cambiar la información del grupo',
       ),
     ).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Membresía y moderación' })).toHaveAttribute(
+      'href',
+      '/groups/123/users',
+    )
   })
 
   it('muestra grupo inexistente cuando el backend responde NOT_FOUND', async () => {
