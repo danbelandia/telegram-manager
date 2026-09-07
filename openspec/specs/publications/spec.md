@@ -64,9 +64,15 @@ requerida (`requireAuth`). El servicio MUST:
 1. Validar `text` non-empty y ≤ 4096 chars (400 VALIDATION_ERROR).
 2. Verificar que `group_id` exista en la tabla groups (404
    NOT_FOUND si no existe).
-3. Verificar que `groups.bot_permissions["can_manage_chat"]` sea true
-   (403 PERMISSION_DENIED si no lo es) — permiso mínimo que indica
-   que el bot es administrador con capacidad de publicar.
+3. Verificar que el bot sea administrador del grupo
+   (`groups.bot_status == administrator`; 403 PERMISSION_DENIED si no
+   lo es). Enmienda 2026-09-07: el original exigía
+   `bot_permissions["can_manage_chat"]`, pero la detección de grupos
+   nunca puebla esa clave (events.go copia solo
+   can_delete/restrict/pin/invite/promote/change_info), lo que
+   producía 403 para todos los grupos. La Bot API no exige permisos
+   `can_*` para sendMessage en grupos; ser administrador es el estado
+   confiable y además exime de restricciones de envío del grupo.
 4. Insertar fila con status `sending`.
 5. Llamar `telegram.SendMessage`.
 6. En éxito: actualizar status a `sent`, guardar `message_id`.
@@ -76,8 +82,8 @@ requerida (`requireAuth`). El servicio MUST:
 
 #### Scenario: Publicación exitosa
 
-- GIVEN un admin autenticado, texto válido y un grupo con el bot como
-  admin (`can_manage_chat = true`)
+- GIVEN un admin autenticado, texto válido y un grupo donde el bot es
+  administrador (`bot_status = administrator`)
 - WHEN envía `POST /api/publications` con `{text, group_id}`
 - THEN responde 201 con la publicación (status `sent`, message_id
   no nulo), y existe un log `PUBLISH_MESSAGE` con status `SUCCESS`
@@ -102,7 +108,8 @@ requerida (`requireAuth`). El servicio MUST:
 
 #### Scenario: Bot sin permisos
 
-- GIVEN el grupo existe pero `can_manage_chat = false`
+- GIVEN el grupo existe pero el bot NO es administrador
+  (`bot_status = member`)
 - WHEN se ejecuta POST
 - THEN responde 403 PERMISSION_DENIED "el bot no tiene permisos
   suficientes en este grupo"

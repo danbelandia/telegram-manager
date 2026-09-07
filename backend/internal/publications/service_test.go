@@ -117,7 +117,7 @@ func TestService_PublishSuccess(t *testing.T) {
 	tg := &fakeTelegramPub{messageID: 123}
 	store := newFakePubStore()
 	svc, logFake := newPubService(t, tg, store, map[int64]*groups.Group{
-		-1001: {TelegramID: -1001, BotPermissions: map[string]bool{"can_manage_chat": true}},
+		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
 	})
 
 	pub, err := svc.Publish(context.Background(), 7, -1001, "Hola mundo")
@@ -153,7 +153,7 @@ func TestService_PublishTextEmpty(t *testing.T) {
 	tg := &fakeTelegramPub{}
 	store := newFakePubStore()
 	svc, logFake := newPubService(t, tg, store, map[int64]*groups.Group{
-		-1001: {TelegramID: -1001, BotPermissions: map[string]bool{"can_manage_chat": true}},
+		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
 	})
 
 	_, err := svc.Publish(context.Background(), 7, -1001, "")
@@ -172,7 +172,7 @@ func TestService_PublishTextTooLong(t *testing.T) {
 	tg := &fakeTelegramPub{}
 	store := newFakePubStore()
 	svc, logFake := newPubService(t, tg, store, map[int64]*groups.Group{
-		-1001: {TelegramID: -1001, BotPermissions: map[string]bool{"can_manage_chat": true}},
+		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
 	})
 
 	longText := make([]byte, 4097)
@@ -212,7 +212,7 @@ func TestService_PublishNoPermission(t *testing.T) {
 	tg := &fakeTelegramPub{}
 	store := newFakePubStore()
 	svc, logFake := newPubService(t, tg, store, map[int64]*groups.Group{
-		-1001: {TelegramID: -1001, BotPermissions: map[string]bool{}},
+		-1001: {TelegramID: -1001, BotStatus: groups.StatusMember},
 	})
 
 	_, err := svc.Publish(context.Background(), 7, -1001, "Hola")
@@ -241,7 +241,7 @@ func TestService_PublishTelegramError(t *testing.T) {
 	tg := &fakeTelegramPub{err: telegram.ErrPermissionDenied}
 	store := newFakePubStore()
 	svc, logFake := newPubService(t, tg, store, map[int64]*groups.Group{
-		-1001: {TelegramID: -1001, BotPermissions: map[string]bool{"can_manage_chat": true}},
+		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
 	})
 
 	_, err := svc.Publish(context.Background(), 7, -1001, "Hola")
@@ -271,7 +271,7 @@ func TestService_List(t *testing.T) {
 	tg := &fakeTelegramPub{}
 	store := newFakePubStore()
 	svc, _ := newPubService(t, tg, store, map[int64]*groups.Group{
-		-1001: {TelegramID: -1001, BotPermissions: map[string]bool{"can_manage_chat": true}},
+		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
 	})
 
 	// Crea dos publicaciones.
@@ -295,7 +295,7 @@ func TestService_GetByID(t *testing.T) {
 	tg := &fakeTelegramPub{messageID: 55}
 	store := newFakePubStore()
 	svc, _ := newPubService(t, tg, store, map[int64]*groups.Group{
-		-1001: {TelegramID: -1001, BotPermissions: map[string]bool{"can_manage_chat": true}},
+		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
 	})
 
 	pub, err := svc.Publish(context.Background(), 7, -1001, "Hola")

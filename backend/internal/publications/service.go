@@ -1,7 +1,7 @@
 // Package publications orquesta el flujo de creacion + publicacion
 // (AGENTS.md §22, slice 1): valida el texto, verifica que el grupo
-// exista y que el bot tenga permiso can_manage_chat, inserta con status
-// sending, llama a telegram.SendMessage, actualiza sent/failed + log.
+// exista y que el bot sea administrador, inserta con status sending,
+// llama a telegram.SendMessage, actualiza sent/failed + log.
 // El resto del backend no llama a Telegram directo: pasa por este
 // servicio (design D3, D4, D5, D6).
 package publications
@@ -23,8 +23,8 @@ const maxTextLength = 4096
 
 // Errores de dominio del flujo.
 var (
-	// ErrBotPermission: el bot no tiene can_manage_chat en el grupo; no
-	// se llama a Telegram (403 PERMISSION_DENIED).
+	// ErrBotPermission: el bot no es administrador del grupo; no se
+	// llama a Telegram (403 PERMISSION_DENIED).
 	ErrBotPermission = errors.New("publications: el bot no tiene el permiso necesario")
 	// ErrGroupNotFound: el grupo no existe en nuestra base (404).
 	ErrGroupNotFound = errors.New("publications: group not found")
@@ -147,11 +147,22 @@ func (s *Service) List(ctx context.Context) ([]Publication, error) {
 	return s.store.List(ctx)
 }
 
-// permissionOk verifica en groups.bot_permissions la clave
-// can_manage_chat (permiso minimo de administrador para publicar).
-// Sin permisos conocidos (nil) la accion NO se habilita (principio 4).
+// permissionOk exige que el bot sea administrador del grupo
+// (groups.BotStatus == administrator).
+//
+// Nota (bugfix 2026-09-07): la Bot API NO exige ninguna bot_permission
+// can_* para sendMessage en grupos; el fix original usaba
+// "can_manage_chat" pero la deteccion de grupos jamas puebla esa clave
+// (events.go copia solo can_delete/restrict/pin/invite/promote/change_info),
+// por lo que el check daba 403 para todos los grupos. Exigir
+// administrator es correcto porque (1) es el estado confiable que el
+// sistema ya conoce y (2) los admins de Telegram estan exentos de las
+// restricciones de envio del grupo (lock), garantizando que la
+// publicacion proceda. En canales, si el admin no puede postear,
+// Telegram devuelve error y la publicacion queda failed con mensaje
+// real (no se simula el permiso).
 func permissionOk(g *groups.Group) bool {
-	return g != nil && g.BotPermissions["can_manage_chat"]
+	return g != nil && g.BotStatus == groups.StatusAdministrator
 }
 
 // logFailure registra un log de fallo y devuelve el error original
