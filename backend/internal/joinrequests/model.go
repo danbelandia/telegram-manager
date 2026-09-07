@@ -21,7 +21,9 @@ const (
 )
 
 // Request es una solicitud de ingreso. DecidedAt/DecidedBy son nil
-// mientras la solicitud esta pendiente.
+// mientras la solicitud esta pendiente. FirstName/Username se pueblan
+// con LEFT JOIN a users (identidad desde Telegram, D6) y son vacios si
+// el usuario todavia no se registro.
 type Request struct {
 	ID          int64
 	GroupID     int64
@@ -30,6 +32,8 @@ type Request struct {
 	RequestedAt time.Time
 	DecidedAt   *time.Time
 	DecidedBy   *int64
+	FirstName   string
+	Username    *string
 }
 
 // ErrNotFound se devuelve cuando el id de solicitud no existe.

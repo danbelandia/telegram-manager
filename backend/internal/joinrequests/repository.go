@@ -35,13 +35,15 @@ ON CONFLICT (group_id, user_id) WHERE status = 'pending' DO NOTHING`
 }
 
 // ListByGroup devuelve las solicitudes del grupo, de la mas reciente a
-// la mas antigua.
+// la mas antigua, con el nombre del usuario (LEFT JOIN users).
 func (r *Repository) ListByGroup(ctx context.Context, groupID int64) ([]Request, error) {
 	const q = `
-SELECT id, group_id, user_id, status, requested_at, decided_at, decided_by
-FROM join_requests
-WHERE group_id = $1
-ORDER BY requested_at DESC`
+SELECT j.id, j.group_id, j.user_id, j.status, j.requested_at, j.decided_at, j.decided_by,
+       COALESCE(u.first_name, ''), u.username
+FROM join_requests j
+LEFT JOIN users u ON u.telegram_id = j.user_id
+WHERE j.group_id = $1
+ORDER BY j.requested_at DESC`
 
 	rows, err := r.db.QueryContext(ctx, q, groupID)
 	if err != nil {
@@ -66,9 +68,11 @@ ORDER BY requested_at DESC`
 // GetByID devuelve la solicitud por su id local, o ErrNotFound.
 func (r *Repository) GetByID(ctx context.Context, id int64) (*Request, error) {
 	const q = `
-SELECT id, group_id, user_id, status, requested_at, decided_at, decided_by
-FROM join_requests
-WHERE id = $1`
+SELECT j.id, j.group_id, j.user_id, j.status, j.requested_at, j.decided_at, j.decided_by,
+       COALESCE(u.first_name, ''), u.username
+FROM join_requests j
+LEFT JOIN users u ON u.telegram_id = j.user_id
+WHERE j.id = $1`
 
 	req, err := scanRequest(r.db.QueryRowContext(ctx, q, id))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -114,14 +118,19 @@ func scanRequest(row rowScanner) (Request, error) {
 	var (
 		req       Request
 		requested time.Time
+		username  sql.NullString
 	)
 	err := row.Scan(
 		&req.ID, &req.GroupID, &req.UserID, &req.Status,
 		&requested, &req.DecidedAt, &req.DecidedBy,
+		&req.FirstName, &username,
 	)
 	if err != nil {
 		return Request{}, err
 	}
 	req.RequestedAt = requested
+	if username.Valid {
+		req.Username = &username.String
+	}
 	return req, nil
 }
