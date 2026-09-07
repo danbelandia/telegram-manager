@@ -52,7 +52,11 @@ services:
     build:
       context: ./frontend
     environment:
-      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8080/api}
+      # En dev, el api-client usa paths relativos con prefijo /api y el
+      # proxy de Vite (frontend/vite.config.ts) resuelve /api -> backend:8080.
+      # NUNCA setear VITE_API_BASE_URL con /api al final: los paths ya
+      # vienen completos y se duplicaria el prefijo (/api/api/...).
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
     ports:
       - "5173:5173"
     volumes:
