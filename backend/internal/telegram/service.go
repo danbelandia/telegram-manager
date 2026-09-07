@@ -55,6 +55,9 @@ type Service interface {
 	// GetChatAdministrators lista los administradores del chat (la Bot
 	// API NO permite listar todos los miembros).
 	GetChatAdministrators(ctx context.Context, chatID int64) ([]ChatMember, error)
+	// SendMessage envia texto a chatID y devuelve el message_id de
+	// Telegram (publicaciones, Fase 2).
+	SendMessage(ctx context.Context, chatID int64, text string, disableWebPagePreview bool) (int64, error)
 }
 
 var (

@@ -60,6 +60,9 @@ func (f *fakeService) GetChatMember(ctx context.Context, chatID, userID int64) (
 func (f *fakeService) GetChatAdministrators(ctx context.Context, chatID int64) ([]ChatMember, error) {
 	return nil, nil
 }
+func (f *fakeService) SendMessage(ctx context.Context, chatID int64, text string, disablePreview bool) (int64, error) {
+	return 0, nil
+}
 
 func (f *fakeService) GetUpdates(ctx context.Context, offset, timeout int, allowed []string) ([]Update, error) {
 	f.mu.Lock()
