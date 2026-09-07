@@ -5,8 +5,8 @@
 Vistas iniciales de datos del panel (AGENTS §6, §16 wireframe): el
 Dashboard lista los grupos administrables y el detalle de grupo muestra
 la información de un grupo con la navegación a sus secciones. Las
-secciones hijas (users, requests, logs) son placeholders mínimos en
-este cambio — se implementan en cambios posteriores.
+secciones hijas (users, requests, logs) son vistas funcionales del
+dominio `frontend-moderation` (especificado en su spec propia).
 
 ## Requirements
 
@@ -54,7 +54,9 @@ Los datos de grupos MUST obtenerse con hooks de TanStack Query
 
 `/groups/:id` MUST renderizar: nombre, username, ID, estado del bot y
 permisos del grupo (según DTO del backend), junto con navegación a
-`/groups/:id/users`, `/groups/:id/requests` y `/groups/:id/logs`.
+`/groups/:id/users`, `/groups/:id/requests` y `/groups/:id/logs`, y las
+acciones lock/unlock delegadas al dominio `frontend-moderation`
+(requirement "Acciones lock/unlock en el detalle").
 
 #### Scenario: Grupo encontrado
 
@@ -68,17 +70,38 @@ permisos del grupo (según DTO del backend), junto con navegación a
 - WHEN se abre `/groups/-100999`
 - THEN se muestra estado "grupo no encontrado" con el mensaje §18
 
-### Requirement: Secciones hijas placeholder
+### Requirement: Secciones hijas del detalle
 
 Las rutas `/groups/:id/users`, `/groups/:id/requests` y
-`/groups/:id/logs` MUST existir como páginas placeholder accesibles
-desde el detalle (sin lógica de datos en este cambio).
+`/groups/:id/logs` MUST existir como páginas accesibles desde el
+detalle e implementarse con las vistas reales del dominio
+`frontend-moderation` (usuarios, solicitudes de ingreso y logs).
 
 #### Scenario: Navegacion a seccion
 
 - GIVEN el detalle de un grupo
 - WHEN se hace clic en Usuarios
-- THEN se navega a `/groups/:id/users` sin error
+- THEN se navega a `/groups/:id/users` sin error y se renderiza la
+  vista funcional de usuarios
+
+### Requirement: Acciones lock/unlock en el detalle
+
+El detalle de grupo `/groups/:id` MUST exponer acciones para abrir y
+cerrar el envío de mensajes (AGENTS §9): botones de lock/unlock que
+invocan `POST /api/groups/:id/lock` y `POST /api/groups/:id/unlock`, con
+confirmación y feedback de resultado legible.
+
+#### Scenario: Cerrar chat desde el detalle
+
+- GIVEN el admin autenticado en `/groups/123`
+- WHEN confirma la acción de cerrar chat
+- THEN se llama `POST /api/groups/123/lock` y se muestra el resultado
+
+#### Scenario: Bot sin permiso
+
+- GIVEN el bot no tiene permiso para cerrar el chat
+- WHEN se ejecuta lock
+- THEN se muestra el mensaje §18 legible (`PERMISSION_DENIED`)
 
 ## Notas
 
