@@ -1,0 +1,25 @@
+# State — frontend-panel
+
+change: frontend-panel
+created: 2026-09-06
+status: propose done — spec in-progress
+
+phases:
+  explore: not-needed (bootstrap conocido)
+  propose: done (proposal.md — decisiones resueltas)
+  spec: in-progress
+  design: pending
+  tasks: pending
+  apply: pending
+  verify: pending
+  archive: pending
+
+branch: feat/frontend-panel (base feat/rest-api — misma chain, aún sin remote)
+
+delivery_strategy: ask-on-risk
+chain_strategy: feature-branch-chain
+review_400_budget: Frontend nuevo — se esperan >400 líneas; PRs encadenados (estructura+auth, dashboard+grupos)
+
+decisiones_usuario:
+  - "RHF + Zod: incluir desde este cambio (login con validación cliente + patrón base para forms de pasos 13-14)"
+  - "Librería UI: ninguna en este cambio (CSS plano); diferir shadcn/ui/Radix a cuando existan tablas reales (users/logs)"
