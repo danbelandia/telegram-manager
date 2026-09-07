@@ -27,6 +27,9 @@ export default function Layout() {
           <NavLink to="/groups" className={navLinkClass}>
             Grupos
           </NavLink>
+          <NavLink to="/publications" className={navLinkClass}>
+            Publicaciones
+          </NavLink>
         </nav>
       </aside>
 

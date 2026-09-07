@@ -11,6 +11,7 @@ import GroupDetailPage from './pages/GroupDetailPage'
 import GroupUsersPage from './pages/GroupUsersPage'
 import GroupRequestsPage from './pages/GroupRequestsPage'
 import GroupLogsPage from './pages/GroupLogsPage'
+import PublicationsPage from './pages/PublicationsPage'
 import NotFoundPage from './pages/NotFoundPage'
 
 export default function App() {
@@ -32,6 +33,7 @@ export default function App() {
         <Route path="/groups/:id/users" element={<GroupUsersPage />} />
         <Route path="/groups/:id/requests" element={<GroupRequestsPage />} />
         <Route path="/groups/:id/logs" element={<GroupLogsPage />} />
+        <Route path="/publications" element={<PublicationsPage />} />
       </Route>
 
       <Route path="*" element={<NotFoundPage />} />
