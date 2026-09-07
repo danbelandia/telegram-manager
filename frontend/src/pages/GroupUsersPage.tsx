@@ -3,7 +3,7 @@
 // API NO lista todos los miembros, AGENTS 7) + lookup puntual por
 // userId + acciones ban/unban/mute/unmute con confirmacion para ban y
 // mute (acciones destructivas, AGENTS 4).
-import { useState } from 'react'
+import { useState } from 'react' // lookup por userId (estado local del form)
 import { Link, useParams } from 'react-router-dom'
 import { formatModerationError } from '../features/moderation/error'
 import {
@@ -16,53 +16,47 @@ import {
 } from '../features/moderation/hooks'
 import type { GroupUser } from '../features/moderation/types'
 
-// Acciones individuales por usuario.
+// Acciones individuales por usuario. Los errores de las mutaciones se
+// leen de mutation.error (son asincronos; un try/catch alrededor de
+// mutate() no los captura).
 function UserActions({ groupId, user }: { groupId: string; user: GroupUser }) {
   const ban = useBanUser()
   const unban = useUnbanUser()
   const mute = useMuteUser()
   const unmute = useUnmuteUser()
 
-  const [actionError, setActionError] = useState<string | null>(null)
-
-  const runAction = (fn: () => void) => {
-    setActionError(null)
-    try {
-      fn()
-    } catch (err) {
-      setActionError(formatModerationError(err))
-    }
-  }
+  const actionError = ban.error ?? unban.error ?? mute.error ?? unmute.error
+  const pending = ban.isPending || unban.isPending || mute.isPending || unmute.isPending
 
   const confirmBan = () => {
     if (!window.confirm(`¿Banear a ${user.first_name} del grupo? Esta acción es irreversible.`)) {
       return
     }
-    runAction(() => ban.mutate({ groupId, userId: user.user_id }))
+    ban.mutate({ groupId, userId: user.user_id })
   }
 
   const confirmMute = () => {
     if (!window.confirm(`¿Mutear a ${user.first_name} (restringir envío de mensajes)?`)) {
       return
     }
-    runAction(() => mute.mutate({ groupId, userId: user.user_id }))
+    mute.mutate({ groupId, userId: user.user_id })
   }
 
   return (
     <div className="user-actions">
-      <button type="button" className="btn btn-danger" onClick={confirmBan}>
+      <button type="button" className="btn btn-danger" onClick={confirmBan} disabled={pending}>
         Banear
       </button>
-      <button type="button" className="btn" onClick={() => runAction(() => unban.mutate({ groupId, userId: user.user_id }))}>
+      <button type="button" className="btn" disabled={pending} onClick={() => unban.mutate({ groupId, userId: user.user_id })}>
         Desbanear
       </button>
-      <button type="button" className="btn" onClick={confirmMute}>
+      <button type="button" className="btn" onClick={confirmMute} disabled={pending}>
         Mutear
       </button>
-      <button type="button" className="btn" onClick={() => runAction(() => unmute.mutate({ groupId, userId: user.user_id }))}>
+      <button type="button" className="btn" disabled={pending} onClick={() => unmute.mutate({ groupId, userId: user.user_id })}>
         Desmutear
       </button>
-      {actionError ? <p className="state-block state-error">{actionError}</p> : null}
+      {actionError ? <p className="state-block state-error">{formatModerationError(actionError)}</p> : null}
     </div>
   )
 }

@@ -186,6 +186,16 @@ h1 {
   color: var(--text);
 }
 
+.state-ok {
+  border-color: var(--success, #2e7d32);
+  color: var(--text);
+}
+
+.state-block-weak {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
 .form-error {
   color: var(--danger);
   font-size: 0.85rem;
@@ -268,6 +278,99 @@ h1 {
 
 .group-sections a:hover {
   border-color: var(--primary);
+}
+
+/* Lookup puntual de usuarios */
+.user-lookup {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.25rem;
+}
+
+.user-lookup input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.user-lookup-result {
+  margin-bottom: 1.5rem;
+}
+
+.user-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.user-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.user-actions .state-error {
+  width: 100%;
+  padding: 0.5rem 0.7rem;
+  font-size: 0.85rem;
+}
+
+/* Tablas (solicitudes de ingreso y logs) */
+.table-wrap {
+  overflow-x: auto;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.data-table th,
+.data-table td {
+  text-align: left;
+  padding: 0.55rem 0.7rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.data-table th {
+  color: var(--text-dim);
+  font-weight: 600;
+  font-size: 0.8rem;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+
+.badge-pending {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.badge-approved,
+.badge-success {
+  border-color: var(--success, #2e7d32);
+  color: var(--success, #2e7d32);
+}
+
+.badge-rejected,
+.badge-permission_denied,
+.badge-error {
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
 /* 404 */
