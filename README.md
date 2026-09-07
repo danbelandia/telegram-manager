@@ -87,6 +87,32 @@ y el login falla con **HTTP 405**. Dejá la variable vacía o comentada.
 Nota: el `:telegram_id` de las URLs es el ID de Telegram del grupo (ej.
 `-100123456789`), no un id interno.
 
+## UI library & Dark mode
+
+El panel usa **[Mantine v7](https://mantine.dev/)** como librería de
+componentes (`@mantine/core`, `@mantine/hooks`, `@mantine/notifications`)
+e iconos [`@tabler/icons-react`](https://tabler.io/icons-react). Toda la
+UI autenticada vive dentro de un `<AppShell>` con header (logo + toggle
+de tema + logout) y navbar con las rutas globales.
+
+**Dark mode**: el header expone un toggle (icono sol/luna) que invoca
+`useMantineColorScheme().toggleColorScheme()`. El esquema se persiste
+en `localStorage` bajo la clave `mantine-color-scheme-value` (provista
+por `localStorageColorSchemeManager`); el default es `auto` (respeta
+la preferencia del SO) y el cambio se aplica antes del primer paint
+para evitar flicker.
+
+**Notificaciones**: el `<Notifications>` se monta una sola vez en
+`main.tsx` con `position="top-right"`, `zIndex=2077` y `limit=5`. Los
+helpers `notifySuccess` / `notifyError` viven en
+`frontend/src/lib/notifications.ts` y centralizan el formato
+(`color: 'green' | 'red'`). El wiring actual cubre Login (success →
+"Bienvenido") y Logout ("Sesión cerrada"); el wiring al resto de los
+hooks (~15) se difiere a un slice siguiente.
+
+> **No** tocar `features/*`, `lib/api-client.ts` ni `lib/auth-context.tsx`
+> en cambios de UI: la fundación UI es solo view layer.
+
 ## Publicaciones
 
 `POST /api/publications` permite crear y enviar una publicación
