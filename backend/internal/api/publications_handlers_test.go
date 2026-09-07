@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/telegram-manager/backend/internal/publications"
 	"github.com/telegram-manager/backend/internal/telegram"
@@ -13,6 +14,7 @@ import (
 
 // fakePublicationStore satisface publicationStore para los handlers.
 // Slice 2: agrega PublishMany + ListByTelegramID.
+// Slice 3: limit/offset en List/ListByTelegramID; CancelScheduled.
 type fakePublicationStore struct {
 	pub       *publications.Publication
 	list      []publications.Publication
@@ -21,11 +23,22 @@ type fakePublicationStore struct {
 
 	// campos para verificar que el handler llamo con los parametros
 	// esperados.
-	calls    int
-	actor    int64
-	payload  publications.PublishPayload
-	lastGidQ int64
-	gotQ     bool
+	calls      int
+	actor      int64
+	payload    publications.PublishPayload
+	lastGidQ   int64
+	gotQ       bool
+	lastLimit  int
+	lastOffset int
+
+	// cancel registra la ultima cancelacion solicitada.
+	cancelCalls []int64
+	cancelErr   error
+
+	// schedule slice 3.
+	scheduleList    []publications.Publication
+	scheduleErr     error
+	lastScheduledAt time.Time
 }
 
 func (f *fakePublicationStore) Publish(ctx context.Context, actorID, groupID int64, text string, photoURL *string, buttons [][]telegram.InlineKeyboardButton) (*publications.Publication, error) {
@@ -56,6 +69,26 @@ func (f *fakePublicationStore) PublishMany(ctx context.Context, actorID int64, p
 	return f.list, nil
 }
 
+// Schedule (slice 3): si scheduleErr esta set, lo retorna. Si
+// scheduleList esta poblado, lo devuelve. Si no, devuelve una sola
+// fila copiando f.pub (modo simple).
+func (f *fakePublicationStore) Schedule(ctx context.Context, actorID int64, payload publications.PublishPayload, scheduledAt time.Time, nowFn func() time.Time) ([]publications.Publication, error) {
+	f.calls++
+	f.actor = actorID
+	f.payload = payload
+	f.lastScheduledAt = scheduledAt
+	if f.scheduleErr != nil {
+		return nil, f.scheduleErr
+	}
+	if f.scheduleList != nil {
+		return f.scheduleList, nil
+	}
+	if f.pub != nil {
+		return []publications.Publication{*f.pub}, nil
+	}
+	return []publications.Publication{}, nil
+}
+
 func (f *fakePublicationStore) GetByID(ctx context.Context, id int64) (*publications.Publication, error) {
 	if f.err != nil {
 		return nil, f.err
@@ -66,16 +99,20 @@ func (f *fakePublicationStore) GetByID(ctx context.Context, id int64) (*publicat
 	return f.pub, nil
 }
 
-func (f *fakePublicationStore) List(ctx context.Context) ([]publications.Publication, error) {
+func (f *fakePublicationStore) List(ctx context.Context, limit, offset int) ([]publications.Publication, error) {
+	f.lastLimit = limit
+	f.lastOffset = offset
 	if f.err != nil {
 		return nil, f.err
 	}
 	return f.list, nil
 }
 
-func (f *fakePublicationStore) ListByTelegramID(ctx context.Context, telegramID int64) ([]publications.Publication, error) {
+func (f *fakePublicationStore) ListByTelegramID(ctx context.Context, telegramID int64, limit, offset int) ([]publications.Publication, error) {
 	f.gotQ = true
 	f.lastGidQ = telegramID
+	f.lastLimit = limit
+	f.lastOffset = offset
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -83,6 +120,15 @@ func (f *fakePublicationStore) ListByTelegramID(ctx context.Context, telegramID 
 		return f.listByGid[telegramID], nil
 	}
 	return f.list, nil
+}
+
+// CancelScheduled (slice 3): delega en cancelErr si esta set, sino OK.
+func (f *fakePublicationStore) CancelScheduled(ctx context.Context, id int64) error {
+	f.cancelCalls = append(f.cancelCalls, id)
+	if f.cancelErr != nil {
+		return f.cancelErr
+	}
+	return nil
 }
 
 // buildPublicationsServer construye un Server con auth fija y el modulo
@@ -428,3 +474,220 @@ func TestPublications_List_ConFiltroInvalido(t *testing.T) {
 }
 
 func strPtr(s string) *string { return &s }
+
+// --- Tests de slice 3: scheduled_at, paginacion, DELETE ---
+
+// TestPublications_Create_ScheduledFuture_201: POST con scheduled_at
+// futuro delega en Schedule y devuelve 201 con N filas `scheduled`.
+func TestPublications_Create_ScheduledFuture_201(t *testing.T) {
+	future := time.Date(2027, 1, 1, 10, 0, 0, 0, time.UTC)
+	pub := &fakePublicationStore{
+		scheduleList: []publications.Publication{
+			{ID: 1, TelegramID: -1001, Text: "Hola", Status: publications.StatusScheduled, ScheduledAt: &future},
+			{ID: 2, TelegramID: -1002, Text: "Hola", Status: publications.StatusScheduled, ScheduledAt: &future},
+		},
+	}
+	server := buildPublicationsServer(t, pub)
+
+	body := `{"text":"Hola","group_ids":[-1001,-1002],"scheduled_at":"2027-01-01T10:00:00Z"}`
+	rr := doRequest(server, "POST", "/api/publications", body, validToken)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("code = %d, want 201 (body: %s)", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"status":"scheduled"`) {
+		t.Errorf("body sin status scheduled: %s", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"scheduled_at"`) {
+		t.Errorf("body sin scheduled_at: %s", rr.Body.String())
+	}
+}
+
+// TestPublications_Create_ScheduledPast_400: scheduled_at en el pasado
+// -> 400 VALIDATION_ERROR sin crear fila.
+func TestPublications_Create_ScheduledPast_400(t *testing.T) {
+	pub := &fakePublicationStore{}
+	server := buildPublicationsServer(t, pub)
+
+	body := `{"text":"Hola","group_ids":[-1001],"scheduled_at":"2020-01-01T00:00:00Z"}`
+	rr := doRequest(server, "POST", "/api/publications", body, validToken)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("code = %d, want 400 (body: %s)", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "VALIDATION_ERROR") {
+		t.Errorf("body sin VALIDATION_ERROR: %s", rr.Body.String())
+	}
+}
+
+// TestPublications_Create_ScheduledOffset_Normalized: scheduled_at con
+// offset se normaliza a UTC antes de persistir.
+func TestPublications_Create_ScheduledOffset_Normalized(t *testing.T) {
+	captured := time.Time{}
+	pub := &fakePublicationStore{
+		scheduleList: []publications.Publication{
+			{ID: 1, TelegramID: -1001, Status: publications.StatusScheduled},
+		},
+	}
+	// Override Schedule para capturar el scheduledAt normalizado.
+	pub.scheduleList = nil
+	pub.scheduleErr = nil
+	// El fake ya captura lastScheduledAt. Solo necesitamos un listado
+	// cualquiera para que el handler no falle.
+	pub.pub = &publications.Publication{
+		ID: 1, TelegramID: -1001, Status: publications.StatusScheduled,
+	}
+	server := buildPublicationsServer(t, pub)
+
+	body := `{"text":"Hola","group_ids":[-1001],"scheduled_at":"2027-06-15T17:00:00+03:00"}`
+	rr := doRequest(server, "POST", "/api/publications", body, validToken)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("code = %d, want 201 (body: %s)", rr.Code, rr.Body.String())
+	}
+	captured = pub.lastScheduledAt
+	if captured.Location() != time.UTC {
+		t.Errorf("scheduledAt.location = %v, want UTC (normalizado)", captured.Location())
+	}
+	if expected := time.Date(2027, 6, 15, 14, 0, 0, 0, time.UTC); !captured.Equal(expected) {
+		t.Errorf("scheduledAt = %v, want %v", captured, expected)
+	}
+}
+
+// TestPublications_List_LimitOffset: GET ?limit=10&offset=20 propaga
+// al servicio y devuelve el slice correcto.
+func TestPublications_List_LimitOffset(t *testing.T) {
+	mid := int64(1)
+	pub := &fakePublicationStore{list: []publications.Publication{
+		{ID: 21, TelegramID: -1001, Text: "p21", Status: publications.StatusSent, MessageID: &mid},
+		{ID: 22, TelegramID: -1001, Text: "p22", Status: publications.StatusSent, MessageID: &mid},
+	}}
+	server := buildPublicationsServer(t, pub)
+
+	rr := doRequest(server, "GET", "/api/publications?limit=10&offset=20", "", validToken)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	if pub.lastLimit != 10 || pub.lastOffset != 20 {
+		t.Errorf("service recibio limit=%d offset=%d, want 10/20", pub.lastLimit, pub.lastOffset)
+	}
+}
+
+// TestPublications_List_LimitOutOfRange_400: limit=101 -> 400.
+func TestPublications_List_LimitOutOfRange_400(t *testing.T) {
+	pub := &fakePublicationStore{}
+	server := buildPublicationsServer(t, pub)
+	rr := doRequest(server, "GET", "/api/publications?limit=101", "", validToken)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("code = %d, want 400", rr.Code)
+	}
+}
+
+// TestPublications_List_OffsetNegative_400: offset=-1 -> 400.
+func TestPublications_List_OffsetNegative_400(t *testing.T) {
+	pub := &fakePublicationStore{}
+	server := buildPublicationsServer(t, pub)
+	rr := doRequest(server, "GET", "/api/publications?offset=-1", "", validToken)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("code = %d, want 400", rr.Code)
+	}
+}
+
+// TestPublications_List_NoParams_DefaultLimit: sin query params, el
+// handler aplica default (limit=50).
+func TestPublications_List_NoParams_DefaultLimit(t *testing.T) {
+	pub := &fakePublicationStore{}
+	server := buildPublicationsServer(t, pub)
+	rr := doRequest(server, "GET", "/api/publications", "", validToken)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200", rr.Code)
+	}
+	if pub.lastLimit != 50 {
+		t.Errorf("default limit = %d, want 50", pub.lastLimit)
+	}
+	if pub.lastOffset != 0 {
+		t.Errorf("default offset = %d, want 0", pub.lastOffset)
+	}
+}
+
+// TestPublications_DeleteScheduled_204: DELETE sobre fila scheduled -> 204.
+func TestPublications_DeleteScheduled_204(t *testing.T) {
+	pub := &fakePublicationStore{}
+	server := buildPublicationsServer(t, pub)
+
+	rr := doRequest(server, "DELETE", "/api/publications/10", "", validToken)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("code = %d, want 204 (body: %s)", rr.Code, rr.Body.String())
+	}
+	if len(pub.cancelCalls) != 1 || pub.cancelCalls[0] != 10 {
+		t.Errorf("cancelCalls = %v, want [10]", pub.cancelCalls)
+	}
+}
+
+// TestPublications_DeleteSent_409: DELETE sobre fila sent -> 409 INVALID_STATUS.
+func TestPublications_DeleteSent_409(t *testing.T) {
+	pub := &fakePublicationStore{cancelErr: publications.ErrCancelNotAllowed}
+	server := buildPublicationsServer(t, pub)
+
+	rr := doRequest(server, "DELETE", "/api/publications/20", "", validToken)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("code = %d, want 409 (body: %s)", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "INVALID_STATUS") {
+		t.Errorf("body sin INVALID_STATUS: %s", rr.Body.String())
+	}
+}
+
+// TestPublications_DeleteNotFound_404: id inexistente -> 404 NOT_FOUND.
+func TestPublications_DeleteNotFound_404(t *testing.T) {
+	pub := &fakePublicationStore{cancelErr: publications.ErrNotFound}
+	server := buildPublicationsServer(t, pub)
+
+	rr := doRequest(server, "DELETE", "/api/publications/999", "", validToken)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("code = %d, want 404 (body: %s)", rr.Code, rr.Body.String())
+	}
+}
+
+// TestPublications_DeleteInvalidID_400: id no parseable -> 400.
+func TestPublications_DeleteInvalidID_400(t *testing.T) {
+	pub := &fakePublicationStore{}
+	server := buildPublicationsServer(t, pub)
+
+	rr := doRequest(server, "DELETE", "/api/publications/abc", "", validToken)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("code = %d, want 400", rr.Code)
+	}
+}
+
+// TestPublications_Delete_RequireAuth: DELETE sin token -> 401.
+func TestPublications_Delete_RequireAuth(t *testing.T) {
+	pub := &fakePublicationStore{}
+	server := buildPublicationsServer(t, pub)
+
+	rr := doRequest(server, "DELETE", "/api/publications/1", "", "")
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("code = %d, want 401", rr.Code)
+	}
+}
+
+// TestPublications_List_GroupFilter_CombinedWithPagination: el handler
+// combina ?group_id= con ?limit=&offset=.
+func TestPublications_List_GroupFilter_CombinedWithPagination(t *testing.T) {
+	mid := int64(1)
+	pub := &fakePublicationStore{listByGid: map[int64][]publications.Publication{
+		-1001: {{ID: 11, TelegramID: -1001, Text: "g1.p11", Status: publications.StatusSent, MessageID: &mid}},
+	}}
+	server := buildPublicationsServer(t, pub)
+
+	rr := doRequest(server, "GET", "/api/publications?group_id=-1001&limit=10&offset=10", "", validToken)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	if !pub.gotQ {
+		t.Error("handler no llamo a ListByTelegramID")
+	}
+	if pub.lastGidQ != -1001 {
+		t.Errorf("group_id = %d, want -1001", pub.lastGidQ)
+	}
+	if pub.lastLimit != 10 || pub.lastOffset != 10 {
+		t.Errorf("service recibio limit=%d offset=%d, want 10/10", pub.lastLimit, pub.lastOffset)
+	}
+}

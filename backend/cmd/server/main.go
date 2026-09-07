@@ -121,9 +121,21 @@ func run() error {
 	moderationService := moderation.NewService(groupsRepo, bot, joinRequestsRepo, logsRepo)
 
 	// Publicaciones (Fase 2, slice 1 — publish-now text): repositorio y
-	// servicio que orquesta Grupo→Permiso→Telegram→Log.
+	// servicio que orquesta Grupo→Permiso→Telegram→Log. Slice 3 agrega
+	// el Scheduler (worker in-process) que reclama filas `scheduled`
+	// vencidas y las entrega al helper publishOne del Service.
 	pubsRepo := publications.NewRepository(db)
 	pubsService := publications.NewService(groupsRepo, bot, pubsRepo, logsRepo)
+	schedulerInterval := time.Duration(cfg.PublicationsSchedulerIntervalSeconds) * time.Second
+	publicationsScheduler := publications.NewScheduler(
+		pubsRepo,
+		groupsRepo,
+		bot,
+		logsRepo,
+		schedulerInterval,
+		slog.Default(),
+	)
+	slog.Info("publications scheduler started", "interval", schedulerInterval.String())
 
 	// Solicitudes de ingreso: cada chat_join_request registra el usuario
 	// en users y la solicitud pendiente (AGENTS.md §10). Idempotente:
@@ -208,6 +220,13 @@ func run() error {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
+	// Worker in-process de publicaciones programadas (slice 3). Mismo
+	// lifecycle que el poller: corre hasta que ctx.Done() (signal).
+	schedulerErrCh := make(chan error, 1)
+	go func() {
+		schedulerErrCh <- publicationsScheduler.Run(ctx)
+	}()
+
 	errCh := make(chan error, 1)
 	go func() {
 		slog.Info("http server listening", "addr", httpServer.Addr)
@@ -226,5 +245,7 @@ func run() error {
 		return fmt.Errorf("http server: %w", err)
 	case err := <-pollerErrCh:
 		return fmt.Errorf("poller: %w", err)
+	case err := <-schedulerErrCh:
+		return fmt.Errorf("publications scheduler: %w", err)
 	}
 }

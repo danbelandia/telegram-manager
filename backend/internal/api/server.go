@@ -132,13 +132,15 @@ func WithLogs(store logStore) Option {
 // WithPublications monta las rutas de publicaciones (Fase 2, slice 1):
 // crear + publicar, listado y detalle. El servicio orquesta
 // Grupo→Permiso→Telegram→Log; el handler valida input, extrae actor y
-// mapea errores.
+// mapea errores. Slice 3 agrega DELETE /api/publications/{id} para
+// cancelar publicaciones `scheduled`.
 func WithPublications(pubs publicationStore) Option {
 	return func(s *Server) {
 		s.publications = pubs
 		s.mux.HandleFunc("POST /api/publications", s.requireAuth(s.handleCreatePublication))
 		s.mux.HandleFunc("GET /api/publications", s.requireAuth(s.handleListPublications))
 		s.mux.HandleFunc("GET /api/publications/{id}", s.requireAuth(s.handleGetPublication))
+		s.mux.HandleFunc("DELETE /api/publications/{id}", s.requireAuth(s.handleDeletePublication))
 	}
 }
 
