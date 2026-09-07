@@ -26,14 +26,23 @@ func NewRepository(db *sql.DB) *Repository {
 // ID generado. No toca texto: la validacion de longitud vive en el
 // servicio (D5). Slice 2: persiste `photo_url` y `buttons` (JSONB
 // NULL-able). Si `Buttons` viene vacio se envia NULL a la DB.
+// Slice 3: persiste `scheduled_at` (TIMESTAMPTZ nullable) — bugfix
+// 2026-09-07: el INSERT original omitia la columna, por lo que filas
+// `scheduled` quedaban con scheduled_at=NULL y el worker del slice 3
+// nunca las tomaba.
 func (r *Repository) Create(ctx context.Context, p *Publication) error {
 	const q = `
-INSERT INTO publications (telegram_id, text, status, actor_id, photo_url, buttons)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO publications (telegram_id, text, status, actor_id, photo_url, buttons, scheduled_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING id, created_at, updated_at`
 
+	var scheduledAtParam sql.NullTime
+	if p.ScheduledAt != nil {
+		scheduledAtParam = sql.NullTime{Time: p.ScheduledAt.UTC(), Valid: true}
+	}
+
 	err := r.db.QueryRowContext(ctx, q,
-		p.TelegramID, p.Text, string(p.Status), p.ActorID, p.PhotoURL, []byte(p.Buttons),
+		p.TelegramID, p.Text, string(p.Status), p.ActorID, p.PhotoURL, []byte(p.Buttons), scheduledAtParam,
 	).Scan(&p.ID, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("publications: create: %w", err)

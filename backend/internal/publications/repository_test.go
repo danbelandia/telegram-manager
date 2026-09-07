@@ -231,3 +231,75 @@ func TestRepository_Cancel_NotFoundReturnsErrNotFound(t *testing.T) {
 		t.Errorf("Cancel(inexistente) = %v, want ErrNotFound", err)
 	}
 }
+
+// TestRepository_Create_PersistsScheduledAt — bugfix 2026-09-07:
+// Repository.Create DEBE persistir scheduled_at (TIMESTAMPTZ). Sin este
+// test el INSERT original omitia la columna y las filas `scheduled`
+// quedaban con scheduled_at=NULL, por lo que el worker nunca las tomaba.
+func TestRepository_Create_PersistsScheduledAt(t *testing.T) {
+	db := setupRepoDB(t)
+	repo := NewRepository(db)
+
+	// Insertar un grupo para satisfacer la FK.
+	if _, err := db.ExecContext(context.Background(),
+		`INSERT INTO groups (telegram_id, title, type, bot_status) VALUES ($1, 'g', 'supergroup', 'administrator')`,
+		int64(-7770001),
+	); err != nil {
+		t.Fatalf("insert group: %v", err)
+	}
+
+	ctx := context.Background()
+	scheduled := time.Now().Add(1 * time.Hour).UTC().Truncate(time.Microsecond)
+
+	cases := []struct {
+		name    string
+		input   *Publication
+		wantSet bool
+		wantVal time.Time
+	}{
+		{
+			name: "con scheduled_at se persiste",
+			input: &Publication{
+				TelegramID:  -7770001,
+				Text:        "hola scheduled",
+				Status:      StatusScheduled,
+				ScheduledAt: &scheduled,
+			},
+			wantSet: true,
+			wantVal: scheduled,
+		},
+		{
+			name: "sin scheduled_at queda NULL",
+			input: &Publication{
+				TelegramID: -7770001,
+				Text:       "hola inmediato",
+				Status:     StatusSent,
+			},
+			wantSet: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := repo.Create(ctx, tc.input); err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			got, err := repo.GetByID(ctx, tc.input.ID)
+			if err != nil {
+				t.Fatalf("GetByID: %v", err)
+			}
+			if tc.wantSet {
+				if got.ScheduledAt == nil {
+					t.Fatalf("scheduled_at = NULL, want %v", tc.wantVal)
+				}
+				if !got.ScheduledAt.Equal(tc.wantVal) {
+					t.Errorf("scheduled_at = %v, want %v", got.ScheduledAt, tc.wantVal)
+				}
+			} else {
+				if got.ScheduledAt != nil {
+					t.Errorf("scheduled_at = %v, want NULL", got.ScheduledAt)
+				}
+			}
+		})
+	}
+}
