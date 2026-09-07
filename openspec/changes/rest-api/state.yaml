@@ -2,7 +2,7 @@
 
 change: rest-api
 created: 2026-09-06
-status: apply PR1 done — PR2 pendiente
+status: verify done (PASS WITH WARNINGS) — archive pendiente
 
 phases:
   explore: done (obs 132)
@@ -10,8 +10,8 @@ phases:
   spec: done (obs 134)
   design: done (obs 135)
   tasks: done (obs 136)
-  apply: in progress (PR1 done → PR2 → PR3)
-  verify: pending
+  apply: done (PR1 b153e72^, PR2 b153e72, PR3 7fa696d)
+  verify: done (obs 138, verify-report.md — 24/24 escenarios, PASS WITH WARNINGS)
   archive: pending
 
 artifacts:
@@ -23,9 +23,12 @@ artifacts:
   - openspec/changes/rest-api/specs/join-requests/spec.md
   - openspec/changes/rest-api/design.md
   - openspec/changes/rest-api/tasks.md
-  - engram: sdd/rest-api/explore (obs 132), sdd/rest-api/proposal (obs 133), sdd/rest-api/spec (obs 134), sdd/rest-api/design (obs 135), sdd/rest-api/tasks (obs 136)
+  - openspec/changes/rest-api/verify-report.md
+  - engram: sdd/rest-api/explore (obs 132), sdd/rest-api/proposal (obs 133), sdd/rest-api/spec (obs 134), sdd/rest-api/design (obs 135), sdd/rest-api/tasks (obs 136), sdd/rest-api/apply (obs 137), sdd/rest-api/verify (obs 138)
 
 commits:
+  - 7fa696d feat(api): handlers REST de grupos/moderation/solicitudes/logs y wiring [PR3]
+  - b153e72 feat(moderation): dominios users/logs/joinrequests/moderation y migracion [PR2]
   - 42a9dbe feat(telegram): transporte doPost, rate limiter y acciones de moderacion [PR1]
   - f95f1d9 docs(sdd): cambio rest-api — ciclo explore/propose/spec/design/tasks
   - 0c7829b chore(sdd): auth — remover artifacts del cambio archivado
