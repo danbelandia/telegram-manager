@@ -3,11 +3,12 @@
 Plataforma para administrar grupos de Telegram: bot, backend en Go, panel
 React + TypeScript y PostgreSQL.
 
-> **Estado: MVP Fase 1 + Fase 2 slice 1-2** (AGENTS.md §26-27 + §22):
+> **Estado: MVP Fase 1 + Fase 2 slice 1-2-3** (AGENTS.md §26-27 + §22):
 > administración de grupos, membresía y moderación básica, solicitudes
 > de ingreso, logs, autenticación del panel y **publicaciones con
-> foto por URL, botones inline de URL y envío multi-grupo**. Las fases
-> 2 slice 3 (scheduling), fase 3 (moderación automática) y fase 4
+> foto por URL, botones inline de URL, envío multi-grupo,
+> programación (`scheduled_at`), cancelación de filas `scheduled` e
+> historial paginado**. Las fases 3 (moderación automática) y 4
 > (automatizaciones) son posteriores y **no** están en esta versión.
 
 ## Quick path
@@ -54,6 +55,7 @@ bot es administrador, la instalación está completa.
 | `DATABASE_URL` | ❌ | DSN; con Docker Compose el host es `postgres` |
 | `PORT` | ❌ | Puerto del backend (default `8080`) |
 | `RUN_MIGRATIONS` | ❌ | Aplica migraciones al arrancar (default `true` en dev) |
+| `PUBLICATIONS_SCHEDULER_INTERVAL_SECONDS` | ❌ | Intervalo del worker de publicaciones programadas en segundos (default `30`) |
 | `VITE_API_BASE_URL` | ❌ | **Dejar vacía en desarrollo** (ver gotcha abajo) |
 
 ### Gotcha: `VITE_API_BASE_URL`
@@ -129,6 +131,42 @@ grupo (usa el índice `idx_publications_telegram_id`).
 administrator`). El check nunca consulta claves `can_*` (bugfix
 previo). Si Telegram rechaza el envío por permisos, la fila queda
 `failed` con `error_message` real (no se simula el permiso).
+
+### Programación (slice 3)
+
+`POST /api/publications` acepta un campo opcional `scheduled_at`
+(RFC3339 con offset). Si está presente y es futuro, la fila se inserta
+con `status='scheduled'` y NO se envía al momento de crear. Un worker
+in-process (canónico `SELECT ... FOR UPDATE SKIP LOCKED` en una
+transacción explícita) revisa cada 30 segundos y entrega las filas
+cuya `scheduled_at` ya pasó al helper `publishOne` (mismo path que
+publicación inmediata: permissionOk + SendMessage/SendPhoto +
+UpdateStatus + log). El worker **no** reintenta filas `failed`.
+
+**Importante**: Telegram **no** soporta scheduling nativo desde bots
+(envío programado con `schedule_date` solo funciona en canales, no
+desde bots a grupos); el panel programa in-process con el worker
+descrito. El intervalo es configurable vía
+`PUBLICATIONS_SCHEDULER_INTERVAL_SECONDS`.
+
+**Cancelación** (`DELETE /api/publications/:id`): hard delete permitido
+**únicamente** cuando `status='scheduled'`. Otros status (`sending`,
+`sent`, `failed`) devuelven **409 `INVALID_STATUS`** para preservar
+el audit trail — el admin puede ver el `error_message` real de una
+publicación fallida en el historial.
+
+### Historial paginado (slice 3)
+
+`GET /api/publications` acepta:
+
+- `?group_id=<int64>` (filtro por grupo, slice 2).
+- `?limit=<int>` (default `50`, max `100`). Valores fuera de rango
+  devuelven 400 `VALIDATION_ERROR`.
+- `?offset=<int>` (default `0`). Valores negativos devuelven 400.
+
+El panel muestra los controles **Anterior / Siguiente** debajo del
+listado (Prev deshabilitado en `offset=0`; Next deshabilitado cuando
+la página retornada tiene menos filas que `limit`).
 
 ## Limitaciones reales de la Bot API
 
