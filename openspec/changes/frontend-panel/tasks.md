@@ -34,11 +34,13 @@ Chain strategy: feature-branch-chain
 
 ## Phase 2: Routing + layout + login
 
-- [ ] 2.1 `frontend/src/App.tsx`: rutas §16 completas, root→/dashboard, 404; layout autenticado padre con `<Outlet />`
-- [ ] 2.2 `frontend/src/components/RequireAuth.tsx`: sin sesión→redirect `/login` con `location.state.from`; con sesión→Outlet
-- [ ] 2.3 `frontend/src/components/Layout.tsx`: sidebar (Dashboard, Grupos, Logs) + header + Outlet — CSS plano
-- [ ] 2.4 `frontend/src/pages/LoginPage.tsx`: form RHF+Zod (username, password), submit→`useAuth().login()`, error legible §18, redirect post-login
-- [ ] 2.5 `frontend/src/pages/NotFoundPage.tsx`: 404 con link a /dashboard
+- [x] 2.1 `frontend/src/App.tsx`: rutas §16 completas, root→/dashboard, 404; layout autenticado padre con `<Outlet />`
+- [x] 2.2 `frontend/src/components/RequireAuth.tsx`: sin sesión→redirect `/login` con `location.state.from`; con sesión→Outlet
+- [x] 2.3 `frontend/src/components/Layout.tsx`: sidebar (Dashboard, Grupos, Logs) + header + Outlet — CSS plano
+- [x] 2.4 `frontend/src/pages/LoginPage.tsx`: form RHF+Zod (username, password), submit→`useAuth().login()`, error legible §18, redirect post-login
+- [x] 2.5 `frontend/src/pages/NotFoundPage.tsx`: 404 con link a /dashboard
+
+⚠️ **deviation (tests)**: se agregó `frontend/src/test/helpers.tsx` con `mockFetchRoutes` — mock de fetch **por URL** en vez de mocks por orden (los `mockResolvedValueOnce` se desalinean porque el api-client refresca automáticamente ante 401; el refresh consume respuestas destinadas a otras llamadas). ⚠️ **deviation (setup)**: `test/setup.ts` agrega `afterEach(cleanup)` de RTL — sin `globals:true`, RTL no auto-limpia el DOM entre tests y acumula árboles ("multiple elements"). ⚠️ **deviation**: `pages/GroupUsersPage|GroupRequestsPage|GroupLogsPage.tsx` y stubs de `GroupsPage`/`GroupDetailPage` se crearon en PR2 como placeholders accesibles (antes de su fase), para que las rutas §16 resuelvan y los tests de rutas pasen; el contenido real llega en PR3.
 
 ## Phase 3: Dashboard + detalle de grupo
 

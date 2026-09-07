@@ -1,26 +1,51 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
+import { AuthProvider } from './lib/auth-context'
+
+function renderApp(initialEntries: string[] = ['/']) {
+  return render(
+    <MemoryRouter initialEntries={initialEntries}>
+      <AuthProvider>
+        <App />
+      </AuthProvider>
+    </MemoryRouter>,
+  )
+}
 
 describe('App', () => {
-  it('renderiza el placeholder del dashboard en la ruta raiz', () => {
-    render(
-      <MemoryRouter initialEntries={['/']}>
-        <App />
-      </MemoryRouter>,
-    )
-
-    expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeInTheDocument()
+  beforeEach(() => {
+    // Sin sesion al montar: /me responde 401.
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: () => Promise.resolve({ data: null, error: { code: 'UNAUTHORIZED', message: 'no autenticado' } }),
+    }))
   })
 
-  it('renderiza el placeholder de login en /login', () => {
-    render(
-      <MemoryRouter initialEntries={['/login']}>
-        <App />
-      </MemoryRouter>,
-    )
+  it('la ruta raiz redirige a /login sin sesion', async () => {
+    renderApp(['/'])
 
-    expect(screen.getByRole('heading', { name: 'Iniciar sesión' })).toBeInTheDocument()
+    // RequireAuth redirige / -> /dashboard -> /login
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Iniciar sesión' })).toBeInTheDocument())
+  })
+
+  it('renderiza el dashboard con sesion', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ data: { id: '1', username: 'admin' }, error: null }),
+    }))
+
+    renderApp(['/dashboard'])
+
+    expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeInTheDocument()
+  })
+
+  it('muestra 404 en rutas desconocidas', async () => {
+    renderApp(['/no-existe'])
+
+    expect(await screen.findByText('Página no encontrada')).toBeInTheDocument()
   })
 })

@@ -1,15 +1,40 @@
-import { Route, Routes } from 'react-router-dom'
-import DashboardPage from './pages/DashboardPage'
+// Ruta raiz de la app: el dashboard se muestra en /dashboard y la raiz
+// redirige ahi (spec frontend-routing). Las rutas autenticadas viven en
+// el layout padre con <Outlet /> (guia frontend seccion 8).
+import { Navigate, Route, Routes } from 'react-router-dom'
+import RequireAuth from './components/RequireAuth'
+import Layout from './components/Layout'
 import LoginPage from './pages/LoginPage'
+import DashboardPage from './pages/DashboardPage'
+import GroupsPage from './pages/GroupsPage'
+import GroupDetailPage from './pages/GroupDetailPage'
+import GroupUsersPage from './pages/GroupUsersPage'
+import GroupRequestsPage from './pages/GroupRequestsPage'
+import GroupLogsPage from './pages/GroupLogsPage'
+import NotFoundPage from './pages/NotFoundPage'
 
-// Rutas base del panel (seccion 16 del spec). Cada pagina real se
-// desarrolla en su propio cambio; aca viven los placeholders que
-// permiten validar navegacion y build desde el bootstrap.
 export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
-      <Route path="/" element={<DashboardPage />} />
+
+      <Route
+        element={
+          <RequireAuth>
+            <Layout />
+          </RequireAuth>
+        }
+      >
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/groups" element={<GroupsPage />} />
+        <Route path="/groups/:id" element={<GroupDetailPage />} />
+        <Route path="/groups/:id/users" element={<GroupUsersPage />} />
+        <Route path="/groups/:id/requests" element={<GroupRequestsPage />} />
+        <Route path="/groups/:id/logs" element={<GroupLogsPage />} />
+      </Route>
+
+      <Route path="*" element={<NotFoundPage />} />
     </Routes>
   )
 }
