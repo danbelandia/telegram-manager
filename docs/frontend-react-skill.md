@@ -61,7 +61,15 @@ frontend/src/
   de `useEffect` + `fetch` manual: da cache, revalidación y estados de
   loading/error consistentes sin reinventar la rueda en cada feature.
   Es la única dependencia "extra" que vale la pena para un panel con
-  tantas vistas de datos remotos.
+  tantas vistas de datos remotos. Los hooks por feature viven en
+  `features/<dominio>/hooks.ts` (`useGroups`, `useGroup`, ...) con
+  `retry: false` — el UI decide cuándo reintentar (botón manual).
+- En tests, mockear `fetch` por **URL** (helper `test/helpers.tsx`,
+  `mockFetchRoutes`) y no con `mockResolvedValueOnce` encadenados: el
+  refresh automático ante 401 consume respuestas destinadas a otras
+  llamadas y desalinea los mocks por orden. `test/setup.ts` registra
+  `afterEach(cleanup)` porque Vitest corre sin `globals: true` y RTL no
+  auto-limpia el DOM entre tests.
 
 ## 4. Manejo de estado
 
@@ -76,7 +84,9 @@ frontend/src/
   al frontend.
 - Sesión de auth (usuario logueado, permisos) en un Context simple con
   un hook `useAuth()` — es el único caso legítimo de Context global en
-  este proyecto.
+  este proyecto. Vive en `lib/auth-context.tsx` (`AuthProvider` +
+  `useAuth`): expone `{loading, user, login, logout}`; `user === null`
+  significa sin sesión.
 
 ## 5. Formularios y validación
 
