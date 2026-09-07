@@ -1,12 +1,13 @@
-// Tests del GroupRequestsPage (spec frontend-moderation req 6): lista
-// de solicitudes con estados, aprobar/rechazar y concurrencia (otro
-// admin ya decidio -> VALIDATION_ERROR legible).
-import { render, screen, waitFor } from '@testing-library/react'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+// Tests del GroupRequestsPage (spec frontend-pages-moderation REQ-4..5):
+// tabla con Badges por estado, Aprobar/Rechazar con notification directa
+// (sin Modal — acciones reversibles). Wrapper compartido con Mantine +
+// Notifications (frontend-refresh slice 1).
+import { screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import GroupRequestsPage from './GroupRequestsPage'
-import { errorJson, mockFetchRoutes, okJson } from '../test/helpers'
+import { errorJson, mockFetchRoutes, okJson, renderWithProviders } from '../test/helpers'
 
 const requests = [
   {
@@ -34,15 +35,11 @@ const requests = [
 ]
 
 function renderRequests() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={['/groups/123/requests']}>
-        <Routes>
-          <Route path="/groups/:id/requests" element={<GroupRequestsPage />} />
-        </Routes>
-      </MemoryRouter>
-    </QueryClientProvider>,
+  return renderWithProviders(
+    <Routes>
+      <Route path="/groups/:id/requests" element={<GroupRequestsPage />} />
+    </Routes>,
+    ['/groups/123/requests'],
   )
 }
 
@@ -95,7 +92,8 @@ describe('GroupRequestsPage', () => {
     expect(await screen.findByText('Juan')).toBeInTheDocument()
   })
 
-  it('aprueba una solicitud pendiente', async () => {
+  it('aprueba una solicitud pendiente y muestra notification de exito', async () => {
+    const user = userEvent.setup()
     const spy = vi.fn()
     mockFetchRoutes({
       '/api/groups/123/join-requests/11/approve': () => {
@@ -108,13 +106,15 @@ describe('GroupRequestsPage', () => {
     renderRequests()
 
     const approveButton = await screen.findByRole('button', { name: 'Aprobar' })
-    approveButton.click()
+    await user.click(approveButton)
 
     await waitFor(() => expect(spy).toHaveBeenCalled())
-    expect(await screen.findByText(/decisión enviada/i)).toBeInTheDocument()
+    // La notification aparece en el portal de Mantine; matcher flexible.
+    expect(await screen.findByText(/solicitud aprobada/i)).toBeInTheDocument()
   })
 
-  it('rechaza una solicitud pendiente', async () => {
+  it('rechaza una solicitud pendiente y muestra notification de exito', async () => {
+    const user = userEvent.setup()
     const spy = vi.fn()
     mockFetchRoutes({
       '/api/groups/123/join-requests/11/reject': () => {
@@ -127,13 +127,14 @@ describe('GroupRequestsPage', () => {
     renderRequests()
 
     const rejectButton = await screen.findByRole('button', { name: 'Rechazar' })
-    rejectButton.click()
+    await user.click(rejectButton)
 
     await waitFor(() => expect(spy).toHaveBeenCalled())
-    expect(await screen.findByText(/decisión enviada/i)).toBeInTheDocument()
+    expect(await screen.findByText(/solicitud rechazada/i)).toBeInTheDocument()
   })
 
   it('muestra mensaje legible si la solicitud ya fue decidida', async () => {
+    const user = userEvent.setup()
     mockFetchRoutes({
       '/api/groups/123/join-requests/11/approve': () =>
         errorJson(400, 'VALIDATION_ERROR', 'La solicitud de ingreso ya fue decidida.'),
@@ -143,7 +144,7 @@ describe('GroupRequestsPage', () => {
     renderRequests()
 
     const approveButton = await screen.findByRole('button', { name: 'Aprobar' })
-    approveButton.click()
+    await user.click(approveButton)
 
     expect(await screen.findByText(/la solicitud de ingreso ya fue decidida/i)).toBeInTheDocument()
   })

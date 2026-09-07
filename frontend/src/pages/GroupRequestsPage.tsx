@@ -1,11 +1,31 @@
-// Solicitudes de ingreso del grupo (spec frontend-moderation req 6): el
-// backend procesa los eventos de join_request de Telegram y esta vista
-// permite aprobar/rechazar las pendientes. Estados loading/vacio/error
-// y feedback de accion con manejo de concurrencia ("ya fue decidida").
+// Solicitudes de ingreso del grupo (spec frontend-pages-moderation
+// REQ-4..5): lista de join_requests en <Table> Mantine con Badge por
+// estado, acciones Aprobar/Rechazar clic directo + notifySuccess (sin
+// Modal — la acción es reversible: el admin puede deshacerla desde
+// Telegram). Reemplaza los banners inline de la versión CSS plana y
+// delega feedback a lib/notifications (slice 1 helper).
 import { Link, useParams } from 'react-router-dom'
+import {
+  Alert,
+  Badge,
+  Button,
+  Group,
+  Paper,
+  Skeleton,
+  Stack,
+  Table,
+  Text,
+  Title,
+} from '@mantine/core'
+import { IconArrowLeft, IconCheck, IconX } from '@tabler/icons-react'
 import { formatModerationError } from '../features/moderation/error'
-import { useApproveJoinRequest, useJoinRequests, useRejectJoinRequest } from '../features/moderation/hooks'
+import {
+  useApproveJoinRequest,
+  useJoinRequests,
+  useRejectJoinRequest,
+} from '../features/moderation/hooks'
 import type { JoinRequest } from '../features/moderation/types'
+import { notifyError, notifySuccess } from '../lib/notifications'
 
 const STATUS_LABEL: Record<JoinRequest['status'], string> = {
   pending: 'Pendiente',
@@ -13,9 +33,40 @@ const STATUS_LABEL: Record<JoinRequest['status'], string> = {
   rejected: 'Rechazada',
 }
 
+const STATUS_COLOR: Record<JoinRequest['status'], string> = {
+  pending: 'yellow',
+  approved: 'green',
+  rejected: 'red',
+}
+
 function formatDate(iso: string | null): string {
   if (!iso) return '—'
   return new Date(iso).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })
+}
+
+function RequestsSkeleton() {
+  return (
+    <Table striped highlightOnHover>
+      <Table.Thead>
+        <Table.Tr>
+          <Table.Th>Usuario</Table.Th>
+          <Table.Th>Fecha</Table.Th>
+          <Table.Th>Estado</Table.Th>
+          <Table.Th>Acciones</Table.Th>
+        </Table.Tr>
+      </Table.Thead>
+      <Table.Tbody>
+        {[0, 1, 2].map((i) => (
+          <Table.Tr key={i}>
+            <Table.Td><Skeleton height={16} width="60%" /></Table.Td>
+            <Table.Td><Skeleton height={16} width="80%" /></Table.Td>
+            <Table.Td><Skeleton height={16} width={80} /></Table.Td>
+            <Table.Td><Skeleton height={24} width={120} /></Table.Td>
+          </Table.Tr>
+        ))}
+      </Table.Tbody>
+    </Table>
+  )
 }
 
 export default function GroupRequestsPage() {
@@ -26,92 +77,134 @@ export default function GroupRequestsPage() {
   const approve = useApproveJoinRequest()
   const reject = useRejectJoinRequest()
 
-  // Los errores de mutate() son asincronos: llegan por mutation.error,
-  // no por excepcion sincrona (ver GroupUsersPage).
-  const actionError = approve.error ?? reject.error
   const pending = approve.isPending || reject.isPending
-  const lastResult = approve.isSuccess || reject.isSuccess ? 'Decisión enviada.' : null
+
+  const runApprove = (requestId: number) => {
+    approve.mutate(
+      { groupId, requestId },
+      {
+        onSuccess: () => notifySuccess('Solicitud aprobada'),
+        onError: (e) => notifyError(formatModerationError(e)),
+      },
+    )
+  }
+
+  const runReject = (requestId: number) => {
+    reject.mutate(
+      { groupId, requestId },
+      {
+        onSuccess: () => notifySuccess('Solicitud rechazada'),
+        onError: (e) => notifyError(formatModerationError(e)),
+      },
+    )
+  }
 
   return (
-    <main className="page">
-      <Link to={`/groups/${groupId}`} className="back-link">
-        ← Volver al grupo
-      </Link>
+    <Paper p="md" withBorder radius="md">
+      <Stack gap="md">
+        <Group gap="xs">
+          <Button
+            component={Link}
+            to={`/groups/${groupId}`}
+            variant="subtle"
+            size="xs"
+            leftSection={<IconArrowLeft size={14} />}
+          >
+            Volver al grupo
+          </Button>
+        </Group>
 
-      <h1>Solicitudes de ingreso</h1>
+        <Title order={2}>Solicitudes de ingreso</Title>
 
-      {lastResult ? <p className="state-block state-ok">{lastResult}</p> : null}
-      {actionError ? <p className="state-block state-error">{formatModerationError(actionError)}</p> : null}
+        {requests.isPending ? <RequestsSkeleton /> : null}
 
-      {requests.isPending ? <p className="state-block">Cargando solicitudes…</p> : null}
+        {requests.isError ? (
+          <Alert color="red" variant="light" title="Error">
+            <Stack gap="xs">
+              <Text size="sm">
+                {requests.error instanceof Error
+                  ? requests.error.message
+                  : 'No se pudieron cargar las solicitudes.'}
+              </Text>
+              <Group>
+                <Button variant="default" size="xs" onClick={() => requests.refetch()}>
+                  Reintentar
+                </Button>
+              </Group>
+            </Stack>
+          </Alert>
+        ) : null}
 
-      {requests.isError ? (
-        <div className="state-block state-error">
-          <p>{requests.error instanceof Error ? requests.error.message : 'No se pudieron cargar las solicitudes.'}</p>
-          <button type="button" className="btn" onClick={() => requests.refetch()}>
-            Reintentar
-          </button>
-        </div>
-      ) : null}
+        {!requests.isPending && !requests.isError && requests.data && requests.data.length === 0 ? (
+          <Text c="dimmed">
+            Sin solicitudes de ingreso pendientes ni resueltas.
+          </Text>
+        ) : null}
 
-      {requests.data && requests.data.length === 0 ? (
-        <p className="state-block">Sin solicitudes de ingreso pendientes ni resueltas.</p>
-      ) : null}
-
-      {requests.data && requests.data.length > 0 ? (
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Usuario</th>
-                <th>Fecha</th>
-                <th>Estado</th>
-                <th>Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              {requests.data.map((req) => (
-                <tr key={req.id}>
-                  <td>
-                    <strong>{req.first_name}</strong>
-                    {req.username ? ` @${req.username}` : ''}
-                  </td>
-                  <td>{formatDate(req.requested_at)}</td>
-                  <td>
-                    <span className={`badge badge-${req.status}`}>{STATUS_LABEL[req.status]}</span>
-                  </td>
-                  <td>
-                    {req.status === 'pending' ? (
-                      <>
-                        <button
-                          type="button"
-                          className="btn"
-                          disabled={pending}
-                          onClick={() => approve.mutate({ groupId, requestId: req.id })}
-                        >
-                          Aprobar
-                        </button>{' '}
-                        <button
-                          type="button"
-                          className="btn"
-                          disabled={pending}
-                          onClick={() => reject.mutate({ groupId, requestId: req.id })}
-                        >
-                          Rechazar
-                        </button>
-                      </>
-                    ) : (
-                      <span className="state-block-weak">
-                        {req.decided_by ? `Decidida por admin ${req.decided_by}` : ''}
-                      </span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : null}
-    </main>
+        {!requests.isPending && !requests.isError && requests.data && requests.data.length > 0 ? (
+          <Table.ScrollContainer minWidth={500}>
+            <Table striped highlightOnHover withTableBorder verticalSpacing="sm">
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Usuario</Table.Th>
+                  <Table.Th>Fecha</Table.Th>
+                  <Table.Th>Estado</Table.Th>
+                  <Table.Th>Acciones</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {requests.data.map((req) => (
+                  <Table.Tr key={req.id}>
+                    <Table.Td>
+                      <Text fw={500}>{req.first_name}</Text>
+                      <Text size="xs" c="dimmed">
+                        ID: {req.user_id}
+                        {req.username ? ` · @${req.username}` : ''}
+                      </Text>
+                    </Table.Td>
+                    <Table.Td>{formatDate(req.requested_at)}</Table.Td>
+                    <Table.Td>
+                      <Badge color={STATUS_COLOR[req.status]} variant="light">
+                        {STATUS_LABEL[req.status]}
+                      </Badge>
+                    </Table.Td>
+                    <Table.Td>
+                      {req.status === 'pending' ? (
+                        <Group gap="xs">
+                          <Button
+                            size="xs"
+                            variant="light"
+                            color="green"
+                            leftSection={<IconCheck size={14} />}
+                            disabled={pending}
+                            onClick={() => runApprove(req.id)}
+                          >
+                            Aprobar
+                          </Button>
+                          <Button
+                            size="xs"
+                            variant="light"
+                            color="red"
+                            leftSection={<IconX size={14} />}
+                            disabled={pending}
+                            onClick={() => runReject(req.id)}
+                          >
+                            Rechazar
+                          </Button>
+                        </Group>
+                      ) : (
+                        <Text size="sm" c="dimmed">
+                          {req.decided_by ? `Decidida por admin ${req.decided_by}` : 'Decidida'}
+                        </Text>
+                      )}
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+          </Table.ScrollContainer>
+        ) : null}
+      </Stack>
+    </Paper>
   )
 }

@@ -1,13 +1,13 @@
-// Tests del GroupUsersPage (spec frontend-moderation req 2-3): lista de
-// administradores con estados, lookup puntual y acciones con
-// confirmacion (confirm=true ejecuta, confirm=false no llama a fetch).
-import { render, screen, waitFor } from '@testing-library/react'
+// Tests del GroupUsersPage (spec frontend-pages-moderation REQ-1..3):
+// render de Cards en SimpleGrid, lookup puntual, accion destructiva ban
+// confirmada con <Modal> en lugar de window.confirm. Wrapper compartido
+// con Mantine + Notifications (frontend-refresh slice 1).
+import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import GroupUsersPage from './GroupUsersPage'
-import { errorJson, mockFetchRoutes, okJson } from '../test/helpers'
+import { errorJson, mockFetchRoutes, okJson, renderWithProviders } from '../test/helpers'
 
 const admins = [
   {
@@ -33,15 +33,13 @@ const admins = [
 ]
 
 function renderUsers() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={['/groups/123/users']}>
-        <Routes>
-          <Route path="/groups/:id/users" element={<GroupUsersPage />} />
-        </Routes>
-      </MemoryRouter>
-    </QueryClientProvider>,
+  // renderWithProviders ya envuelve con MemoryRouter. Registramos la
+  // ruta `/groups/:id/users` para que useParams resuelva :id desde la URL.
+  return renderWithProviders(
+    <Routes>
+      <Route path="/groups/:id/users" element={<GroupUsersPage />} />
+    </Routes>,
+    ['/groups/123/users'],
   )
 }
 
@@ -71,8 +69,13 @@ describe('GroupUsersPage', () => {
 
     renderUsers()
 
-    expect(await screen.findByText('Juan')).toBeInTheDocument()
-    expect(screen.getByText('@juanito')).toBeInTheDocument()
+    // Espera que las dos Cards aparezcan (por data-testid).
+    const cards = await screen.findAllByTestId('user-card')
+    expect(cards).toHaveLength(2)
+    expect(screen.getByText('Juan')).toBeInTheDocument()
+    // El username se renderiza dentro de un Text con varias partes
+    // ("ID: 42 · @juanito"), asi que usamos regex.
+    expect(screen.getByText(/@juanito/)).toBeInTheDocument()
     expect(screen.getByText('Ana')).toBeInTheDocument()
     expect(screen.getByText('creator')).toBeInTheDocument()
   })
@@ -104,9 +107,23 @@ describe('GroupUsersPage', () => {
     expect(await screen.findByText('Juan')).toBeInTheDocument()
   })
 
-  it('banea un usuario cuando el admin confirma', async () => {
-    const confirmSpy = vi.fn(() => true)
-    window.confirm = confirmSpy
+  it('abre el Modal de confirmacion al hacer clic en Banear', async () => {
+    const user = userEvent.setup()
+    mockFetchRoutes({ '/api/groups/123/users': () => okJson(admins) })
+
+    renderUsers()
+
+    const cards = await screen.findAllByTestId('user-card')
+    const juanCard = cards.find((c) => c.textContent?.includes('Juan'))!
+    const banButton = juanCard.querySelector('button')! // primer button del card = Banear
+    await user.click(banButton)
+
+    expect(await screen.findByRole('heading', { name: 'Confirmar baneo' })).toBeInTheDocument()
+    expect(screen.getByText(/¿Banear a Juan\? Esta acción es irreversible\./i)).toBeInTheDocument()
+  })
+
+  it('banea un usuario cuando el admin confirma desde el Modal', async () => {
+    const user = userEvent.setup()
     const spy = vi.fn()
     mockFetchRoutes({
       '/api/groups/123/users/42/ban': () => {
@@ -118,15 +135,19 @@ describe('GroupUsersPage', () => {
 
     renderUsers()
 
-    const banButton = (await screen.findByText('Juan')).closest('.group-card')!.querySelector('button')!
-    banButton.click()
+    const cards = await screen.findAllByTestId('user-card')
+    const juanCard = cards.find((c) => c.textContent?.includes('Juan'))!
+    await user.click(juanCard.querySelector('button')!) // Banear (primer button)
 
-    expect(confirmSpy).toHaveBeenCalled()
+    expect(await screen.findByRole('heading', { name: 'Confirmar baneo' })).toBeInTheDocument()
+    await user.click(screen.getByTestId('confirm-ban'))
+
     await waitFor(() => expect(spy).toHaveBeenCalled())
+    expect(await screen.findByText('Usuario baneado')).toBeInTheDocument()
   })
 
   it('no llama a la API si el admin cancela la confirmacion', async () => {
-    window.confirm = vi.fn(() => false)
+    const user = userEvent.setup()
     const spy = vi.fn()
     mockFetchRoutes({
       '/api/groups/123/users/42/ban': () => {
@@ -138,13 +159,22 @@ describe('GroupUsersPage', () => {
 
     renderUsers()
 
-    const banButton = (await screen.findByText('Juan')).closest('.group-card')!.querySelector('button')!
-    banButton.click()
+    const cards = await screen.findAllByTestId('user-card')
+    const juanCard = cards.find((c) => c.textContent?.includes('Juan'))!
+    await user.click(juanCard.querySelector('button')!)
 
+    expect(await screen.findByRole('heading', { name: 'Confirmar baneo' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    // El Modal se cerro (heading fuera del DOM).
+    await waitFor(() => {
+      expect(screen.queryByRole('heading', { name: 'Confirmar baneo' })).not.toBeInTheDocument()
+    })
     expect(spy).not.toHaveBeenCalled()
   })
 
   it('hace lookup puntual por userId', async () => {
+    const user = userEvent.setup()
     mockFetchRoutes({
       '/api/groups/123/users?userId=99': () =>
         okJson({
@@ -163,9 +193,30 @@ describe('GroupUsersPage', () => {
     renderUsers()
 
     const input = screen.getByPlaceholderText(/ID de Telegram del usuario/i)
-    await userEvent.type(input, '99')
-    screen.getByRole('button', { name: 'Buscar' }).click()
+    await user.type(input, '99')
+    await user.click(screen.getByRole('button', { name: 'Buscar' }))
 
     expect(await screen.findByText('Pedro')).toBeInTheDocument()
+  })
+
+  it('mutea un usuario con notification directa (sin Modal)', async () => {
+    const user = userEvent.setup()
+    const spy = vi.fn()
+    mockFetchRoutes({
+      '/api/groups/123/users/42/mute': () => {
+        spy()
+        return okJson({ status: 'ok' })
+      },
+      '/api/groups/123/users': () => okJson(admins),
+    })
+
+    renderUsers()
+
+    const cards = await screen.findAllByTestId('user-card')
+    const juanCard = cards.find((c) => c.textContent?.includes('Juan'))!
+    await user.click(juanCard.querySelectorAll('button')[1]!) // Mutear (segundo button)
+
+    await waitFor(() => expect(spy).toHaveBeenCalled())
+    expect(await screen.findByText('Usuario muteado')).toBeInTheDocument()
   })
 })

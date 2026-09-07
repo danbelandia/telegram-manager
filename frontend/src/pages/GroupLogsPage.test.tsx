@@ -1,12 +1,12 @@
-// Tests del GroupLogsPage (spec frontend-moderation req 7): lista de
-// entradas de auditoria ordenada (la API ya devuelve desc por
-// created_at), con accion/status/detalle y fecha legible.
-import { render, screen } from '@testing-library/react'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+// Tests del GroupLogsPage (spec frontend-pages-moderation REQ-6..7):
+// tabla con Badges por status y orden DESC por created_at. Paginacion
+// NO incluida (diferida a slice 3 segun spec REQ-7 non-goal). Wrapper
+// compartido con Mantine + Notifications (frontend-refresh slice 1).
+import { screen } from '@testing-library/react'
+import { Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import GroupLogsPage from './GroupLogsPage'
-import { errorJson, mockFetchRoutes, okJson } from '../test/helpers'
+import { errorJson, mockFetchRoutes, okJson, renderWithProviders } from '../test/helpers'
 
 const logs = [
   {
@@ -34,15 +34,11 @@ const logs = [
 ]
 
 function renderLogs() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={['/groups/123/logs']}>
-        <Routes>
-          <Route path="/groups/:id/logs" element={<GroupLogsPage />} />
-        </Routes>
-      </MemoryRouter>
-    </QueryClientProvider>,
+  return renderWithProviders(
+    <Routes>
+      <Route path="/groups/:id/logs" element={<GroupLogsPage />} />
+    </Routes>,
+    ['/groups/123/logs'],
   )
 }
 
