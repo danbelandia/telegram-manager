@@ -28,33 +28,33 @@ Convención (idéntica a frontend-panel): cada PR SÍ verifica (npm test + build
 
 ## Phase 1: Fundación del dominio moderation
 
-- [ ] 1.1 Crear `frontend/src/features/moderation/types.ts` con `GroupUser`, `JoinRequest`, `LogEntry` (DTO reales de handlers backend; ver design)
-- [ ] 1.2 Crear `frontend/src/features/moderation/api.ts`: `listGroupUsers`, `getGroupUser(userId)`, `banUser`, `unbanUser`, `muteUser`, `unmuteUser`, `deleteMessage`, `pinMessage`, `lockGroup`, `unlockGroup`, `listJoinRequests`, `approveJoinRequest`, `rejectJoinRequest`, `listGroupLogs`
-- [ ] 1.3 Crear `frontend/src/features/moderation/hooks.ts`: `useGroupUsers`, `useGroupUser`, `useJoinRequests`, `useGroupLogs` (useQuery retry:false) + mutations `useBanUser`, `useUnbanUser`, `useMuteUser`, `useUnmuteUser`, `useDeleteMessage`, `usePinMessage`, `useLockGroup`, `useUnlockGroup`, `useApproveJoinRequest`, `useRejectJoinRequest`
-- [ ] 1.4 Invalidación en mutations: ban/unban/mute/unmute → `['groups', id, 'users']` + `['groups', id, 'logs']`; delete/pin → `['groups', id, 'logs']`; lock/unlock → `['groups', id]` + logs; approve/reject → `['groups', id, 'requests']` + logs
-- [ ] 1.5 Crear `frontend/src/features/moderation/error.ts` con `formatModerationError` (fallback legible si el mensaje del backend no llega)
+- [x] 1.1 Crear `frontend/src/features/moderation/types.ts` con `GroupUser`, `JoinRequest`, `LogEntry` (DTO reales de handlers backend; ver design)
+- [x] 1.2 Crear `frontend/src/features/moderation/api.ts`: `listGroupUsers`, `getGroupUser(userId)`, `banUser`, `unbanUser`, `muteUser`, `unmuteUser`, `deleteMessage`, `pinMessage`, `lockGroup`, `unlockGroup`, `listJoinRequests`, `approveJoinRequest`, `rejectJoinRequest`, `listGroupLogs`
+- [x] 1.3 Crear `frontend/src/features/moderation/hooks.ts`: `useGroupUsers`, `useGroupUser`, `useJoinRequests`, `useGroupLogs` (useQuery retry:false) + mutations `useBanUser`, `useUnbanUser`, `useMuteUser`, `useUnmuteUser`, `useDeleteMessage`, `usePinMessage`, `useLockGroup`, `useUnlockGroup`, `useApproveJoinRequest`, `useRejectJoinRequest`
+- [x] 1.4 Invalidación en mutations: ban/unban/mute/unmute → `['groups', id, 'users']` + `['groups', id, 'logs']`; delete/pin → `['groups', id, 'logs']`; lock/unlock → `['groups', id]` + logs; approve/reject → `['groups', id, 'requests']` + logs
+- [x] 1.5 Crear `frontend/src/features/moderation/error.ts` con `formatModerationError` (fallback legible si el mensaje del backend no llega)
 
 ## Phase 2: Vistas de usuarios y acciones
 
-- [ ] 2.1 Reescribir `frontend/src/pages/GroupUsersPage.tsx`: lista de admins (estados loading/vacío/error + reintento), nota de limitación Bot API, lookup por `userId`
-- [ ] 2.2 Acciones por usuario: botones Banear/Desmutear/Mutear/Desmutear, `window.confirm` para ban y mute, feedback de resultado y error §18
-- [ ] 2.3 Crear `frontend/src/pages/GroupUsersPage.test.tsx`: render admins, vacío, error+reintento, ban confirmado (POST + invalidación), ban cancelado (sin fetch)
+- [x] 2.1 Reescribir `frontend/src/pages/GroupUsersPage.tsx`: lista de admins (estados loading/vacío/error + reintento), nota de limitación Bot API, lookup por `userId`
+- [x] 2.2 Acciones por usuario: botones Banear/Desmutear/Mutear/Desmutear, `window.confirm` para ban y mute, feedback de resultado y error §18
+- [x] 2.3 Crear `frontend/src/pages/GroupUsersPage.test.tsx`: render admins, vacío, error+reintento, ban confirmado (POST + invalidación), ban cancelado (sin fetch)
 
 ## Phase 3: Solicitudes y logs
 
-- [ ] 3.1 Reescribir `frontend/src/pages/GroupRequestsPage.tsx`: lista (estados), aprobar/rechazar pendientes, feedback + error "ya fue decidida"
-- [ ] 3.2 Crear `frontend/src/pages/GroupRequestsPage.test.tsx`: lista, approve, reject, concurrencia (VALIDATION_ERROR)
-- [ ] 3.3 Reescribir `frontend/src/pages/GroupLogsPage.tsx`: lista de logs desc por `created_at`, acción/status/target/error/fecha
-- [ ] 3.4 Crear `frontend/src/pages/GroupLogsPage.test.tsx`: render logs, vacío, error
+- [x] 3.1 Reescribir `frontend/src/pages/GroupRequestsPage.tsx`: lista (estados), aprobar/rechazar pendientes, feedback + error "ya fue decidida"
+- [x] 3.2 Crear `frontend/src/pages/GroupRequestsPage.test.tsx`: lista, approve, reject, concurrencia (VALIDATION_ERROR)
+- [x] 3.3 Reescribir `frontend/src/pages/GroupLogsPage.tsx`: lista de logs desc por `created_at`, acción/status/target/error/fecha
+- [x] 3.4 Crear `frontend/src/pages/GroupLogsPage.test.tsx`: render logs, vacío, error
 
 ## Phase 4: Acciones en detalle + integración
 
-- [ ] 4.1 Modificar `frontend/src/pages/GroupDetailPage.tsx`: botones 🔓/🔒 (confirm para lock) + form delete/pin con `messageId` (confirm para delete)
-- [ ] 4.2 Crear `frontend/src/pages/GroupDetailPage.test.tsx`: grupo encontrado, grupo inexistente (tests pendientes del verify), lock confirmado, delete confirmado, delete cancelado
-- [ ] 4.3 `frontend/src/styles.css`: estilos mínimos tablas/estados/acciones
-- [ ] 4.4 `npm test` y `npm run build` verdes
-- [ ] 4.5 Actualizar `docs/frontend-react-skill.md`: patrón useMutation + invalidate + stub confirm
-- [ ] 4.6 Actualizar `openspec/changes/frontend-moderation/state.yaml` (deviations, test_status, prs)
+- [x] 4.1 Modificar `frontend/src/pages/GroupDetailPage.tsx`: botones 🔓/🔒 (confirm para lock) + form delete/pin con `messageId` (confirm para delete)
+- [x] 4.2 Crear `frontend/src/pages/GroupDetailPage.test.tsx`: grupo encontrado, grupo inexistente (tests pendientes del verify), lock confirmado, delete confirmado, delete cancelado
+- [x] 4.3 `frontend/src/styles.css`: estilos mínimos tablas/estados/acciones
+- [x] 4.4 `npm test` y `npm run build` verdes
+- [x] 4.5 Actualizar `docs/frontend-react-skill.md`: patrón useMutation + invalidate + stub confirm
+- [x] 4.6 estado del cambio: sin state.yaml (no es convención en este repo; no existe en ningún cambio previo) — el estado se refleja en tasks.md, commits y specs
 
 ## Next Steps (fuera de este cambio)
 
