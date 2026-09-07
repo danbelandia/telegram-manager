@@ -19,6 +19,14 @@ type Server struct {
 	authSvc      authService
 	cookieSecure bool
 	mux          *http.ServeMux
+
+	// Modulos del paso 10 (moderacion). Se inyectan via options; cada
+	// handler verifica que su modulo este habilitado antes de actuar.
+	groups       groupStore
+	groupUsers   groupUsersLookup
+	moderation   moderationActions
+	joinRequests joinRequestStore
+	logStore     logStore
 }
 
 // NewServer construye el handler HTTP del API.
@@ -61,6 +69,60 @@ func WithAuth(svc authService, verifier authenticator, cookieSecure bool) Option
 func WithWebhook(publisher updatePublisher, secret string) Option {
 	return func(s *Server) {
 		s.mux.HandleFunc("POST /api/telegram/webhook", telegramWebhookHandler(publisher, secret))
+	}
+}
+
+// WithGroups monta las rutas de consulta de grupos (paso 10): listado,
+// detalle y usuarios (admins/lookup). groups los provee el repositorio;
+// groupUsers las llamadas de lectura del adapter de Telegram.
+func WithGroups(groups groupStore, groupUsers groupUsersLookup) Option {
+	return func(s *Server) {
+		s.groups = groups
+		s.groupUsers = groupUsers
+		s.mux.HandleFunc("GET /api/groups", s.requireAuth(s.handleListGroups))
+		s.mux.HandleFunc("GET /api/groups/{id}", s.requireAuth(s.handleGetGroup))
+		s.mux.HandleFunc("GET /api/groups/{id}/users", s.requireAuth(s.handleListGroupUsers))
+	}
+}
+
+// WithModeration monta las acciones de moderacion (paso 10): ban/unban/
+// mute/unmute, delete/pin, lock/unlock y approve/reject de solicitudes.
+// El servicio orquesta Grupo→Permiso→Telegram→Log; el handler solo
+// valida inputs, extrae actor y mapea errores.
+func WithModeration(mod moderationActions) Option {
+	return func(s *Server) {
+		s.moderation = mod
+		s.mux.HandleFunc("POST /api/groups/{id}/users/{userId}/ban", s.requireAuth(s.handleBan))
+		s.mux.HandleFunc("POST /api/groups/{id}/users/{userId}/unban", s.requireAuth(s.handleUnban))
+		s.mux.HandleFunc("POST /api/groups/{id}/users/{userId}/mute", s.requireAuth(s.handleMute))
+		s.mux.HandleFunc("POST /api/groups/{id}/users/{userId}/unmute", s.requireAuth(s.handleUnmute))
+		s.mux.HandleFunc("POST /api/groups/{id}/messages/{messageId}/delete", s.requireAuth(s.handleDeleteMessage))
+		s.mux.HandleFunc("POST /api/groups/{id}/messages/{messageId}/pin", s.requireAuth(s.handlePinMessage))
+		s.mux.HandleFunc("POST /api/groups/{id}/lock", s.requireAuth(s.handleLock))
+		s.mux.HandleFunc("POST /api/groups/{id}/unlock", s.requireAuth(s.handleUnlock))
+	}
+}
+
+// WithJoinRequests monta las rutas de solicitudes de ingreso (paso 10):
+// listado y approve/reject (estas dos ultimas delegan en el Service de
+// moderacion, que orquesta la decision).
+func WithJoinRequests(store joinRequestStore, mod moderationActions) Option {
+	return func(s *Server) {
+		s.joinRequests = store
+		if s.moderation == nil {
+			s.moderation = mod
+		}
+		s.mux.HandleFunc("GET /api/groups/{id}/join-requests", s.requireAuth(s.handleListJoinRequests))
+		s.mux.HandleFunc("POST /api/groups/{id}/join-requests/{requestId}/approve", s.requireAuth(s.handleApproveJoinRequest))
+		s.mux.HandleFunc("POST /api/groups/{id}/join-requests/{requestId}/reject", s.requireAuth(s.handleRejectJoinRequest))
+	}
+}
+
+// WithLogs monta la lectura de auditoria (paso 10): GET .../logs.
+func WithLogs(store logStore) Option {
+	return func(s *Server) {
+		s.logStore = store
+		s.mux.HandleFunc("GET /api/groups/{id}/logs", s.requireAuth(s.handleListGroupLogs))
 	}
 }
 

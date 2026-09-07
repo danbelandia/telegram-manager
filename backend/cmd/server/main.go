@@ -20,7 +20,11 @@ import (
 	"github.com/telegram-manager/backend/internal/database"
 	"github.com/telegram-manager/backend/internal/events"
 	"github.com/telegram-manager/backend/internal/groups"
+	"github.com/telegram-manager/backend/internal/joinrequests"
+	"github.com/telegram-manager/backend/internal/logs"
+	"github.com/telegram-manager/backend/internal/moderation"
 	"github.com/telegram-manager/backend/internal/telegram"
+	"github.com/telegram-manager/backend/internal/users"
 )
 
 func main() {
@@ -109,6 +113,48 @@ func run() error {
 	tokenManager := auth.NewTokenManager(cfg.JWTSecret)
 	authService := auth.NewService(authRepo, tokenManager)
 
+	// Moderacion (paso 10): repositorios de solicitudes y logs,
+	// servicio que orquesta Grupo→Permiso→Telegram→Log.
+	joinRequestsRepo := joinrequests.NewRepository(db)
+	logsRepo := logs.NewRepository(db)
+	moderationService := moderation.NewService(groupsRepo, bot, joinRequestsRepo, logsRepo)
+
+	// Solicitudes de ingreso: cada chat_join_request registra el usuario
+	// en users y la solicitud pendiente (AGENTS.md §10). Idempotente:
+	// UpsertPending usa el indice parcial (grupo, usuario) pending.
+	usersRepo := users.NewRepository(db)
+	bus.Handle(func(u *telegram.Update) {
+		if u.ChatJoinRequest == nil {
+			return
+		}
+		var r joinrequests.Request
+		if err := joinrequests.HandleChatJoinRequest(ctx, u.ChatJoinRequest, &r); err != nil {
+			slog.Warn("joinrequests: ignoring chat_join_request", "error", err)
+			return
+		}
+		if r.GroupID == 0 || r.UserID == 0 {
+			return
+		}
+		// Registro del usuario (identidad desde Telegram, D6). El
+		// username puede venir vacio; first_name puede ser "".
+		usr := &users.User{
+			TelegramID: r.UserID,
+			FirstName:  u.ChatJoinRequest.User.FirstName,
+		}
+		if u.ChatJoinRequest.User.Username != "" {
+			usr.Username = &u.ChatJoinRequest.User.Username
+		}
+		if err := usersRepo.UpsertByTelegramID(ctx, usr); err != nil {
+			slog.Error("joinrequests: user upsert failed", "user_id", r.UserID, "error", err)
+			return
+		}
+		if err := joinRequestsRepo.UpsertPending(ctx, r.GroupID, r.UserID); err != nil {
+			slog.Error("joinrequests: upsert pending failed", "group_id", r.GroupID, "user_id", r.UserID, "error", err)
+			return
+		}
+		slog.Info("joinrequests: request registered", "group_id", r.GroupID, "user_id", r.UserID)
+	})
+
 	var pollerErrCh chan error
 	var server *api.Server
 
@@ -123,10 +169,20 @@ func run() error {
 		server = api.NewServer(db, bot,
 			api.WithWebhook(bus, cfg.TelegramWebhookSecret),
 			api.WithAuth(authService, tokenManager, cfg.CookieSecure),
+			api.WithGroups(groupsRepo, bot),
+			api.WithModeration(moderationService),
+			api.WithJoinRequests(joinRequestsRepo, moderationService),
+			api.WithLogs(logsRepo),
 		)
 
 	case "polling":
-		server = api.NewServer(db, bot, api.WithAuth(authService, tokenManager, cfg.CookieSecure))
+		server = api.NewServer(db, bot,
+			api.WithAuth(authService, tokenManager, cfg.CookieSecure),
+			api.WithGroups(groupsRepo, bot),
+			api.WithModeration(moderationService),
+			api.WithJoinRequests(joinRequestsRepo, moderationService),
+			api.WithLogs(logsRepo),
+		)
 		poller := telegram.NewPoller(bot, telegram.WithPollerLogger(slog.Default()))
 		pollerErrCh = make(chan error, 1)
 		go func() {

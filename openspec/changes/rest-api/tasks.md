@@ -45,27 +45,27 @@ envío estándar en true.
 
 ## Phase 2: Datos + dominios (PR2)
 
-- [ ] 2.1 Migración `00003_create_moderation_tables.sql`: users, join_requests (+idx group_id/status), warnings, logs (+idx group_id); Down DROP
-- [ ] 2.2 `internal/users/{model,repository}.go`: UpsertByTelegramID, GetByTelegramID
-- [ ] 2.3 `internal/logs/{model,repository}.go`: Entry (actor_id, group_id, action, target_user_id, metadata, status, error_message, created_at), Create, ListByGroup
-- [ ] 2.4 `internal/joinrequests/{model,repository}.go`: upsert pending (user+group), ListByGroup, GetByID, Resolve(status, decided_by)
-- [ ] 2.5 `internal/joinrequests/events.go`: `HandleChatJoinRequest(ctx, upd, repo)` → upsert pending (patrón groups.HandleMyChatMember)
-- [ ] 2.6 `internal/moderation/permissions.go`: mapa acción→bot_permission (ban/unban/mute/unmute/lock/unlock→can_restrict_members; delete→can_delete_messages; pin→can_pin_messages; approve/reject→can_invite_users)
-- [ ] 2.7 `internal/moderation/service.go`: flujo por acción (grupo existe→permiso→telegram→log); interfaces consumidoras `GroupPermissionReader`, `TelegramActions`, `LogWriter`
-- [ ] 2.8 Tests repos: OpenTestDB suite `rest` (users/logs/joinrequests)
-- [ ] 2.9 Tests moderation service con fake de telegram (éxito, PERMISSION_DENIED sin llamar, NOT_FOUND, log en fallo)
-- [ ] 2.10 Test events: chat_join_request→pending, upsert no duplica
+- [x] 2.1 Migración `00003_create_moderation_tables.sql`: users, join_requests (+idx group_id/status, único parcial pending), warnings, logs (+idx group_id); Down DROP
+- [x] 2.2 `internal/users/{model,repository}.go`: UpsertByTelegramID, GetByTelegramID
+- [x] 2.3 `internal/logs/{model,repository}.go`: Entry (actor_id, group_id, action, target_user_id, metadata, status, error_message, created_at), Create, ListByGroup — **nota**: se añadió `requested_at`/`decided_at`/`decided_by` según spec join-requests
+- [x] 2.4 `internal/joinrequests/{model,repository}.go`: upsert pending (user+group) vía índice parcial único, ListByGroup, GetByID, Resolve(status, decided_by)
+- [x] 2.5 `internal/joinrequests/events.go`: `HandleChatJoinRequest(ctx, upd, *Request)` pura (patrón groups.HandleMyChatMember); el bus persiste con UpsertPending
+- [x] 2.6 `internal/moderation/permissions.go`: mapa acción→bot_permission (ban/unban/mute/unmute/lock/unlock→can_restrict_members; delete→can_delete_messages; pin→can_pin_messages; approve/reject→can_invite_users)
+- [x] 2.7 `internal/moderation/service.go`: flujo por acción (grupo existe→permiso→telegram→log); interfaces consumidoras `GroupPermissionReader`, `TelegramActions`, `RequestStore`, `LogWriter`; errores mapeados con `%w` (errors.Is)
+- [x] 2.8 Tests repos: OpenTestDB suite **por paquete** (`users`/`logs`/`joinrequests`) — **desviación documentada**: el task pedía suite `rest` única, pero la convención del proyecto (testdb.go) exige una base por paquete para `go test ./...` en paralelo (goose se pisa en base compartida)
+- [x] 2.9 Tests moderation service con fake de telegram (éxito, PERMISSION_DENIED sin llamar, NOT_FOUND, log en fallo, approve/reject: ya decidida 409, otro grupo 404, error de Telegram deja pending)
+- [x] 2.10 Test events: chat_join_request→pending, upsert no duplica (índice parcial), re-solicitud tras rechazo crea fila nueva
 
 ## Phase 3: API + wiring (PR3)
 
-- [ ] 3.1 `internal/api/server.go`: +options `WithGroups`, `WithModeration`, `WithJoinRequests` (montan rutas en mux)
-- [ ] 3.2 `internal/api/groups_handlers.go`: GET /api/groups, GET /api/groups/:id (404 NOT_FOUND), GET /api/groups/:id/users (?userId= lookup | admins)
-- [ ] 3.3 `internal/api/moderation_handlers.go`: POST ban/unban/mute/unmute, delete/pin, lock/unlock (params int64→VALIDATION_ERROR; codes §18)
-- [ ] 3.4 `internal/api/joinrequest_handlers.go`: GET join-requests; POST approve/reject (404 inexistente, 409 ya decidida, TELEGRAM_ERROR)
-- [ ] 3.5 `cmd/server/main.go`: wiring (repos nuevos, moderationSvc, handler bus chat_join_request, 3 options) en webhook y polling
-- [ ] 3.6 Tests handlers con patrón auth_api_test (DB real OpenTestDB "rest" + fake telegram): envelope, 401 sin token, 403 permiso bot, 404, VALIDATION_ERROR
+- [x] 3.1 `internal/api/server.go`: +options `WithGroups`, `WithModeration`, `WithJoinRequests`, **+`WithLogs`** (no estaba en el task: GET /groups/:id/logs del §12 necesita su option; se añadió por consistencia) que montan rutas en mux
+- [x] 3.2 `internal/api/groups_handlers.go`: GET /api/groups, GET /api/groups/:id (404 NOT_FOUND), GET /api/groups/:id/users (?userId= lookup | admins)
+- [x] 3.3 `internal/api/moderation_handlers.go`: POST ban/unban/mute/unmute, delete/pin, lock/unlock (params int64→VALIDATION_ERROR; codes §18). Body opcional para ban (untilDate/revokeMessages) y mute (untilDate) — ban sin body es indefinido con revocación (default Telegram)
+- [x] 3.4 `internal/api/joinrequest_handlers.go`: GET join-requests; POST approve/reject (404 inexistente, 409 ya decidida, TELEGRAM_ERROR)
+- [x] 3.5 `cmd/server/main.go`: wiring (repos nuevos, moderationSvc, handler bus chat_join_request que registra usuario en users + solicitud pending, options) en webhook y polling
+- [x] 3.6 Tests handlers (`moderation_api_test.go`) — **desviación documentada**: el task pedía DB real OpenTestDB "rest" + fake telegram; se usaron **fakes puros** (authenticator fijo, groupStore/groupUsers/moderation/joinRequests/logStore stubs) porque los handlers no tocan DB directamente y el middleware se satisface con una identidad fija. Tests: 401 sin token (15 rutas), actor+ids pasados al servicio, mapeo de errores §18 (404/403/502/409), IDs inválidos→400, body inválido→400 sin llamar al servicio, data de listados (groups/join-requests/logs/users lookup)
 - [ ] 3.7 E2E manual: login → GET /groups → ban/unban/mute/unmute/delete/pin/lock/unlock/approve/reject contra grupo de prueba; verificar logs por acción
-- [ ] 3.8 Suite completa `go test ./...` verde; gofmt/vet
+- [x] 3.8 Suite completa `go test ./...` verde; gofmt/vet limpio (verificado antes del commit b153e72^..HEAD)
 
 ## Phase 4: Cleanup / Docs
 
