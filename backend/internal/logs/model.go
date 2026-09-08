@@ -22,11 +22,17 @@ const (
 )
 
 // Acciones administrativas registradas (§11). Los eventos del sistema
-// (sin admin) tambien pueden registrar acciones propias. Las nuevas
-// constantes (ActionRuleTriggered, ActionAutomuteUser, ActionAutobanUser)
-// fueron agregadas para la moderacion automatica (Fase 3, slice 1):
-// el evento system-triggered se distingue del manual con ActorID=nil
-// (model.go §Entry) y la action constant identifica la causa.
+// (sin admin) tambien pueden registrar acciones propias.
+//
+// Slice 1 (Fase 3): ActionRuleTriggered / ActionAutomuteUser /
+// ActionAutobanUser se registran con ActorID=nil porque son auto-
+// actions del pipeline (no las gatillo un admin desde el panel).
+//
+// Slice 2 agrega las 5 constantes de cambios manuales de settings y
+// listas: a diferencia del slice 1, estas SI tienen ActorID (el admin
+// que toco el toggle / agrego la palabra / quito el dominio desde el
+// panel). La distincion manual vs auto vive en model.go §Entry:
+// manual → ActorID != nil; auto → ActorID = nil.
 const (
 	ActionBanUser            = "BAN_USER"
 	ActionUnbanUser          = "UNBAN_USER"
@@ -42,6 +48,12 @@ const (
 	ActionRuleTriggered      = "RULE_TRIGGERED"
 	ActionAutomuteUser       = "AUTOMUTE_USER"
 	ActionAutobanUser        = "AUTOBAN_USER"
+	// Slice 2 — moderacion automatica UI (actor = admin del panel).
+	ActionUpdateAutomationSettings = "UPDATE_AUTOMATION_SETTINGS"
+	ActionAddBannedWord            = "ADD_BANNED_WORD"
+	ActionRemoveBannedWord         = "REMOVE_BANNED_WORD"
+	ActionAddLinkAllowlist         = "ADD_LINK_ALLOWLIST"
+	ActionRemoveLinkAllowlist      = "REMOVE_LINK_ALLOWLIST"
 )
 
 // Entry es una fila de auditoria. ActorID es el id del admin del panel
