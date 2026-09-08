@@ -2,7 +2,7 @@
 // por lib/api-client.ts, que normaliza el envelope del backend y agrega
 // el access token cuando existe.
 import { request } from '../../lib/api-client'
-import type { LoginResponse, MeResponse } from './types'
+import type { LoginResponse, MeResponse, SignupRequest, SignupResponse } from './types'
 
 /** POST /api/auth/login. La cookie del refresh la setea el navegador. */
 export function login(username: string, password: string): Promise<LoginResponse> {
@@ -25,4 +25,12 @@ export function logout(): Promise<void> {
 /** GET /api/auth/me. Prueba y restauracion de sesion con el access token vigente. */
 export function me(): Promise<MeResponse> {
   return request<MeResponse>('/api/auth/me')
+}
+
+/** POST /api/auth/signup. Alta publica de tenant; 201 con tenant+admin (sin tokens). */
+export function signup(body: SignupRequest): Promise<SignupResponse> {
+  return request<SignupResponse>('/api/auth/signup', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
 }
