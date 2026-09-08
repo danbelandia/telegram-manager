@@ -1828,3 +1828,507 @@ los límites de paginación y cancelación.)
 2 + 46 nuevos de slice 3 — nota: el conteo del delta ascendió a 77
 originalmente; aquí 78 tras corregir el conteo del REQ "Errores" de 3
 a 4 escenarios en la versión canónica).
+
+---
+
+## Slice 4 ADDED Requirements (publications-batch)
+
+Las siguientes requirements fueron agregadas por el slice 4 — change
+`publications-batch` (archivado en
+`openspec/changes/archive/2026-09-08-publications-batch/`,
+mergeado en este archivo). Las requirements de slices 1, 2 y 3 se
+conservan tal cual arriba.
+
+Slice 4 **NO** introduce migración, **NO** agrega método nuevo a
+`publications.Service` ni a `publicationStore`, **NO** modifica el
+`Scheduler` ni el adapter de Telegram. El handler `POST
+/api/publications/batch` reusa `Service.PublishMany` (slice 2) y
+`Service.Schedule` (slice 3) vía un loop en el handler, capturando
+`now := time.Now()` UNA sola vez. Tabla `publications`, `POST
+/api/publications` single y `POST /api/publications` single
+permanecen intactos. Bugfix #172 sigue vigente — el handler NO
+consulta `bot_permissions["can_*"]` (delegado en `service.permissionOk`
+dentro de `PublishMany`/`Schedule`). La verificación estática se
+realiza con `TestBatch_NoCanChecksInvariant`.
+
+> **Decisiones técnicas documentadas en este slice**:
+> - **Status code del batch**: **200 OK** siempre que la envelope sea
+>   válida. 400 SOLO por envelope inválida (validaciones de §18
+>   aplicadas fail-fast antes del loop). HTTP 201 NO se usa aunque
+>   cada item cree filas (consistente con la convención del proyecto
+>   de unificar 200 para batch envelopes).
+> - **Cap de batch**: `len(publications) > 10` → 400 `VALIDATION_ERROR`.
+>   El cap es por envelope, NO por grupos internos (10 items × 10
+>   groups = 100 publicaciones máximo por request).
+> - **Failure isolation per-publication**: cada item se dispatcha en
+>   aislamiento; un fallo per-item NO aborta el resto.
+> - **`now time.Time` consistente**: capturado UNA vez al inicio del
+>   handler y pasado a TODAS las llamadas `Schedule(...)`.
+> - **`metadata.batch_index`**: convención documentada en
+>   `logs/model.go`; correlación por `actor_id + created_at window`
+>   (no se persiste en el JSONB explícitamente — decisión deliberada
+>   para preservar REQ-20 / non-regression del log emitter).
+> - **Frontend UX partial-failure**: dos banners separados
+>   (verde `created[]`, rojo `failed[]`); botón "Reintentar fallidas"
+>   pre-filtra slots a SOLO los índices en `failed[]`.
+
+### ADDED Requirements
+
+### Requirement: POST /api/publications/batch
+
+El endpoint `POST /api/publications/batch` MUST aceptar
+`{publications: [PublicationInput, ...]}` donde cada `PublicationInput`
+tiene la misma shape que el body de `POST /api/publications`
+(`text`, `photo_url?`, `buttons?`, `group_ids: int64[]`,
+`scheduled_at?`). Autenticación requerida (`requireAuth`).
+
+Reglas MUST:
+
+1. `len(publications) == 0` → **400 VALIDATION_ERROR** "se requiere al
+   menos una publicación"; NO se procesa nada.
+2. `len(publications) > 10` → **400 VALIDATION_ERROR** "máximo 10
+   publicaciones por batch"; NO se procesa nada.
+3. JSON malformado → **400 VALIDATION_ERROR** "body inválido"; NO se
+   procesa nada.
+4. Auth ausente → **401 UNAUTHORIZED**.
+5. Si la envelope es válida → **200 OK** con
+   `{created: [...], failed: [...]}`. Cada item se dispatcha en
+   aislamiento; un fallo per-item NO aborta el resto.
+6. Para cada item, en orden:
+   - Si `scheduled_at` ausente → `service.PublishMany(...)` con el
+     payload del item (inmediato).
+   - Si `scheduled_at` presente y futuro → `NormalizeScheduledAt` +
+     `service.Schedule(..., nowFn)` (programado; el worker reclamará).
+   - Si `scheduled_at` presente y pasado → `failed[]` con
+     `code='VALIDATION_ERROR'` y mensaje "scheduled_at debe ser una
+     fecha futura"; NO se llama Telegram; NO se crea fila.
+7. Si `PublishMany`/`Schedule` retorna error a nivel de payload → el
+   item va a `failed[]` con `code='VALIDATION_ERROR'`. NO aborta el
+   resto del batch.
+8. Filas resultantes con `status ∈ {sent, scheduled}` → `created[]`.
+   Filas con `status='failed'` (provenientes del service) → `failed[]`
+   con `code` mapeado según el origen del fallo.
+
+#### Scenario: Batch vacío → 400
+
+- GIVEN `POST /api/publications/batch` con `{publications: []}`
+- WHEN el handler ejecuta la validación de envelope
+- THEN responde 400 `VALIDATION_ERROR` "se requiere al menos una
+  publicación"; NO se crea fila; NO se llama Telegram
+
+#### Scenario: Batch excede cap de 10 → 400
+
+- GIVEN `POST /api/publications/batch` con 11 items
+- WHEN el handler ejecuta la validación de envelope
+- THEN responde 400 `VALIDATION_ERROR` "máximo 10 publicaciones por
+  batch"; NO se crea fila; NO se llama Telegram
+
+#### Scenario: JSON malformado → 400
+
+- GIVEN `POST /api/publications/batch` con body inválido
+- WHEN el handler parsea el body
+- THEN responde 400 `VALIDATION_ERROR` "body inválido"
+
+#### Scenario: Auth ausente → 401
+
+- GIVEN el request llega sin JWT válido
+- WHEN el middleware `requireAuth` evalúa
+- THEN responde 401 `UNAUTHORIZED` sin parsear el body
+
+#### Scenario: Batch all-OK inmediato → 200 con created[]
+
+- GIVEN 2 items válidos (sin `scheduled_at`) y ambos con grupos donde
+  el bot es admin
+- WHEN se ejecuta el batch
+- THEN responde 200 con `created` conteniendo 2 filas con
+  `status='sent'` y `message_id` poblado; `failed` vacío; existen 2
+  logs `PUBLISH_MESSAGE`
+
+#### Scenario: Batch mixto immediate + scheduled → 200 con ambos paths
+
+- GIVEN 3 items: 1 inmediato, 1 programado a futuro, 1 con
+  `scheduled_at` en el pasado
+- WHEN se ejecuta el batch
+- THEN `created` contiene 2 filas (`sent` + `scheduled`); `failed`
+  contiene 1 item con `code='VALIDATION_ERROR'` por el `scheduled_at`
+  pasado; el item programado NO se envía (queda fila `scheduled` para
+  el worker)
+
+#### Scenario: Batch all-fail → 200 con failed[]
+
+- GIVEN 3 items con grupos inexistentes
+- WHEN se ejecuta el batch
+- THEN `created` está vacío; `failed` contiene 3 items con
+  `code='NOT_FOUND'` y mensaje legible; NO se llama Telegram
+
+#### Scenario: Boundary 10 → 200
+
+- GIVEN 10 items válidos
+- WHEN se ejecuta el batch
+- THEN responde 200 con 10 entradas en `created`
+
+#### Scenario: Per-item failure isolation → un fallo NO aborta
+
+- GIVEN 3 items: items[0] OK, items[1] grupo inexistente, items[2] OK
+- WHEN se ejecuta el batch
+- THEN `created` contiene 2 filas (items[0] y items[2] en orden); el
+  envío a items[2] ocurre DESPUÉS de evaluar items[1]; `failed`
+  contiene 1 item con `index=1`
+
+#### Scenario: Multi-grupo por item → N filas en created[]
+
+- GIVEN 1 item con `group_ids = [g1, g2, g3]` y bot admin en los 3
+- WHEN se ejecuta el batch
+- THEN `created` contiene 3 filas (una por grupo), cada una con
+  `status='sent'` y `message_id` poblado; existen 3 logs
+  `PUBLISH_MESSAGE`
+
+#### Scenario: scheduled_at con offset → normalizado a UTC
+
+- GIVEN 1 item con `scheduled_at = "2027-06-15T17:00:00+03:00"`
+  (equivale a `14:00:00Z`)
+- WHEN se ejecuta el batch
+- THEN la fila se inserta con `scheduled_at` normalizado a
+  `2027-06-15T14:00:00Z` (UTC); el worker la reclamará en el momento
+  UTC correcto
+
+#### Scenario: Fila con status='failed' del service → failed[] mapeado
+
+- GIVEN 1 item con un grupo donde el bot NO es admin
+- WHEN se ejecuta el batch
+- THEN `failed` contiene 1 item con `code='PERMISSION_DENIED'` y
+  mensaje legible; existe log `PUBLISH_MESSAGE` con status
+  `PERMISSION_DENIED` para esa fila
+
+### Requirement: Per-item audit log
+
+Cada item exitoso (`created[]`) genera su log `PUBLISH_MESSAGE` con
+`metadata` conteniendo `publication_id` (int) y opcionalmente
+`message_id` (int). Items programados (`scheduled_at` presente) NO
+emiten log inmediato; quedan como fila `scheduled` que el worker
+reclamará y registrará su log al procesarlos.
+
+Convención documentada en `logs/model.go`: el campo
+`metadata.batch_index` (int) puede usarse para correlación entre
+items del mismo batch y sus logs. La convención acepta JSONB o log
+adicional — correlación en queries se hace por `actor_id + created_at
+window` cuando el índice no se persiste explícitamente.
+
+#### Scenario: Log por item exitoso
+
+- GIVEN un item inmediato con envío exitoso a `message_id=123`
+- WHEN el handler completa el batch
+- THEN existe un log `PUBLISH_MESSAGE` con `metadata.publication_id`
+  poblado y `status='SUCCESS'`
+
+#### Scenario: Items programados NO emiten log inmediato
+
+- GIVEN un item con `scheduled_at` futuro
+- WHEN el handler completa el batch
+- THEN NO existe log `PUBLISH_MESSAGE` inmediato; la fila queda
+  `scheduled` para que el worker la procese
+
+### Requirement: Non-regression del feature base
+
+El feature `publications-batch` MUST preservar sin modificaciones:
+
+1. `POST /api/publications` (endpoint single, REQ-3/REQ-12 slices
+   1/2/3).
+2. Tabla `publications` (sin nuevas columnas; `scheduled_at`,
+   `photo_url`, `buttons` ya viven de slices anteriores).
+3. `publications.Scheduler` (worker in-process, slice 3).
+4. `publications.Service` (cero método nuevo; `PublishMany` y
+   `Schedule` reusados verbatim).
+5. `publicationStore` interface (cero método nuevo).
+6. `frontend/src/features/publications/*` (helpers de validación
+   reusados; el módulo `publications-batch` es NUEVO y separado).
+7. `frontend/src/pages/PublicationsPage.tsx` (funcionalmente intacto;
+   solo se agregan botón + `<BatchWizard>` mount).
+
+#### Scenario: Single endpoint intacto
+
+- GIVEN el endpoint `POST /api/publications` (single)
+- WHEN un admin envía una publicación a un grupo único
+- THEN responde 201 con la fila `sent` (NO 200); comportamiento de
+  slice 2/3 intacto
+
+#### Scenario: Scheduler intacto
+
+- GIVEN el worker `Scheduler.Run(...)` corriendo con
+  `interval=DefaultSchedulerInterval`
+- WHEN llega un tick
+- THEN `ClaimScheduledDue(25)` se ejecuta como en slice 3; no se
+  introducen cambios en el claim pattern
+
+### Requirement: Frontend BatchWizard modal
+
+El módulo `frontend/src/features/publications-batch/` MUST exponer un
+modal Mantine v7 (`<Modal>`) llamado `BatchWizard`. Reglas MUST:
+
+1. Se abre desde un botón "Programar en lote" en
+   `PublicationsPage` (toolbar del formulario existente).
+2. Default: 2 slots editables. Máximo 10 slots (botón "Agregar slot"
+   deshabilitado al llegar a 10).
+3. Cada slot contiene: Textarea (`text`), input `photo_url` opcional,
+   `ButtonsEditor` reusado (multi-fila de botones URL),
+   multi-select de grupos (checkboxes desde `useGroups()`),
+   `<input type="datetime-local">` opcional (`scheduled_at`).
+4. Summary `<Alert>` antes del submit: lista cada slot (índice, grupos
+   target, texto truncado, fecha si programada); errores rojos
+   inline por slot inválido.
+5. Submit deshabilitado si CUALQUIER slot es inválido (texto vacío,
+   URL no http(s), 0 grupos seleccionados, `scheduled_at` pasado).
+6. Al submit exitoso: `useCreatePublicationBatch` ejecuta
+   `POST /api/publications/batch` y al éxito invalida
+   `['publications']` (todas las variantes).
+7. Estado Result: dos `<Alert>` separados — uno verde con `created[]`
+   (uno por fila) y uno rojo con `failed[]` (uno por índice, código,
+   mensaje).
+8. Botón "Reintentar fallidas" si `failed[]` no vacío: filtra los
+   slots a SOLO los índices en `failed[]`, pre-rellena los datos del
+   slot original, permite edición, incrementa un contador interno
+   `batch_attempt` (debugging), y re-dispara el submit.
+9. Botón "Cerrar" siempre presente.
+10. El modal NO se auto-cierra tras el submit; el admin decide cuándo
+    cerrarlo.
+
+Reuso obligatorio: `formatPublicationsError`,
+`validatePhotoUrlClient`, `validateButtonsClient`,
+`validateGroupIdsClient`, `validateScheduledAtClient` del módulo
+`features/publications/`.
+
+#### Scenario: Modal abre con 2 slots por default
+
+- GIVEN la página `/publications` cargada
+- WHEN el admin hace click en "Programar en lote"
+- THEN el modal se abre con 2 slots vacíos editables; el botón
+  "Agregar slot" está habilitado; "Remover" por slot deshabilitado
+  cuando hay 2 slots (no se puede quedar con 1)
+
+#### Scenario: Agregar/remover slot hasta 10
+
+- GIVEN el modal abierto
+- WHEN el admin hace click en "Agregar slot" 8 veces
+- THEN hay 10 slots; "Agregar slot" queda deshabilitado; los botones
+  "Remover" de cada slot están habilitados
+
+#### Scenario: Submit deshabilitado si slot inválido
+
+- GIVEN el modal con 2 slots, uno de ellos con texto vacío
+- WHEN el admin intenta enviar el formulario
+- THEN el botón submit está deshabilitado; el slot inválido muestra
+  mensaje de error inline
+
+#### Scenario: Response all-success → banner verde
+
+- GIVEN la respuesta del backend es `{created: [p1, p2], failed: []}`
+- WHEN el modal entra en estado Result
+- THEN se muestra UN `<Alert>` verde con ambos items; NO se muestra
+  banner rojo; botón "Cerrar" presente; botón "Reintentar fallidas"
+  NO aparece
+
+#### Scenario: Response all-fail → banner rojo + retry
+
+- GIVEN la respuesta del backend es `{created: [], failed: [e1, e2]}`
+- WHEN el modal entra en estado Result
+- THEN se muestra UN `<Alert>` rojo con ambos errores (índice, code,
+  message); botón "Reintentar fallidas" presente
+
+#### Scenario: Response parcial → dos banners
+
+- GIVEN la respuesta del backend es `{created: [p1], failed: [e2]}`
+- WHEN el modal entra en estado Result
+- THEN se muestra `<Alert>` verde con p1 + `<Alert>` rojo con e2;
+  botón "Reintentar fallidas" presente; el reintento filtrará a
+  SOLO el índice 2
+
+#### Scenario: "Reintentar fallidas" filtra y pre-rellena
+
+- GIVEN 3 slots y `failed = [{index: 0}, {index: 2}]`
+- WHEN el admin hace click en "Reintentar fallidas"
+- THEN los slots visibles quedan reducidos a 2 (índices 0 y 2
+  originales); los datos pre-rellenan desde el slot original; el
+  contador `batch_attempt` se incrementa; el submit re-dispara con
+  SOLO esos 2 items
+
+#### Scenario: Summary Alert muestra slots y fechas
+
+- GIVEN 2 slots válidos, uno con `scheduled_at` futura
+- WHEN se renderiza el modal
+- THEN el Summary Alert muestra ambos slots con índice, texto
+  truncado, grupo target, fecha si aplica
+
+#### Scenario: Error HTTP del batch → Alert rojo con mensaje formateado
+
+- GIVEN el backend responde 400 con `{code: 'VALIDATION_ERROR',
+  message: '...'}`
+- WHEN el modal procesa el error
+- THEN se muestra `<Alert>` rojo con `formatPublicationsError(...)`
+  aplicado al mensaje
+
+### Requirement: Tests backend (batch) y frontend (BatchWizard)
+
+**Backend** (`batch_handlers_test.go`) MUST cubrir (mockeando
+`TelegramService` y `publicationStore` — nunca Bot API real; §21.1):
+
+- `TestBatch_CapExceeded`: 11 items → 400 + `VALIDATION_ERROR`.
+- `TestBatch_Empty`: `[]` → 400 + mensaje exacto.
+- `TestBatch_MalformedJSON`: body inválido → 400.
+- `TestBatch_AllSuccess`: 2 items válidos → 200 con 2 entradas en
+  `created`, 0 en `failed`.
+- `TestBatch_AllFail`: 3 items con grupos inexistentes → 200 con
+  `failed[]` conteniendo 3 items con `code='NOT_FOUND'`.
+- `TestBatch_MixedImmediateAndScheduled`: 3 items (inmediato,
+  programado futuro, programado pasado) → 200 con 2 en `created`, 1
+  en `failed`.
+- `TestBatch_PerItemFailureIsolation`: 3 items con el del medio
+  fallando → el tercero se procesa igualmente.
+- `TestBatch_MultiGroupPerItem`: 1 item con `group_ids = [g1, g2]`
+  → 2 filas en `created`.
+- `TestBatch_RequireAuth`: sin JWT → 401 sin parsear body.
+- `TestBatch_CapBoundary`: 10 items → 200 (NO 400).
+- `TestBatch_RowFailedPopulatesFailedArray`: item con bot no admin
+  → `failed[]` con `code='PERMISSION_DENIED'`.
+- `TestBatch_ScheduledWithOffset_NormalizesToUTC`: offset +03:00
+  → fila con UTC normalizado.
+- `TestBatch_NoCanChecksInvariant`: lectura estática del archivo
+  `batch_handlers.go`, asserts ausencia de cada clave `can_*`
+  conocida de la Bot API (`can_post_messages`, `can_edit_messages`,
+  `can_delete_messages`, `can_manage_chat`, `can_pin_messages`,
+  `can_invite_users`, `can_promote_members`, `can_change_info`,
+  `can_restrict_members`).
+
+**Frontend** (`BatchWizard.test.tsx`) MUST cubrir (con `mockFetchRoutes`
+o mock propio distinguiendo POST):
+
+- "abre con 2 slots por default": estado inicial del modal.
+- "agregar slot hasta 10": habilitación/deshabilitación del botón.
+- "submit deshabilitado si slot inválido": validación cliente.
+- "response all-success → banner verde": render del Result.
+- "response all-fail → banner rojo + retry": render + retry button.
+- "response parcial → dos banners + retry": render de ambos.
+- "Reintentar fallidas filtra y re-envía": filter a `failed[]`.
+- "Summary Alert muestra slots y fechas": render del summary.
+- "error HTTP del batch → Alert rojo formateado": manejo de error.
+
+Total mínimo: **8 tests backend** + **6 tests frontend** (el spec
+exige 8+ y 6+; el branch entrega 15 backend + 9 frontend — supera
+el mínimo).
+
+#### Scenario: Servicio batch con Telegram mockeado — all-OK
+
+- GIVEN un handler con fake store que retorna filas `sent` para
+  PublishMany
+- WHEN se ejecuta `POST /api/publications/batch` con 2 items válidos
+- THEN la respuesta es 200 con `created` conteniendo 2 filas y
+  `failed` vacío
+
+#### Scenario: Servicio batch con error parcial de Telegram
+
+- GIVEN un handler con fake store donde PublishMany retorna error
+  para el primer item y OK para el segundo
+- WHEN se ejecuta el batch
+- THEN el primer item va a `failed[]` con `code='TELEGRAM_ERROR'`;
+  el segundo va a `created[]`; existen 2 logs
+
+#### Scenario: TestBatch_NoCanChecksInvariant pasa
+
+- GIVEN el archivo `batch_handlers.go` cargado en el test
+- WHEN el test itera sobre todas las claves `can_*` conocidas
+- THEN ninguna clave aparece como token Go (`can_post_messages`,
+  etc.) en código ejecutable (los comments sobre la invariante son
+  explícitamente exceptuados)
+
+#### Scenario: Test frontend "Reintentar fallidas filtra slots"
+
+- GIVEN el modal con 3 slots y respuesta con `failed=[{index:0},
+  {index:2}]`
+- WHEN el admin hace click en "Reintentar fallidas"
+- THEN la lista visible queda con 2 slots (índices 0 y 2 originales);
+  un nuevo submit ejecuta `POST /api/publications/batch` con SOLO 2
+  items; la query es observable
+
+### Requirement: Bugfix #172 invariant + §21.1 strict
+
+El handler `handleCreatePublicationBatch` MUST:
+
+1. NO consultar `bot_permissions["can_*"]` ni ningún subcampo de
+   permisos de la Bot API.
+2. Delegar la verificación per-grupo en `service.permissionOk`
+   reusado dentro de `PublishMany`/`Schedule` (source of truth
+   bugfix #172: `g.BotStatus == StatusAdministrator`).
+3. NO llamar a la Bot API real desde los tests; usar fakes/spies.
+
+#### Scenario: Static guard sin claves `can_*`
+
+- GIVEN el archivo `batch_handlers.go`
+- WHEN el test `TestBatch_NoCanChecksInvariant` lo inspecciona
+- THEN las claves `can_*` aparecen SOLO en comments que documentan
+  la invariante siendo respetada; cero ocurrencias en código
+  ejecutable
+
+#### Scenario: Tests sin llamadas a `api.telegram.org`
+
+- GIVEN el suite de tests del paquete `internal/api`
+- WHEN se ejecuta `go test ./... -count=1`
+- THEN no hay requests salientes a `api.telegram.org` (verificable
+  vía httptest con servers locales)
+
+### Requirement: README sección publicación en lote
+
+El `README.md` MUST incluir una sub-sección "Publicación en lote
+(publications-batch)" que documente:
+
+- Cap de 10 publicaciones por request.
+- Semántica `{created[], failed[]}`: cada item se procesa en
+  aislamiento; fallo per-item NO aborta el resto.
+- Status code **200 OK** con envelope válida; **400
+  VALIDATION_ERROR** SOLO por envelope inválida.
+- Comando curl de ejemplo para `POST /api/publications/batch`.
+- Botón "Programar en lote" en `/publications`.
+- "Reintentar fallidas" en el wizard: pre-filtra y re-envía.
+- Items programados (`scheduled_at` presente) son procesados por el
+  worker de slice 3 (30s default).
+
+La tabla de "Uso del panel" MUST incluir el botón si existe, o la
+ruta `/publications` permanece como entry point.
+
+#### Scenario: README incluye sección batch
+
+- GIVEN el `README.md` revisado
+- WHEN un admin lee la sección "Publicación en lote"
+- THEN encuentra cap 10, semántica `{created[], failed[]}`, status
+  code 200/400, ejemplo curl, y nota sobre el worker de 30s para
+  items programados
+
+---
+
+## Slice 4 Extensions — Summary
+
+| REQ | Tipo | Cobertura |
+|-----|------|-----------|
+| `POST /api/publications/batch` | ADDED | 12 escenarios (env: cap>10, vacío, JSON bad, auth; happy: all-OK, all-fail, mixto sched+now, multi-grupo, boundary, offset UTC, row failed, isolation per-item) |
+| Per-item audit log | ADDED | 2 escenarios (log por item exitoso, scheduled sin log inmediato) |
+| Non-regression del feature base | ADDED | 2 escenarios (single intacto, Scheduler intacto) |
+| Frontend BatchWizard modal | ADDED | 10 escenarios (default 2 slots, add/remove, submit disabled, all-success, all-fail, partial, retry filter, summary, error HTTP, reuso helpers) |
+| Tests backend (batch) + frontend (BatchWizard) | ADDED | 4 escenarios (servicio mockeado all-OK, error parcial, static invariant, retry filter) |
+| Bugfix #172 invariant + §21.1 strict | ADDED | 2 escenarios (static guard sin `can_*`, tests sin red externa) |
+| README sección publicación en lote | ADDED | 1 escenario (incluye cap 10, semántica, status code, curl, worker) |
+
+**Totales**: 7 ADDED requirements, **~33 escenarios** nuevos. Sumado a
+los **78 escenarios** de slices 1+2+3 + los escenarios adicionales
+del slice 4, el canónico de `publications` cubre **>110 escenarios**
+totales. La numeración de requisitos lógicos del feature pasa a
+**REQ-1..REQ-26** (15 previos de slices 1+2+3 + 11 nuevos REQ-16..26
+según numeración del delta original — nota: el delta lista REQ-16
+como "REQ-16 ..26" y la spec canónica agrupa los 7 ADDED en 7
+bloques `### Requirement:`; la numeración lógica REQ-N del delta se
+preserva en los títulos canónicos vía el sufijo `(REQ-N)` cuando
+aplica).
+
+**Invariante de bugfix #172**: el handler `batch_handlers.go` NO
+consulta `bot_permissions["can_*"]`. La verificación se realiza con
+`TestBatch_NoCanChecksInvariant` (lectura estática del archivo +
+asserts). El handler delega la verificación per-grupo en
+`service.permissionOk` (source of truth: `g.BotStatus ==
+StatusAdministrator`).
