@@ -10,7 +10,7 @@
 // para waitFor). Para mantener los tests deterministas, manipulamos
 // state local via clicks directos en los toggles (cambio visible) y
 // nos apoyamos en los handlers de Save que SI disparan Promise.all.
-import { screen, waitFor } from '@testing-library/react'
+import { fireEvent, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Route, Routes } from 'react-router-dom'
@@ -33,6 +33,8 @@ const initialSettings = {
   automute_minutes: 10,
   autoban_warnings: 5,
   warning_expire_days: 30,
+  warn_user_enabled: true,
+  warn_user_template: null,
   updated_at: '2026-09-07T12:00:00.000Z',
 }
 
@@ -327,5 +329,147 @@ describe('GroupAutomationPage', () => {
     await waitFor(() => expect(saveButton).toBeDisabled())
     // Toggle vuelve a false
     expect(toggle).not.toBeChecked()
+  })
+
+  // --- Tests de slice 2.1 (Sección 5: Warning al usuario) ---
+
+  it('renderiza el switch de warn_user_enabled (default on) y persiste el cambio', async () => {
+    const user = userEvent.setup()
+    let putBody: Record<string, unknown> = {}
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes('/automation/settings') && (init?.method ?? 'GET') === 'PUT') {
+        if (init?.body) putBody = JSON.parse(String(init.body))
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              data: { ...initialSettings, warn_user_enabled: false },
+              error: null,
+            }),
+        })
+      }
+      if (url.includes('/automation/settings')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ data: initialSettings, error: null }),
+        })
+      }
+      if (url.includes('/banned-words')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ data: { words: [] }, error: null }),
+        })
+      }
+      if (url.includes('/link-allowlist')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ data: { domains: [] }, error: null }),
+        })
+      }
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ data: null }) })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderPage()
+
+    const switchEl = await screen.findByLabelText(/Avisar al usuario antes de silenciar/i)
+    expect(switchEl).toBeChecked() // default = true
+
+    // Apagar el switch y guardar.
+    await user.click(switchEl)
+    const saveButton = screen.getByRole('button', { name: 'Guardar' })
+    await waitFor(() => expect(saveButton).not.toBeDisabled())
+    saveButton.click()
+
+    // Solo verificamos el body del PUT (contractualmente importante).
+    // El notification del toast acumula entre tests via Mantine Portal
+    // y matcher "Configuracion guardada" es inestable — el body del
+    // request es la fuente de verdad para el round-trip.
+    await waitFor(() => {
+      if ((putBody.warn_user_enabled as boolean) !== false) {
+        throw new Error('PUT body aun no contiene warn_user_enabled=false')
+      }
+    })
+    expect(putBody.warn_user_enabled).toBe(false)
+  })
+
+  it('renderiza el textarea de warn_user_template y persiste el cambio', async () => {
+    let putBody: Record<string, unknown> = {}
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes('/automation/settings') && (init?.method ?? 'GET') === 'PUT') {
+        if (init?.body) putBody = JSON.parse(String(init.body))
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({
+            data: {
+              ...initialSettings,
+              warn_user_template: '⚠️ {nombre} custom {count}',
+            },
+            error: null,
+          }),
+        })
+      }
+      if (url.includes('/automation/settings')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ data: initialSettings, error: null }),
+        })
+      }
+      if (url.includes('/banned-words')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ data: { words: [] }, error: null }),
+        })
+      }
+      if (url.includes('/link-allowlist')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ data: { domains: [] }, error: null }),
+        })
+      }
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ data: null }) })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderPage()
+
+    // El Textarea esta presente con el placeholder del default.
+    const textarea = await screen.findByPlaceholderText(/⚠️ \{nombre\}/i)
+    expect(textarea).toBeInTheDocument()
+
+    // Verificar el limite maxLength=1000 (mitigacion REQ-29 / design #6).
+    expect(textarea).toHaveAttribute('maxLength', '1000')
+
+    // Tipear un template custom via fireEvent (user-event tiene
+    // problemas conocidos con Mantine v7 Textarea + caracteres
+    // especiales como { y }, que se pierden al simular keystrokes).
+    fireEvent.change(textarea, { target: { value: '⚠️ {nombre} custom {count}' } })
+
+    const saveButton = screen.getByRole('button', { name: 'Guardar' })
+    await waitFor(() => expect(saveButton).not.toBeDisabled())
+    saveButton.click()
+
+    // No necesitamos assert sobre el texto del notification (acumula
+    // entre tests por Mantine Portal); basta con verificar el body del
+    // PUT que es lo contractualmente importante.
+    await waitFor(() => {
+      if ((putBody.warn_user_template as string) !== '⚠️ {nombre} custom {count}') {
+        throw new Error('PUT body aun no contiene el template custom')
+      }
+    })
+    // El template custom se incluye; el toggle NO porque no cambio
+    // (true → true). Eso es la diferencia esperada del diff.
+    expect(putBody.warn_user_template).toBe('⚠️ {nombre} custom {count}')
+    expect(putBody.warn_user_enabled).toBeUndefined()
   })
 })

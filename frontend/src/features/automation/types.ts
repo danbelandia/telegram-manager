@@ -5,6 +5,10 @@
 // Las settings son toggles + thresholds; las listas (banned_words y
 // link_allowlist) son strings. El panel las edita en una sola pagina
 // (GroupAutomationPage) con Save all paralelo (Promise.all).
+//
+// Slice 2.1 (warning visual al usuario, REQ-22/29): agrega
+// warn_user_enabled (toggle) + warn_user_template (string|null, override
+// per-grupo del default hardcoded en Go).
 
 /** Settings de moderacion automatica para un grupo. */
 export interface AutomationSettings {
@@ -21,6 +25,13 @@ export interface AutomationSettings {
   automute_minutes: number
   autoban_warnings: number
   warning_expire_days: number
+  /** Slice 2.1: si true, el bot envia un mensaje al usuario antes de
+   * mute/ban. Default true. */
+  warn_user_enabled: boolean
+  /** Slice 2.1: plantilla custom (null = usar default del backend).
+   * Variables: {nombre}, {count}, {mute_minutes}. Max 1000 chars
+   * (validado server-side). */
+  warn_user_template: string | null
   /** ISO8601 con milisegundos. */
   updated_at: string
 }
@@ -41,6 +52,11 @@ export interface AutomationSettingsUpdate {
   automute_minutes?: number
   autoban_warnings?: number
   warning_expire_days?: number
+  /** Slice 2.1: ambos opcionales. Si warn_user_template viene como
+   * string vacio, el backend lo acepta (y al renderear cae al
+   * default hardcoded via templates.go). */
+  warn_user_enabled?: boolean
+  warn_user_template?: string | null
 }
 
 /** Defaults que el backend retorna cuando la fila no existe (GET
@@ -58,6 +74,9 @@ export const AUTOMATION_DEFAULTS: Omit<AutomationSettings, 'group_id' | 'updated
   automute_minutes: 10,
   autoban_warnings: 5,
   warning_expire_days: 30,
+  // Slice 2.1: warning visual ON por default (out-of-the-box).
+  warn_user_enabled: true,
+  warn_user_template: null,
 }
 
 /** Body de POST /automation/banned-words. */

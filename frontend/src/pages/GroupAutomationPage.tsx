@@ -28,6 +28,7 @@ import {
   Switch,
   TagsInput,
   Text,
+  Textarea,
   Title,
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
@@ -58,6 +59,12 @@ function withDefaults(groupId: number, partial?: Partial<AutomationSettings>): D
     ...(partial ?? {}),
   }
 }
+
+/** Default pre-mute template del backend (automation/templates.go).
+ * Lo mostramos como placeholder del Textarea para que el admin sepa
+ * que puede customizarlo y que variables puede usar. */
+const DEFAULT_PRE_MUTE_PLACEHOLDER =
+  '⚠️ {nombre}, llevás {count} advertencias. Si seguís, serás silenciado por {mute_minutes} min.'
 
 export default function GroupAutomationPage() {
   const { id } = useParams<{ id: string }>()
@@ -442,6 +449,44 @@ export default function GroupAutomationPage() {
               Marcar para agregar
             </Button>
           </Group>
+        </Stack>
+      </Paper>
+
+      {/* Sección 5 (slice 2.1): warning visual al usuario */}
+      <Paper withBorder p="lg" radius="md">
+        <Stack gap="sm">
+          <Title order={4}>Warning al usuario</Title>
+          <Switch
+            label="Avisar al usuario antes de silenciar/expulsar"
+            checked={draftSettings.warn_user_enabled}
+            onChange={(e) => updateDraft('warn_user_enabled', e.currentTarget.checked)}
+            data-testid="warn-user-enabled-switch"
+          />
+          <Textarea
+            label="Plantilla del warning (opcional)"
+            description={
+              draftSettings.warn_user_template
+                ? 'Personalizada — vacío para volver al default.'
+                : 'Vacío = usar la plantilla por defecto del backend.'
+            }
+            placeholder={DEFAULT_PRE_MUTE_PLACEHOLDER}
+            autosize
+            minRows={2}
+            maxRows={5}
+            maxLength={1000}
+            value={draftSettings.warn_user_template ?? ''}
+            onChange={(e) => {
+              const next = e.currentTarget.value
+              // empty string -> null (backend cae al default)
+              updateDraft('warn_user_template', next === '' ? null : next)
+            }}
+            data-testid="warn-user-template-textarea"
+          />
+          <Text size="xs" c="dimmed">
+            Variables disponibles: <code>{'{nombre}'}</code>, <code>{'{count}'}</code>,{' '}
+            <code>{'{mute_minutes}'}</code>. Si no customizás la plantilla, el bot usa el
+            default en español Rioplatense.
+          </Text>
         </Stack>
       </Paper>
 
