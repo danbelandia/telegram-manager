@@ -14,7 +14,7 @@ import (
 
 // moderationActions es la vista minima del servicio de moderacion que
 // los handlers necesitan (lado consumidor).
-type moderationActions interface {
+type ModerationActions interface {
 	Ban(ctx context.Context, actorID, groupID, userID int64, untilDate int64, revokeMessages bool) error
 	Unban(ctx context.Context, actorID, groupID, userID int64) error
 	Mute(ctx context.Context, actorID, groupID, userID int64, untilDate int64) error

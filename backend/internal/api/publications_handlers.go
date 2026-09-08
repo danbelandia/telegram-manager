@@ -25,7 +25,7 @@ import (
 //   - limit/offset a List/ListByTelegramID (paginacion).
 //   - Schedule para la rama `scheduled_at` del POST.
 //   - CancelScheduled para DELETE /api/publications/:id.
-type publicationStore interface {
+type PublicationStore interface {
 	Publish(ctx context.Context, tenantID, actorID, groupID int64, text string, photoURL *string, buttons [][]telegram.InlineKeyboardButton) (*publications.Publication, error)
 	PublishMany(ctx context.Context, tenantID, actorID int64, payload publications.PublishPayload) ([]publications.Publication, error)
 	Schedule(ctx context.Context, tenantID, actorID int64, payload publications.PublishPayload, scheduledAt time.Time, nowFn func() time.Time) ([]publications.Publication, error)

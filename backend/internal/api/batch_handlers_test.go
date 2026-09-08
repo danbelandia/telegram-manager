@@ -55,7 +55,7 @@ func newBatchFakeStore() *batchFakeStore {
 // PublishMany: incrementa publishManyCalls + actor + payload, y delega
 // a publishManyFunc si esta seteada. Si no, cae al default del fake
 // base (f.pub o f.list).
-func (b *batchFakeStore) PublishMany(ctx context.Context, actorID int64, payload publications.PublishPayload) ([]publications.Publication, error) {
+func (b *batchFakeStore) PublishMany(_ context.Context, _ int64, actorID int64, payload publications.PublishPayload) ([]publications.Publication, error) {
 	b.publishManyCalls++
 	b.actor = actorID
 	b.payload = payload
@@ -73,7 +73,7 @@ func (b *batchFakeStore) PublishMany(ctx context.Context, actorID int64, payload
 
 // Schedule: incrementa scheduleCalls + actor + payload + scheduledAt, y
 // delega a scheduleFunc si esta seteada.
-func (b *batchFakeStore) Schedule(ctx context.Context, actorID int64, payload publications.PublishPayload, scheduledAt time.Time, nowFn func() time.Time) ([]publications.Publication, error) {
+func (b *batchFakeStore) Schedule(_ context.Context, _ int64, actorID int64, payload publications.PublishPayload, scheduledAt time.Time, nowFn func() time.Time) ([]publications.Publication, error) {
 	b.scheduleCalls++
 	b.actor = actorID
 	b.payload = payload

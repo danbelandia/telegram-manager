@@ -167,7 +167,7 @@ func (s *Server) handleCreatePublicationBatch(w http.ResponseWriter, r *http.Req
 // el service.
 func (s *Server) processBatchItem(
 	r *http.Request,
-	pubs publicationStore,
+	pubs PublicationStore,
 	tenantID int64,
 	actorID int64,
 	index int,

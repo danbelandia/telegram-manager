@@ -23,7 +23,7 @@ type groupStore interface {
 // groupUsersLookup es la vista minima del Service de Telegram para
 // listar usuarios de un grupo: admins y lookup puntual (la Bot API NO
 // permite listar miembros; AGENTS.md §7 y decision P2).
-type groupUsersLookup interface {
+type GroupUsersLookup interface {
 	GetChatMember(ctx context.Context, chatID, userID int64) (telegram.ChatMember, error)
 	GetChatAdministrators(ctx context.Context, chatID int64) ([]telegram.ChatMember, error)
 }

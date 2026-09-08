@@ -75,7 +75,7 @@ type fakeGroups struct {
 	err    error
 }
 
-func (f *fakeGroups) GetByTelegramID(_ context.Context, id int64) (*groups.Group, error) {
+func (f *fakeGroups) GetByTenant(_ context.Context, _ int64, id int64) (*groups.Group, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -103,6 +103,7 @@ func TestAutoActioner_Mute_HappyPath(t *testing.T) {
 
 	action := AutoAction{
 		Kind:         AutoActionMute,
+		TenantID:     testTenantID,
 		GroupID:      -1001,
 		UserID:       999,
 		MinutesUntil: 10,
@@ -152,6 +153,7 @@ func TestAutoActioner_Ban_HappyPath(t *testing.T) {
 
 	action := AutoAction{
 		Kind:         AutoActionBan,
+		TenantID:     testTenantID,
 		GroupID:      -1001,
 		UserID:       999,
 		RuleName:     "flood",
@@ -191,6 +193,7 @@ func TestAutoActioner_BotDemoted_PermissionDenied(t *testing.T) {
 
 	action := AutoAction{
 		Kind:         AutoActionMute,
+		TenantID:     testTenantID,
 		GroupID:      -1001,
 		UserID:       999,
 		MinutesUntil: 10,
@@ -224,7 +227,7 @@ func TestAutoActioner_GroupNotFound(t *testing.T) {
 	a := NewAutoActioner(tg, lg, gr, nil)
 
 	action := AutoAction{
-		Kind: AutoActionBan, GroupID: -1001, UserID: 999,
+		Kind: AutoActionBan, TenantID: testTenantID, GroupID: -1001, UserID: 999,
 		RuleName: "flood", WarningCount: 5,
 	}
 	if err := a.Execute(context.Background(), action); err == nil {
@@ -253,7 +256,7 @@ func TestAutoActioner_TelegramError_LoggedAsError(t *testing.T) {
 	a := NewAutoActioner(tg, lg, gr, nil)
 
 	action := AutoAction{
-		Kind: AutoActionMute, GroupID: -1001, UserID: 999,
+		Kind: AutoActionMute, TenantID: testTenantID, GroupID: -1001, UserID: 999,
 		MinutesUntil: 10, RuleName: "flood", WarningCount: 3,
 	}
 	err := a.Execute(context.Background(), action)
@@ -282,7 +285,7 @@ func TestAutoActioner_UnknownKind_Error(t *testing.T) {
 	a := NewAutoActioner(tg, lg, gr, nil)
 
 	action := AutoAction{
-		Kind: AutoActionKind("invalid"), GroupID: -1001, UserID: 999,
+		Kind: AutoActionKind("invalid"), TenantID: testTenantID, GroupID: -1001, UserID: 999,
 		RuleName: "flood", WarningCount: 3,
 	}
 	if err := a.Execute(context.Background(), action); err == nil {

@@ -29,22 +29,22 @@ type Server struct {
 	// Modulos del paso 10 (moderacion). Se inyectan via options; cada
 	// handler verifica que su modulo este habilitado antes de actuar.
 	groups       groupStore
-	groupUsers   groupUsersLookup
-	moderation   moderationActions
+	groupUsers   GroupUsersLookup
+	moderation   ModerationActions
 	joinRequests joinRequestStore
 	logStore     logStore
 
 	// Modulo de publicaciones (Fase 2, slice 1).
-	publications publicationStore
+	publications PublicationStore
 
 	// Slice 0 (multitenancy): resolvers por tenant. Main los conecta al
 	// registry (una instancia por bot); nil = path legacy de un solo
 	// tenant (los singletons de arriba). Los handlers siempre prefieren
 	// el resolver y caen al singleton cuando no hay routing.
-	moderationFor   func(tenantID int64) (moderationActions, bool)
-	groupUsersFor   func(tenantID int64) (groupUsersLookup, bool)
-	publicationsFor func(tenantID int64) (publicationStore, bool)
-	automationFor   func(tenantID int64) (automationService, bool)
+	moderationFor   func(tenantID int64) (ModerationActions, bool)
+	groupUsersFor   func(tenantID int64) (GroupUsersLookup, bool)
+	publicationsFor func(tenantID int64) (PublicationStore, bool)
+	automationFor   func(tenantID int64) (AutomationService, bool)
 
 	// Lookup de usuarios con scope de tenant (slice 0, Q3-a: users
 	// global, alcance via join). Lo usa el ?userId= de grupos.
@@ -53,7 +53,7 @@ type Server struct {
 	// Modulo de moderacion automatica (Fase 3, slice 2): settings +
 	// listas. Los handlers reciben el Service (que expone los metodos
 	// de settings + listas) y el logs.Repository para auditoria manual.
-	automation       automationService
+	automation       AutomationService
 	automationLogs   automationLogWriter
 	automationGroups automationGroupChecker
 	// Slice 3 — dashboard de moderacion. NO pasa por Service para
@@ -113,10 +113,10 @@ func WithSignup(svc signupService, onReady func(ctx context.Context, tenantID in
 // desde el registry; en modo webhook/legacy quedan nil y los handlers
 // usan los singletons. Cada resolver puede ser nil por separado.
 func WithTenantResolvers(
-	moderation func(tenantID int64) (moderationActions, bool),
-	groupUsers func(tenantID int64) (groupUsersLookup, bool),
-	publications func(tenantID int64) (publicationStore, bool),
-	automation func(tenantID int64) (automationService, bool),
+	moderation func(tenantID int64) (ModerationActions, bool),
+	groupUsers func(tenantID int64) (GroupUsersLookup, bool),
+	publications func(tenantID int64) (PublicationStore, bool),
+	automation func(tenantID int64) (AutomationService, bool),
 ) Option {
 	return func(s *Server) {
 		s.moderationFor = moderation
@@ -147,7 +147,7 @@ func WithWebhook(publisher updatePublisher, secret string) Option {
 // WithGroups monta las rutas de consulta de grupos (paso 10): listado,
 // detalle y usuarios (admins/lookup). groups los provee el repositorio;
 // groupUsers las llamadas de lectura del adapter de Telegram.
-func WithGroups(groups groupStore, groupUsers groupUsersLookup) Option {
+func WithGroups(groups groupStore, groupUsers GroupUsersLookup) Option {
 	return func(s *Server) {
 		s.groups = groups
 		s.groupUsers = groupUsers
@@ -161,7 +161,7 @@ func WithGroups(groups groupStore, groupUsers groupUsersLookup) Option {
 // mute/unmute, delete/pin, lock/unlock y approve/reject de solicitudes.
 // El servicio orquesta Grupo→Permiso→Telegram→Log; el handler solo
 // valida inputs, extrae actor y mapea errores.
-func WithModeration(mod moderationActions) Option {
+func WithModeration(mod ModerationActions) Option {
 	return func(s *Server) {
 		s.moderation = mod
 		s.mux.HandleFunc("POST /api/groups/{id}/users/{userId}/ban", s.requireAuth(s.handleBan))
@@ -178,7 +178,7 @@ func WithModeration(mod moderationActions) Option {
 // WithJoinRequests monta las rutas de solicitudes de ingreso (paso 10):
 // listado y approve/reject (estas dos ultimas delegan en el Service de
 // moderacion, que orquesta la decision).
-func WithJoinRequests(store joinRequestStore, mod moderationActions) Option {
+func WithJoinRequests(store joinRequestStore, mod ModerationActions) Option {
 	return func(s *Server) {
 		s.joinRequests = store
 		if s.moderation == nil {
@@ -208,7 +208,7 @@ func WithLogs(store logStore) Option {
 // failure isolation per-item, status 200 OK con envelope valida). El
 // handler vive en batch_handlers.go; comparte el store publicationStore
 // y reusa Service.PublishMany / Service.Schedule sin nuevos metodos.
-func WithPublications(pubs publicationStore) Option {
+func WithPublications(pubs PublicationStore) Option {
 	return func(s *Server) {
 		s.publications = pubs
 		s.mux.HandleFunc("POST /api/publications", s.requireAuth(s.handleCreatePublication))
@@ -241,7 +241,7 @@ func WithPublications(pubs publicationStore) Option {
 // handlers usan `logs` (automationLogWriter) tambien para
 // CountByActionAndGroup (stats).
 func WithAutomation(
-	auto automationService,
+	auto AutomationService,
 	logs automationLogWriter,
 	groups automationGroupChecker,
 	dashboard automationDashboardRepo,
@@ -290,7 +290,7 @@ func tenantIDFromClaims(w http.ResponseWriter, r *http.Request) (int64, bool) {
 // resolveModeration devuelve el servicio de moderacion del tenant (con
 // su adapter). Fallback al singleton legacy cuando no hay routing
 // (tests, modo webhook, tenant default sin token propio).
-func (s *Server) resolveModeration(tenantID int64) (moderationActions, bool) {
+func (s *Server) resolveModeration(tenantID int64) (ModerationActions, bool) {
 	if s.moderationFor != nil {
 		if mod, ok := s.moderationFor(tenantID); ok && mod != nil {
 			return mod, true
@@ -304,7 +304,7 @@ func (s *Server) resolveModeration(tenantID int64) (moderationActions, bool) {
 
 // resolveGroupUsers devuelve el lookup de usuarios de Telegram del
 // tenant (su adapter). Fallback al singleton legacy.
-func (s *Server) resolveGroupUsers(tenantID int64) (groupUsersLookup, bool) {
+func (s *Server) resolveGroupUsers(tenantID int64) (GroupUsersLookup, bool) {
 	if s.groupUsersFor != nil {
 		if gu, ok := s.groupUsersFor(tenantID); ok && gu != nil {
 			return gu, true
@@ -318,7 +318,7 @@ func (s *Server) resolveGroupUsers(tenantID int64) (groupUsersLookup, bool) {
 
 // resolvePublications devuelve el servicio de publicaciones del tenant
 // (con su adapter). Fallback al singleton legacy.
-func (s *Server) resolvePublications(tenantID int64) (publicationStore, bool) {
+func (s *Server) resolvePublications(tenantID int64) (PublicationStore, bool) {
 	if s.publicationsFor != nil {
 		if p, ok := s.publicationsFor(tenantID); ok && p != nil {
 			return p, true
@@ -332,7 +332,7 @@ func (s *Server) resolvePublications(tenantID int64) (publicationStore, bool) {
 
 // resolveAutomation devuelve el servicio de automation del tenant.
 // Fallback al singleton legacy.
-func (s *Server) resolveAutomation(tenantID int64) (automationService, bool) {
+func (s *Server) resolveAutomation(tenantID int64) (AutomationService, bool) {
 	if s.automationFor != nil {
 		if a, ok := s.automationFor(tenantID); ok && a != nil {
 			return a, true

@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"encoding/base64"
+	"strings"
+	"testing"
+)
 
 // configKeys son las variables de entorno que Load() lee; el test las
 // limpia para que el entorno real no filtre estado entre casos.
@@ -134,6 +138,37 @@ func TestLoad(t *testing.T) {
 			name: "defaults applied",
 			env:  validEnv(),
 		},
+		{
+			// D10: ausente → arranque legacy OK.
+			name: "tenant enc key absent (legacy boot)",
+			env:  validEnv(),
+		},
+		{
+			name: "tenant enc key valid base64",
+			env: func() map[string]string {
+				m := validEnv()
+				m["TENANT_TOKEN_ENC_KEY"] = base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))
+				return m
+			}(),
+		},
+		{
+			name: "tenant enc key valid raw 32",
+			env: func() map[string]string {
+				m := validEnv()
+				m["TENANT_TOKEN_ENC_KEY"] = "0123456789abcdef0123456789abcdef"
+				return m
+			}(),
+		},
+		{
+			// D10: presente-pero-invalida → fail-fast.
+			name: "tenant enc key invalid",
+			env: func() map[string]string {
+				m := validEnv()
+				m["TENANT_TOKEN_ENC_KEY"] = "corta"
+				return m
+			}(),
+			wantErr: true,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -141,6 +176,7 @@ func TestLoad(t *testing.T) {
 			for _, k := range configKeys {
 				t.Setenv(k, "")
 			}
+			t.Setenv("TENANT_TOKEN_ENC_KEY", "")
 			for k, v := range tc.env {
 				t.Setenv(k, v)
 			}
@@ -163,6 +199,9 @@ func TestLoad(t *testing.T) {
 			}
 			if cfg.CookieSecure {
 				t.Errorf("CookieSecure: want default false, got true")
+			}
+			if strings.HasPrefix(tc.name, "tenant enc key valid") && cfg.TenantTokenEncKey == "" {
+				t.Error("TenantTokenEncKey vacia con key valida en env")
 			}
 		})
 	}

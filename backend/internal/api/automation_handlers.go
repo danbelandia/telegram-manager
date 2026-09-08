@@ -50,7 +50,7 @@ import (
 // consume `automationDashboardRepo` directamente (inyectado via
 // WithAutomation). Esto evita modificar Service/Service.go y el
 // pipeline de evaluation.
-type automationService interface {
+type AutomationService interface {
 	// Settings.
 	GetSettings(ctx context.Context, groupID int64) (*automation.Settings, error)
 	UpsertSettings(ctx context.Context, s *automation.Settings) error

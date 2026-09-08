@@ -16,12 +16,12 @@ const (
 	tenantDegraded = tenants.StatusDegraded
 )
 
-// updatePublisher es la vista minima del bus de eventos que el
-// registry necesita: *events.Bus la satisface sin importar el paquete
-// events (evita un ciclo telegram↔events). Cada tenant tiene SU
-// propio bus (D5): cero cambios en Bus/Update/handlers y un
-// handler lento no contamina otros tenants.
-type updatePublisher interface {
+// Publisher es la vista minima del bus de eventos que el registry
+// necesita: *events.Bus la satisface sin importar el paquete events
+// (evita un ciclo telegram↔events). Cada tenant tiene SU propio bus
+// (D5): cero cambios en Bus/Update/handlers y un handler lento no
+// contamina otros tenants. Exportada porque main la usa en busFor.
+type Publisher interface {
 	Publish(*Update)
 }
 
@@ -39,7 +39,7 @@ type StatusFunc func(ctx context.Context, tenantID int64, status string)
 // cancelacion de su poller.
 type tenantRuntime struct {
 	adapter *Adapter
-	bus     updatePublisher
+	bus     Publisher
 	cancel  context.CancelFunc
 	status  string
 }
@@ -53,6 +53,8 @@ type Registry struct {
 	tenants  map[int64]*tenantRuntime
 	logger   *slog.Logger
 	onStatus StatusFunc
+	// newAdapter crea adapters (seam de test: apunta a httptest).
+	newAdapter func(token string) *Adapter
 }
 
 // NewRegistry crea un registry vacio.
@@ -61,9 +63,10 @@ func NewRegistry(logger *slog.Logger, onStatus StatusFunc) *Registry {
 		logger = slog.Default()
 	}
 	return &Registry{
-		tenants:  make(map[int64]*tenantRuntime),
-		logger:   logger,
-		onStatus: onStatus,
+		tenants:    make(map[int64]*tenantRuntime),
+		logger:     logger,
+		onStatus:   onStatus,
+		newAdapter: func(token string) *Adapter { return NewAdapter(token) },
 	}
 }
 
@@ -76,7 +79,7 @@ func NewRegistry(logger *slog.Logger, onStatus StatusFunc) *Registry {
 // exponencial (1s→max 5 min) que reintenta GetMe hasta que el token
 // vuelva a ser valido; resto de errores → Poller normal (su backoff
 // transitorio ya existe).
-func (r *Registry) BootAll(ctx context.Context, list []tenants.Tenant, decrypt DecryptFunc, busFor func(tenantID int64) updatePublisher) {
+func (r *Registry) BootAll(ctx context.Context, list []tenants.Tenant, decrypt DecryptFunc, busFor func(tenantID int64) Publisher) {
 	for i := range list {
 		t := list[i]
 		if len(t.BotTokenEncrypted) == 0 {
@@ -99,7 +102,7 @@ func (r *Registry) BootAll(ctx context.Context, list []tenants.Tenant, decrypt D
 // concurrentes del MISMO tenant son imposibles en la practica (el slug
 // UNIQUE impide doble signup); ante esa carrera gana la ultima
 // escritura del mapa.
-func (r *Registry) RegisterHot(ctx context.Context, tenantID int64, slug, tokenPlain string, bus updatePublisher) {
+func (r *Registry) RegisterHot(ctx context.Context, tenantID int64, slug, tokenPlain string, bus Publisher) {
 	r.mu.Lock()
 	r.stopLocked(tenantID)
 	r.mu.Unlock()
@@ -142,8 +145,8 @@ func (r *Registry) StopAll() {
 // startLocked valida con GetMe y arranca el loop que corresponda.
 // Escribe el mapa bajo mu interna; los loops hijos usan el cancel del
 // runtime (RegisterHot/StopAll lo invocan para reemplazar o apagar).
-func (r *Registry) startLocked(ctx context.Context, tenantID int64, slug, tokenPlain string, bus updatePublisher) {
-	adapter := NewAdapter(tokenPlain)
+func (r *Registry) startLocked(ctx context.Context, tenantID int64, slug, tokenPlain string, bus Publisher) {
+	adapter := r.newAdapter(tokenPlain)
 	if bus == nil {
 		r.logger.Error("registry: sin bus para el tenant, poller no levantado",
 			"tenant_id", tenantID, "slug", slug)
@@ -174,7 +177,7 @@ func (r *Registry) startLocked(ctx context.Context, tenantID int64, slug, tokenP
 // degradedLoop reintenta GetMe con backoff exponencial 1s→max 5 min.
 // Cuando el token vuelve a ser valido, transiciona al poller normal y
 // marca active. El loop muere con el ctx del tenant.
-func (r *Registry) degradedLoop(ctx context.Context, tenantID int64, slug string, adapter *Adapter, bus updatePublisher) {
+func (r *Registry) degradedLoop(ctx context.Context, tenantID int64, slug string, adapter *Adapter, bus Publisher) {
 	backoff := time.Second
 	const maxBackoff = 5 * time.Minute
 	for {
@@ -209,7 +212,7 @@ func (r *Registry) degradedLoop(ctx context.Context, tenantID int64, slug string
 // del tenant. Un error fatal (token revocado en caliente, webhook en
 // conflicto) degrada el runtime en vez de tumbar el backend: marca
 // degraded y pasa al degradedLoop con el mismo ctx del tenant.
-func (r *Registry) pollLoop(ctx context.Context, tenantID int64, slug string, adapter *Adapter, bus updatePublisher) {
+func (r *Registry) pollLoop(ctx context.Context, tenantID int64, slug string, adapter *Adapter, bus Publisher) {
 	poller := NewPoller(adapter, WithPollerLogger(r.logger))
 	err := poller.Run(ctx, func(updates []Update) {
 		for i := range updates {

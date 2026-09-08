@@ -46,9 +46,9 @@ func TestWorker_Run_ProcessesFIFO(t *testing.T) {
 	a := &fakeActioner{}
 	w := NewWorker(ch, a, nil)
 
-	ch <- AutoAction{Kind: AutoActionMute, GroupID: -1001, UserID: 1, RuleName: "flood", WarningCount: 3}
-	ch <- AutoAction{Kind: AutoActionBan, GroupID: -1001, UserID: 2, RuleName: "flood", WarningCount: 5}
-	ch <- AutoAction{Kind: AutoActionMute, GroupID: -1002, UserID: 3, RuleName: "flood", WarningCount: 3}
+	ch <- AutoAction{Kind: AutoActionMute, TenantID: testTenantID, GroupID: -1001, UserID: 1, RuleName: "flood", WarningCount: 3}
+	ch <- AutoAction{Kind: AutoActionBan, TenantID: testTenantID, GroupID: -1001, UserID: 2, RuleName: "flood", WarningCount: 5}
+	ch <- AutoAction{Kind: AutoActionMute, TenantID: testTenantID, GroupID: -1002, UserID: 3, RuleName: "flood", WarningCount: 3}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -120,7 +120,7 @@ func TestWorker_ProcessOnce(t *testing.T) {
 	a := &fakeActioner{}
 	w := NewWorker(ch, a, nil)
 
-	ch <- AutoAction{Kind: AutoActionBan, GroupID: -1001, UserID: 1, RuleName: "flood", WarningCount: 5}
+	ch <- AutoAction{Kind: AutoActionBan, TenantID: testTenantID, GroupID: -1001, UserID: 1, RuleName: "flood", WarningCount: 5}
 
 	if err := w.ProcessOnce(context.Background()); err != nil {
 		t.Fatalf("ProcessOnce: %v", err)
@@ -158,8 +158,8 @@ func TestWorker_Run_ActionerError_ContinuesProcessing(t *testing.T) {
 	a := &fakeActioner{err: errors.New("adapter timeout")}
 	w := NewWorker(ch, a, nil)
 
-	ch <- AutoAction{Kind: AutoActionMute, GroupID: -1001, UserID: 1, RuleName: "flood", WarningCount: 3}
-	ch <- AutoAction{Kind: AutoActionBan, GroupID: -1001, UserID: 2, RuleName: "flood", WarningCount: 5}
+	ch <- AutoAction{Kind: AutoActionMute, TenantID: testTenantID, GroupID: -1001, UserID: 1, RuleName: "flood", WarningCount: 3}
+	ch <- AutoAction{Kind: AutoActionBan, TenantID: testTenantID, GroupID: -1001, UserID: 2, RuleName: "flood", WarningCount: 5}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
@@ -228,7 +228,7 @@ func TestWorker_Run_ChannelClosed(t *testing.T) {
 func TestSubscriber_FiltersUpdatesWithoutMessage(t *testing.T) {
 	bus := events.NewBus()
 	settingsRepo := newFakeSettingsRepo()
-	settingsRepo.rows[-1001] = &Settings{GroupID: -1001, Enabled: false} // disabled → skip silencioso
+	settingsRepo.rows[[2]int64{testTenantID, -1001}] = &Settings{TenantID: testTenantID, GroupID: -1001, Enabled: false} // disabled → skip silencioso
 	warnRepo := newFakeWarnRepo()
 	ch := make(chan AutoAction, 1)
 	svc, _ := newSvc(settingsRepo, warnRepo, map[int64]*groups.Group{
@@ -281,7 +281,7 @@ func TestSubscriber_FiltersUpdatesWithoutMessage(t *testing.T) {
 	}
 
 	// Ninguno de los updates invalidos debe haber creado warning_state.
-	if _, ok := warnRepo.rows[[2]int64{-1001, 999}]; ok {
+	if _, ok := warnRepo.rows[[3]int64{testTenantID, -1001, 999}]; ok {
 		t.Errorf("warning_state creada con update invalido")
 	}
 }
@@ -293,7 +293,7 @@ func TestSubscriber_PassesValidMessageToService(t *testing.T) {
 
 	// Service real con fakes minimos.
 	settingsRepo := newFakeSettingsRepo()
-	settingsRepo.rows[-1001] = &Settings{GroupID: -1001, Enabled: false} // disabled → skip silencioso
+	settingsRepo.rows[[2]int64{testTenantID, -1001}] = &Settings{TenantID: testTenantID, GroupID: -1001, Enabled: false} // disabled → skip silencioso
 	warnRepo := newFakeWarnRepo()
 	ch := make(chan AutoAction, 1)
 	svc, _ := newSvc(settingsRepo, warnRepo, map[int64]*groups.Group{
@@ -316,7 +316,7 @@ func TestSubscriber_PassesValidMessageToService(t *testing.T) {
 	// Como enabled=false, el service retorna nil sin tocar nada; lo
 	// importante es que el subscriber lo llamo (no panic).
 	// Verificamos que la warning_state NO se creo (disabled).
-	if _, ok := warnRepo.rows[[2]int64{-1001, 999}]; ok {
+	if _, ok := warnRepo.rows[[3]int64{testTenantID, -1001, 999}]; ok {
 		t.Errorf("warning_state creada pese a disabled")
 	}
 }

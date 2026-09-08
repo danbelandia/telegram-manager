@@ -182,7 +182,7 @@ func newFakeAutomationDashboardRepo() *fakeAutomationDashboardRepo {
 
 // ListActiveWarningStatesByGroup: filtra warning_count > 0, ordena por
 // warning_count DESC + last_warning_at DESC NULLS LAST.
-func (f *fakeAutomationDashboardRepo) ListActiveWarningStatesByGroup(_ context.Context, groupID int64, limit int) ([]automation.WarningStateRow, bool, error) {
+func (f *fakeAutomationDashboardRepo) ListActiveWarningStatesByGroup(_ context.Context, _, groupID int64, limit int) ([]automation.WarningStateRow, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.errListActiveWarnings != nil {
@@ -223,7 +223,7 @@ func (f *fakeAutomationDashboardRepo) ListActiveWarningStatesByGroup(_ context.C
 
 // ResetWarningState: limpia el counter y guarda el valor previo. Si no
 // existia la fila, retorna (0, nil).
-func (f *fakeAutomationDashboardRepo) ResetWarningState(_ context.Context, groupID, userID int64) (int64, error) {
+func (f *fakeAutomationDashboardRepo) ResetWarningState(_ context.Context, _, groupID, userID int64) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.errResetWarningState != nil {
@@ -272,7 +272,7 @@ func (f *fakeAutomationLogs) Create(_ context.Context, e *logs.Entry) error {
 
 // CountByActionAndGroup agrega logs por action en una ventana para un
 // grupo. Cubre el handler slice 3 GET .../stats.
-func (f *fakeAutomationLogs) CountByActionAndGroup(_ context.Context, groupID int64, actions []string, _ time.Time) (map[string]int, error) {
+func (f *fakeAutomationLogs) CountByActionAndGroup(_ context.Context, _, groupID int64, actions []string, _ time.Time) (map[string]int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.errCountByActionGroup != nil {
@@ -298,7 +298,7 @@ type fakeAutomationGroups struct {
 	groups map[int64]*groups.Group
 }
 
-func (f *fakeAutomationGroups) GetByTelegramID(_ context.Context, id int64) (*groups.Group, error) {
+func (f *fakeAutomationGroups) GetByTenant(_ context.Context, _ int64, id int64) (*groups.Group, error) {
 	g, ok := f.groups[id]
 	if !ok {
 		return nil, groups.ErrNotFound

@@ -44,21 +44,21 @@ func (f *fakeTelegramMesseger) SendMessage(_ context.Context, chatID int64, text
 // fakeSettingsReader sirve GetSettings desde un mapa en memoria.
 type fakeSettingsReader struct {
 	mu   sync.Mutex
-	rows map[int64]*Settings
+	rows map[[2]int64]*Settings
 	err  error
 }
 
 func newFakeSettingsReader() *fakeSettingsReader {
-	return &fakeSettingsReader{rows: make(map[int64]*Settings)}
+	return &fakeSettingsReader{rows: make(map[[2]int64]*Settings)}
 }
 
-func (f *fakeSettingsReader) GetSettings(_ context.Context, groupID int64) (*Settings, error) {
+func (f *fakeSettingsReader) GetSettings(_ context.Context, tenantID, groupID int64) (*Settings, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.err != nil {
 		return nil, f.err
 	}
-	s, ok := f.rows[groupID]
+	s, ok := f.rows[[2]int64{tenantID, groupID}]
 	if !ok {
 		return nil, ErrNotFound
 	}
@@ -78,8 +78,8 @@ func TestWarningSender_HappyPath_DefaultTemplate(t *testing.T) {
 	}}
 	sr := newFakeSettingsReader()
 	// Settings sin custom template → cae al default.
-	sr.rows[-1001] = &Settings{GroupID: -1001, AutomuteMinutes: 10, WarnUserEnabled: true, WarnUserTemplate: nil}
-	w := NewWarningSender(tg, lg, sr, gr, nil)
+	sr.rows[[2]int64{testTenantID, -1001}] = &Settings{TenantID: testTenantID, GroupID: -1001, AutomuteMinutes: 10, WarnUserEnabled: true, WarnUserTemplate: nil}
+	w := NewWarningSender(tg, lg, sr, gr, nil, testTenantID)
 
 	msg := makeMsg("Juan", "")
 	if err := w.SendWarning(context.Background(), msg, 2, WarningPreMute); err != nil {
@@ -137,8 +137,8 @@ func TestWarningSender_HappyPath_CustomTemplate(t *testing.T) {
 	}}
 	sr := newFakeSettingsReader()
 	custom := "🚨 Custom warn para {nombre}: {count} strikes."
-	sr.rows[-1001] = &Settings{GroupID: -1001, AutomuteMinutes: 10, WarnUserEnabled: true, WarnUserTemplate: &custom}
-	w := NewWarningSender(tg, lg, sr, gr, nil)
+	sr.rows[[2]int64{testTenantID, -1001}] = &Settings{TenantID: testTenantID, GroupID: -1001, AutomuteMinutes: 10, WarnUserEnabled: true, WarnUserTemplate: &custom}
+	w := NewWarningSender(tg, lg, sr, gr, nil, testTenantID)
 
 	msg := makeMsg("Pedro", "")
 	if err := w.SendWarning(context.Background(), msg, 3, WarningPreBan); err != nil {
@@ -164,8 +164,8 @@ func TestWarningSender_PermissionDenied(t *testing.T) {
 		-1001: {TelegramID: -1001, BotStatus: groups.StatusMember}, // bot removido
 	}}
 	sr := newFakeSettingsReader()
-	sr.rows[-1001] = &Settings{GroupID: -1001}
-	w := NewWarningSender(tg, lg, sr, gr, nil)
+	sr.rows[[2]int64{testTenantID, -1001}] = &Settings{TenantID: testTenantID, GroupID: -1001}
+	w := NewWarningSender(tg, lg, sr, gr, nil, testTenantID)
 
 	msg := makeMsg("Juan", "")
 	err := w.SendWarning(context.Background(), msg, 2, WarningPreMute)
@@ -190,7 +190,7 @@ func TestWarningSender_GroupNotFound(t *testing.T) {
 	lg := &fakeLogs{}
 	gr := &fakeGroups{groups: map[int64]*groups.Group{}} // vacio
 	sr := newFakeSettingsReader()
-	w := NewWarningSender(tg, lg, sr, gr, nil)
+	w := NewWarningSender(tg, lg, sr, gr, nil, testTenantID)
 
 	msg := makeMsg("Juan", "")
 	if err := w.SendWarning(context.Background(), msg, 2, WarningPreMute); err == nil {
@@ -213,8 +213,8 @@ func TestWarningSender_TelegramError(t *testing.T) {
 		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
 	}}
 	sr := newFakeSettingsReader()
-	sr.rows[-1001] = &Settings{GroupID: -1001}
-	w := NewWarningSender(tg, lg, sr, gr, nil)
+	sr.rows[[2]int64{testTenantID, -1001}] = &Settings{TenantID: testTenantID, GroupID: -1001}
+	w := NewWarningSender(tg, lg, sr, gr, nil, testTenantID)
 
 	msg := makeMsg("Juan", "")
 	err := w.SendWarning(context.Background(), msg, 2, WarningPreMute)
@@ -241,8 +241,8 @@ func TestWarningSender_TelegramPermissionDenied_MappedToStatus(t *testing.T) {
 		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
 	}}
 	sr := newFakeSettingsReader()
-	sr.rows[-1001] = &Settings{GroupID: -1001}
-	w := NewWarningSender(tg, lg, sr, gr, nil)
+	sr.rows[[2]int64{testTenantID, -1001}] = &Settings{TenantID: testTenantID, GroupID: -1001}
+	w := NewWarningSender(tg, lg, sr, gr, nil, testTenantID)
 
 	msg := makeMsg("Juan", "")
 	err := w.SendWarning(context.Background(), msg, 2, WarningPreMute)
@@ -262,8 +262,8 @@ func TestWarningSender_EmptyKind(t *testing.T) {
 		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
 	}}
 	sr := newFakeSettingsReader()
-	sr.rows[-1001] = &Settings{GroupID: -1001}
-	w := NewWarningSender(tg, lg, sr, gr, nil)
+	sr.rows[[2]int64{testTenantID, -1001}] = &Settings{TenantID: testTenantID, GroupID: -1001}
+	w := NewWarningSender(tg, lg, sr, gr, nil, testTenantID)
 
 	msg := makeMsg("Juan", "")
 	if err := w.SendWarning(context.Background(), msg, 2, ""); err == nil {
@@ -285,8 +285,8 @@ func TestWarningSender_NilMsg(t *testing.T) {
 		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
 	}}
 	sr := newFakeSettingsReader()
-	sr.rows[-1001] = &Settings{GroupID: -1001}
-	w := NewWarningSender(tg, lg, sr, gr, nil)
+	sr.rows[[2]int64{testTenantID, -1001}] = &Settings{TenantID: testTenantID, GroupID: -1001}
+	w := NewWarningSender(tg, lg, sr, gr, nil, testTenantID)
 
 	if err := w.SendWarning(context.Background(), nil, 2, WarningPreMute); err == nil {
 		t.Fatal("SendWarning = nil, want error (msg nil)")
@@ -309,7 +309,7 @@ func TestWarningSender_SettingsReadFails_UsesDefault(t *testing.T) {
 		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
 	}}
 	sr := &fakeSettingsReader{err: errors.New("db exploded")}
-	w := NewWarningSender(tg, lg, sr, gr, nil)
+	w := NewWarningSender(tg, lg, sr, gr, nil, testTenantID)
 
 	msg := makeMsg("Juan", "")
 	if err := w.SendWarning(context.Background(), msg, 2, WarningPreMute); err != nil {

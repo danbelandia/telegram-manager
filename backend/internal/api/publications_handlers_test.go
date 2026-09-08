@@ -41,7 +41,7 @@ type fakePublicationStore struct {
 	lastScheduledAt time.Time
 }
 
-func (f *fakePublicationStore) Publish(ctx context.Context, actorID, groupID int64, text string, photoURL *string, buttons [][]telegram.InlineKeyboardButton) (*publications.Publication, error) {
+func (f *fakePublicationStore) Publish(_ context.Context, tenantID, actorID, groupID int64, text string, photoURL *string, buttons [][]telegram.InlineKeyboardButton) (*publications.Publication, error) {
 	f.calls++
 	f.actor = actorID
 	f.payload = publications.PublishPayload{
@@ -56,7 +56,7 @@ func (f *fakePublicationStore) Publish(ctx context.Context, actorID, groupID int
 	return f.pub, nil
 }
 
-func (f *fakePublicationStore) PublishMany(ctx context.Context, actorID int64, payload publications.PublishPayload) ([]publications.Publication, error) {
+func (f *fakePublicationStore) PublishMany(_ context.Context, tenantID, actorID int64, payload publications.PublishPayload) ([]publications.Publication, error) {
 	f.calls++
 	f.actor = actorID
 	f.payload = payload
@@ -72,7 +72,7 @@ func (f *fakePublicationStore) PublishMany(ctx context.Context, actorID int64, p
 // Schedule (slice 3): si scheduleErr esta set, lo retorna. Si
 // scheduleList esta poblado, lo devuelve. Si no, devuelve una sola
 // fila copiando f.pub (modo simple).
-func (f *fakePublicationStore) Schedule(ctx context.Context, actorID int64, payload publications.PublishPayload, scheduledAt time.Time, nowFn func() time.Time) ([]publications.Publication, error) {
+func (f *fakePublicationStore) Schedule(_ context.Context, tenantID, actorID int64, payload publications.PublishPayload, scheduledAt time.Time, nowFn func() time.Time) ([]publications.Publication, error) {
 	f.calls++
 	f.actor = actorID
 	f.payload = payload
@@ -89,7 +89,7 @@ func (f *fakePublicationStore) Schedule(ctx context.Context, actorID int64, payl
 	return []publications.Publication{}, nil
 }
 
-func (f *fakePublicationStore) GetByID(ctx context.Context, id int64) (*publications.Publication, error) {
+func (f *fakePublicationStore) GetByID(_ context.Context, _ int64, id int64) (*publications.Publication, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -99,7 +99,7 @@ func (f *fakePublicationStore) GetByID(ctx context.Context, id int64) (*publicat
 	return f.pub, nil
 }
 
-func (f *fakePublicationStore) List(ctx context.Context, limit, offset int) ([]publications.Publication, error) {
+func (f *fakePublicationStore) List(_ context.Context, _ int64, limit, offset int) ([]publications.Publication, error) {
 	f.lastLimit = limit
 	f.lastOffset = offset
 	if f.err != nil {
@@ -108,7 +108,7 @@ func (f *fakePublicationStore) List(ctx context.Context, limit, offset int) ([]p
 	return f.list, nil
 }
 
-func (f *fakePublicationStore) ListByTelegramID(ctx context.Context, telegramID int64, limit, offset int) ([]publications.Publication, error) {
+func (f *fakePublicationStore) ListByTelegramID(_ context.Context, _ int64, telegramID int64, limit, offset int) ([]publications.Publication, error) {
 	f.gotQ = true
 	f.lastGidQ = telegramID
 	f.lastLimit = limit
@@ -123,7 +123,7 @@ func (f *fakePublicationStore) ListByTelegramID(ctx context.Context, telegramID 
 }
 
 // CancelScheduled (slice 3): delega en cancelErr si esta set, sino OK.
-func (f *fakePublicationStore) CancelScheduled(ctx context.Context, id int64) error {
+func (f *fakePublicationStore) CancelScheduled(_ context.Context, _ int64, id int64) error {
 	f.cancelCalls = append(f.cancelCalls, id)
 	if f.cancelErr != nil {
 		return f.cancelErr

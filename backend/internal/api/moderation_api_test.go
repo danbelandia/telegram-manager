@@ -51,11 +51,11 @@ type fakeGroupStore struct {
 	err  error
 }
 
-func (f *fakeGroupStore) List(ctx context.Context) ([]groups.Group, error) {
+func (f *fakeGroupStore) ListByTenant(_ context.Context, _ int64) ([]groups.Group, error) {
 	return f.list, f.err
 }
 
-func (f *fakeGroupStore) GetByTelegramID(ctx context.Context, id int64) (*groups.Group, error) {
+func (f *fakeGroupStore) GetByTenant(_ context.Context, _ int64, id int64) (*groups.Group, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -149,7 +149,7 @@ type fakeJoinRequestStore struct {
 	err      error
 }
 
-func (f *fakeJoinRequestStore) ListByGroup(ctx context.Context, groupID int64) ([]joinrequests.Request, error) {
+func (f *fakeJoinRequestStore) ListByGroup(_ context.Context, _, _ int64) ([]joinrequests.Request, error) {
 	return f.requests, f.err
 }
 
@@ -159,7 +159,7 @@ type fakeLogStore struct {
 	err     error
 }
 
-func (f *fakeLogStore) ListByGroup(ctx context.Context, groupID int64) ([]logs.Entry, error) {
+func (f *fakeLogStore) ListByGroup(_ context.Context, _, _ int64) ([]logs.Entry, error) {
 	return f.entries, f.err
 }
 
