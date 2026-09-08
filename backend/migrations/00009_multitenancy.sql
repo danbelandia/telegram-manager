@@ -21,7 +21,7 @@ CREATE TABLE tenants (
 
 -- 2. groups: columna + tenant default + backfill idempotente.
 ALTER TABLE groups ADD COLUMN tenant_id BIGINT REFERENCES tenants(id);
-INSERT INTO tenants (slug) VALUES ('default')
+INSERT INTO tenants (slug) SELECT 'default'
 WHERE NOT EXISTS (SELECT 1 FROM tenants WHERE slug = 'default');
 UPDATE groups SET tenant_id = (SELECT id FROM tenants WHERE slug = 'default')
 WHERE tenant_id IS NULL;

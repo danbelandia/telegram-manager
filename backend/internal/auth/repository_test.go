@@ -48,9 +48,12 @@ func testDB(t *testing.T) *sql.DB {
 	if err := database.Migrate(context.Background(), db); err != nil {
 		t.Fatalf("migrate test db: %v", err)
 	}
-	// Los tests comparten la base: cada test arranca sin admins.
-	if _, err := db.ExecContext(context.Background(), "TRUNCATE admins"); err != nil {
-		t.Fatalf("truncate admins: %v", err)
+	// Los tests comparten la base: cada test arranca sin admins ni
+	// tenants. Los tests de signup usan slugs fijos; sin truncar
+	// tenants, un re-run colisionaria con la corrida anterior (409
+	// fantasma). CASCADE por admins.tenant_id → tenants.
+	if _, err := db.ExecContext(context.Background(), "TRUNCATE admins, tenants CASCADE"); err != nil {
+		t.Fatalf("truncate admins, tenants: %v", err)
 	}
 	return db
 }

@@ -164,10 +164,17 @@ func (f *fakeLogStore) ListByGroup(_ context.Context, _, _ int64) ([]logs.Entry,
 }
 
 // buildModerationServer construye un Server con auth fija y todos los
-// modulos del paso 10 habilitados (fakes inyectados).
+// modulos del paso 10 habilitados (fakes inyectados). El grupo existe
+// (ownership pasa); tests de grupo ajeno/inexistente usan
+// buildModerationServerNoGroup.
 func buildModerationServer(t *testing.T, mod *fakeModeration, opts ...Option) (*Server, *fakeModeration) {
 	t.Helper()
-	gs := &fakeGroupStore{}
+	gs := &fakeGroupStore{get: &groups.Group{
+		TelegramID: -100,
+		Title:      "Grupo Test",
+		Type:       "supergroup",
+		BotStatus:  groups.StatusAdministrator,
+	}}
 	gu := &fakeGroupUsers{}
 	jr := &fakeJoinRequestStore{}
 	ls := &fakeLogStore{}
@@ -377,6 +384,17 @@ func TestGetGroup_NotFound(t *testing.T) {
 	}
 }
 
+// ownedGroupStore es un fakeGroupStore con grupo presente (ownership
+// pasa). Los tests de users-m_lookup lo usan para llegar al adapter.
+func ownedGroupStore() *fakeGroupStore {
+	return &fakeGroupStore{get: &groups.Group{
+		TelegramID: -100,
+		Title:      "Grupo Test",
+		Type:       "supergroup",
+		BotStatus:  groups.StatusAdministrator,
+	}}
+}
+
 // TestListGroupUsers_Lookup: ?userId= devuelve el miembro puntual.
 func TestListGroupUsers_Lookup(t *testing.T) {
 	gu := &fakeGroupUsers{member: &telegram.ChatMember{
@@ -385,7 +403,7 @@ func TestListGroupUsers_Lookup(t *testing.T) {
 	}}
 	server := NewServer(fakePinger{}, botStatusStub{},
 		WithAuth(nil, fixedAuthenticator{claims: testClaims}, false),
-		WithGroups(&fakeGroupStore{}, gu),
+		WithGroups(ownedGroupStore(), gu),
 	)
 
 	rr := doRequest(server, "GET", "/api/groups/-100/users?userId=42", "", validToken)
@@ -397,11 +415,31 @@ func TestListGroupUsers_Lookup(t *testing.T) {
 	}
 }
 
+// TestListGroupUsers_ForeignGroup: grupo ajeno → 404 NOT_FOUND sin
+// llamar a Telegram (D9, iso-ajeno).
+func TestListGroupUsers_ForeignGroup(t *testing.T) {
+	gu := &fakeGroupUsers{member: &telegram.ChatMember{
+		Status: "member",
+		User:   &telegram.User{ID: 42, FirstName: "Juan"},
+	}}
+	server := NewServer(fakePinger{}, botStatusStub{},
+		WithAuth(nil, fixedAuthenticator{claims: testClaims}, false),
+		WithGroups(&fakeGroupStore{}, gu), // get nil → ajeno/inexistente
+	)
+	rr := doRequest(server, "GET", "/api/groups/-100/users?userId=42", "", validToken)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("code = %d, want 404 (body: %s)", rr.Code, rr.Body.String())
+	}
+	if len(gu.members) != 0 {
+		t.Error("se consulto Telegram para un grupo ajeno")
+	}
+}
+
 // TestListGroupUsers_InvalidUserID: ?userId=no-numerico responde 400.
 func TestListGroupUsers_InvalidUserID(t *testing.T) {
 	server := NewServer(fakePinger{}, botStatusStub{},
 		WithAuth(nil, fixedAuthenticator{claims: testClaims}, false),
-		WithGroups(&fakeGroupStore{}, &fakeGroupUsers{}),
+		WithGroups(ownedGroupStore(), &fakeGroupUsers{}),
 	)
 	rr := doRequest(server, "GET", "/api/groups/-100/users?userId=abc", "", validToken)
 	if rr.Code != http.StatusBadRequest {
@@ -414,7 +452,7 @@ func TestListGroupUsers_NoPermission(t *testing.T) {
 	gu := &fakeGroupUsers{err: telegram.ErrPermissionDenied}
 	server := NewServer(fakePinger{}, botStatusStub{},
 		WithAuth(nil, fixedAuthenticator{claims: testClaims}, false),
-		WithGroups(&fakeGroupStore{}, gu),
+		WithGroups(ownedGroupStore(), gu),
 	)
 	rr := doRequest(server, "GET", "/api/groups/-100/users", "", validToken)
 	if rr.Code != http.StatusForbidden {
@@ -468,3 +506,21 @@ func TestListGroupLogs_Data(t *testing.T) {
 }
 
 func int64Ptr(v int64) *int64 { return &v }
+
+// TestModerationAction_ForeignGroup: grupo ajeno → 404 NOT_FOUND sin
+// llamar al servicio (D9, iso-ajeno). El servicio NUNCA ve la request.
+func TestModerationAction_ForeignGroup(t *testing.T) {
+	mod := &fakeModeration{}
+	server := NewServer(fakePinger{}, botStatusStub{},
+		WithAuth(nil, fixedAuthenticator{claims: testClaims}, false),
+		WithGroups(&fakeGroupStore{}, &fakeGroupUsers{}), // get nil → ajeno
+		WithModeration(mod),
+	)
+	rr := doRequest(server, "POST", "/api/groups/-100/users/42/ban", "", validToken)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("code = %d, want 404 (body: %s)", rr.Code, rr.Body.String())
+	}
+	if mod.banCalls != 0 {
+		t.Errorf("ban calls = %d, want 0 (grupo ajeno no llega al servicio)", mod.banCalls)
+	}
+}

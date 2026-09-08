@@ -104,7 +104,7 @@ type fakeListsRepo struct {
 
 func newFakeListsRepo() *fakeListsRepo {
 	return &fakeListsRepo{
-		bannedWords: make(map[[2]int64][]string),
+		bannedWords:   make(map[[2]int64][]string),
 		linkAllowlist: make(map[[2]int64][]string),
 	}
 }
@@ -257,7 +257,7 @@ func msg(chatID, userID int64) *telegram.Message {
 // sin tocar warning_state, sin log, sin encolar.
 func TestService_Disabled_SkipSilently(t *testing.T) {
 	settingsRepo := newFakeSettingsRepo()
-	settingsRepo.rows[[2]int64{testTenantID, -1001}] 	= &Settings{TenantID: testTenantID, GroupID: -1001, Enabled: false}
+	settingsRepo.rows[[2]int64{testTenantID, -1001}] = &Settings{TenantID: testTenantID, GroupID: -1001, Enabled: false}
 	warnRepo := newFakeWarnRepo()
 	ch := make(chan AutoAction, 4)
 	svc, lg := newSvc(settingsRepo, warnRepo, map[int64]*groups.Group{
@@ -270,7 +270,7 @@ func TestService_Disabled_SkipSilently(t *testing.T) {
 	if len(lg.entries) != 0 {
 		t.Errorf("logs = %d, want 0 (disabled, no se loguea)", len(lg.entries))
 	}
-	if _, ok := 	warnRepo.rows[[3]int64{testTenantID, -1001, 999}]; ok {
+	if _, ok := warnRepo.rows[[3]int64{testTenantID, -1001, 999}]; ok {
 		t.Errorf("warning_state creada pese a disabled")
 	}
 	if len(ch) != 0 {
@@ -282,7 +282,7 @@ func TestService_Disabled_SkipSilently(t *testing.T) {
 // (sin log PERMISSION_DENIED — spec REQ-7 paso 4).
 func TestService_BotNotAdmin_SkipSilently(t *testing.T) {
 	settingsRepo := newFakeSettingsRepo()
-	settingsRepo.rows[[2]int64{testTenantID, -1001}] 	= &Settings{TenantID: testTenantID, GroupID: -1001, Enabled: true, FloodEnabled: true, FloodMessages: 5, FloodSeconds: 10, AutomuteWarnings: 3, AutobanWarnings: 5, AutomuteMinutes: 10}
+	settingsRepo.rows[[2]int64{testTenantID, -1001}] = &Settings{TenantID: testTenantID, GroupID: -1001, Enabled: true, FloodEnabled: true, FloodMessages: 5, FloodSeconds: 10, AutomuteWarnings: 3, AutobanWarnings: 5, AutomuteMinutes: 10}
 	warnRepo := newFakeWarnRepo()
 	ch := make(chan AutoAction, 4)
 	svc, lg := newSvc(settingsRepo, warnRepo, map[int64]*groups.Group{
@@ -295,7 +295,7 @@ func TestService_BotNotAdmin_SkipSilently(t *testing.T) {
 	if len(lg.entries) != 0 {
 		t.Errorf("logs = %d, want 0 (bot no admin, skip silencioso)", len(lg.entries))
 	}
-	if _, ok := 	warnRepo.rows[[3]int64{testTenantID, -1001, 999}]; ok {
+	if _, ok := warnRepo.rows[[3]int64{testTenantID, -1001, 999}]; ok {
 		t.Errorf("warning_state creada pese a bot no admin")
 	}
 }
@@ -304,7 +304,7 @@ func TestService_BotNotAdmin_SkipSilently(t *testing.T) {
 // sube a 1, log RULE_TRIGGERED con metadata.
 func TestService_HitIncrementsWarningCount(t *testing.T) {
 	settingsRepo := newFakeSettingsRepo()
-	settingsRepo.rows[[2]int64{testTenantID, -1001}] 	= &Settings{TenantID: testTenantID, GroupID: -1001, Enabled: true, FloodEnabled: true, FloodMessages: 3, FloodSeconds: 10, AutomuteWarnings: 5, AutobanWarnings: 10, AutomuteMinutes: 10}
+	settingsRepo.rows[[2]int64{testTenantID, -1001}] = &Settings{TenantID: testTenantID, GroupID: -1001, Enabled: true, FloodEnabled: true, FloodMessages: 3, FloodSeconds: 10, AutomuteWarnings: 5, AutobanWarnings: 10, AutomuteMinutes: 10}
 	warnRepo := newFakeWarnRepo()
 	ch := make(chan AutoAction, 4)
 	svc, lg := newSvc(settingsRepo, warnRepo, map[int64]*groups.Group{
@@ -322,7 +322,7 @@ func TestService_HitIncrementsWarningCount(t *testing.T) {
 	}
 	// El FloodRule usa s.now() del Service. Para determinismo
 	// alternativo, basta con verificar el counter final y el log.
-	ws, err := 	warnRepo.GetWarningState(context.Background(), testTenantID, -1001, 999)
+	ws, err := warnRepo.GetWarningState(context.Background(), testTenantID, -1001, 999)
 	if err != nil {
 		t.Fatalf("GetWarningState: %v", err)
 	}
@@ -353,10 +353,10 @@ func TestService_HitIncrementsWarningCount(t *testing.T) {
 // setting.
 func TestService_AutomuteThreshold_EnqueuesAction(t *testing.T) {
 	settingsRepo := newFakeSettingsRepo()
-	settingsRepo.rows[[2]int64{testTenantID, -1001}] 	= &Settings{TenantID: testTenantID, GroupID: -1001, Enabled: true, FloodEnabled: true, FloodMessages: 3, FloodSeconds: 10, AutomuteWarnings: 3, AutobanWarnings: 5, AutomuteMinutes: 7}
+	settingsRepo.rows[[2]int64{testTenantID, -1001}] = &Settings{TenantID: testTenantID, GroupID: -1001, Enabled: true, FloodEnabled: true, FloodMessages: 3, FloodSeconds: 10, AutomuteWarnings: 3, AutobanWarnings: 5, AutomuteMinutes: 7}
 	warnRepo := newFakeWarnRepo()
 	// Usuario ya con warning_count=2; el 3er hit lo lleva a 3 == automute.
-	warnRepo.rows[[3]int64{testTenantID, -1001, 999}] 	= &WarningState{TenantID: testTenantID, GroupID: -1001, UserID: 999, WarningCount: 2}
+	warnRepo.rows[[3]int64{testTenantID, -1001, 999}] = &WarningState{TenantID: testTenantID, GroupID: -1001, UserID: 999, WarningCount: 2}
 	ch := make(chan AutoAction, 4)
 	svc, _ := newSvc(settingsRepo, warnRepo, map[int64]*groups.Group{
 		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
@@ -398,9 +398,9 @@ func TestService_AutomuteThreshold_EnqueuesAction(t *testing.T) {
 // autoban_warnings → encola AutoAction{Ban} (no mute).
 func TestService_AutobanThreshold_EnqueuesAction(t *testing.T) {
 	settingsRepo := newFakeSettingsRepo()
-	settingsRepo.rows[[2]int64{testTenantID, -1001}] 	= &Settings{TenantID: testTenantID, GroupID: -1001, Enabled: true, FloodEnabled: true, FloodMessages: 3, FloodSeconds: 10, AutomuteWarnings: 3, AutobanWarnings: 4, AutomuteMinutes: 10}
+	settingsRepo.rows[[2]int64{testTenantID, -1001}] = &Settings{TenantID: testTenantID, GroupID: -1001, Enabled: true, FloodEnabled: true, FloodMessages: 3, FloodSeconds: 10, AutomuteWarnings: 3, AutobanWarnings: 4, AutomuteMinutes: 10}
 	warnRepo := newFakeWarnRepo()
-	warnRepo.rows[[3]int64{testTenantID, -1001, 999}] 	= &WarningState{TenantID: testTenantID, GroupID: -1001, UserID: 999, WarningCount: 3}
+	warnRepo.rows[[3]int64{testTenantID, -1001, 999}] = &WarningState{TenantID: testTenantID, GroupID: -1001, UserID: 999, WarningCount: 3}
 	ch := make(chan AutoAction, 4)
 	svc, _ := newSvc(settingsRepo, warnRepo, map[int64]*groups.Group{
 		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
@@ -434,10 +434,10 @@ func TestService_AutobanThreshold_EnqueuesAction(t *testing.T) {
 // hits NO reencolan ban (idempotente hasta proximo reset).
 func TestService_AtBanThreshold_Idempotent(t *testing.T) {
 	settingsRepo := newFakeSettingsRepo()
-	settingsRepo.rows[[2]int64{testTenantID, -1001}] 	= &Settings{TenantID: testTenantID, GroupID: -1001, Enabled: true, FloodEnabled: true, FloodMessages: 3, FloodSeconds: 10, AutomuteWarnings: 3, AutobanWarnings: 4, AutomuteMinutes: 10}
+	settingsRepo.rows[[2]int64{testTenantID, -1001}] = &Settings{TenantID: testTenantID, GroupID: -1001, Enabled: true, FloodEnabled: true, FloodMessages: 3, FloodSeconds: 10, AutomuteWarnings: 3, AutobanWarnings: 4, AutomuteMinutes: 10}
 	warnRepo := newFakeWarnRepo()
 	// Usuario ya sobre autoban_warnings (4).
-	warnRepo.rows[[3]int64{testTenantID, -1001, 999}] 	= &WarningState{TenantID: testTenantID, GroupID: -1001, UserID: 999, WarningCount: 4}
+	warnRepo.rows[[3]int64{testTenantID, -1001, 999}] = &WarningState{TenantID: testTenantID, GroupID: -1001, UserID: 999, WarningCount: 4}
 	ch := make(chan AutoAction, 4)
 	svc, _ := newSvc(settingsRepo, warnRepo, map[int64]*groups.Group{
 		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
@@ -461,7 +461,7 @@ func TestService_AtBanThreshold_Idempotent(t *testing.T) {
 // panic, no log, no warning_state.
 func TestService_NilFrom_Skip(t *testing.T) {
 	settingsRepo := newFakeSettingsRepo()
-	settingsRepo.rows[[2]int64{testTenantID, -1001}] 	= &Settings{TenantID: testTenantID, GroupID: -1001, Enabled: true, FloodEnabled: true}
+	settingsRepo.rows[[2]int64{testTenantID, -1001}] = &Settings{TenantID: testTenantID, GroupID: -1001, Enabled: true, FloodEnabled: true}
 	warnRepo := newFakeWarnRepo()
 	ch := make(chan AutoAction, 4)
 	svc, lg := newSvc(settingsRepo, warnRepo, map[int64]*groups.Group{
@@ -521,7 +521,7 @@ func TestService_LoadOrCreateSettings_AutoCreateDefaults(t *testing.T) {
 // el Service dropea la accion y NO bloquea.
 func TestService_AutoCreateChannelBuffer_Overflow(t *testing.T) {
 	settingsRepo := newFakeSettingsRepo()
-	settingsRepo.rows[[2]int64{testTenantID, -1001}] 	= &Settings{TenantID: testTenantID, GroupID: -1001, Enabled: true, FloodEnabled: true, FloodMessages: 3, FloodSeconds: 10, AutomuteWarnings: 3, AutobanWarnings: 100, AutomuteMinutes: 10}
+	settingsRepo.rows[[2]int64{testTenantID, -1001}] = &Settings{TenantID: testTenantID, GroupID: -1001, Enabled: true, FloodEnabled: true, FloodMessages: 3, FloodSeconds: 10, AutomuteWarnings: 3, AutobanWarnings: 100, AutomuteMinutes: 10}
 	warnRepo := newFakeWarnRepo()
 	// Usuario ya con count=2; el primer hit lo lleva a 3 == automute → encola.
 	// Para forzar overflow con buffer=1, pre-cargamos 2 mute-enqueue al
@@ -530,7 +530,7 @@ func TestService_AutoCreateChannelBuffer_Overflow(t *testing.T) {
 	//   msg 4..: NO se alcanza con 3 hits.
 	// Cambiamos a AutobanWarnings=3 para que cada hit reencole hasta
 	// overflow.
-	warnRepo.rows[[3]int64{testTenantID, -1001, 999}] 	= &WarningState{TenantID: testTenantID, GroupID: -1001, UserID: 999, WarningCount: 2}
+	warnRepo.rows[[3]int64{testTenantID, -1001, 999}] = &WarningState{TenantID: testTenantID, GroupID: -1001, UserID: 999, WarningCount: 2}
 	ch := make(chan AutoAction, 1) // buffer pequeno para forzar overflow
 	svc, _ := newSvc(settingsRepo, warnRepo, map[int64]*groups.Group{
 		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
@@ -700,7 +700,7 @@ func TestService_BannedWordsRule_FiresWhenListed(t *testing.T) {
 		t.Fatalf("HandleMessage: %v", err)
 	}
 
-	ws, _ := 	warnRepo.GetWarningState(context.Background(), testTenantID, -1001, 999)
+	ws, _ := warnRepo.GetWarningState(context.Background(), testTenantID, -1001, 999)
 	if ws == nil {
 		t.Fatal("warning_state no creada")
 	}
@@ -785,7 +785,7 @@ func (f *fakeWarningSender) SendWarning(_ context.Context, msg *telegram.Message
 func settingsForWarningTest(automute, autoban, muteMin int16, enabled bool) *Settings {
 	return &Settings{
 		TenantID: testTenantID,
-		GroupID: -1001, Enabled: true,
+		GroupID:  -1001, Enabled: true,
 		FloodEnabled:  true,
 		FloodMessages: 3, FloodSeconds: 10,
 		AutomuteWarnings:  automute,
@@ -804,7 +804,7 @@ func TestService_Warning_CountAutomuteMinusOne_TriggersPreMute(t *testing.T) {
 	settingsRepo := newFakeSettingsRepo()
 	settingsRepo.rows[[2]int64{testTenantID, -1001}] = settingsForWarningTest(3, 5, 10, true)
 	warnRepo := newFakeWarnRepo()
-	warnRepo.rows[[3]int64{testTenantID, -1001, 999}] 	= &WarningState{TenantID: testTenantID, GroupID: -1001, UserID: 999, WarningCount: 1}
+	warnRepo.rows[[3]int64{testTenantID, -1001, 999}] = &WarningState{TenantID: testTenantID, GroupID: -1001, UserID: 999, WarningCount: 1}
 	ch := make(chan AutoAction, 4)
 	sender := &fakeWarningSender{}
 	svc, _ := newSvcWithSender(settingsRepo, warnRepo, nil, map[int64]*groups.Group{
@@ -836,7 +836,7 @@ func TestService_Warning_CountAutobanMinusOne_TriggersPreBan(t *testing.T) {
 	settingsRepo := newFakeSettingsRepo()
 	settingsRepo.rows[[2]int64{testTenantID, -1001}] = settingsForWarningTest(3, 5, 10, true)
 	warnRepo := newFakeWarnRepo()
-	warnRepo.rows[[3]int64{testTenantID, -1001, 999}] 	= &WarningState{TenantID: testTenantID, GroupID: -1001, UserID: 999, WarningCount: 3}
+	warnRepo.rows[[3]int64{testTenantID, -1001, 999}] = &WarningState{TenantID: testTenantID, GroupID: -1001, UserID: 999, WarningCount: 3}
 	ch := make(chan AutoAction, 4)
 	sender := &fakeWarningSender{}
 	svc, _ := newSvcWithSender(settingsRepo, warnRepo, nil, map[int64]*groups.Group{
@@ -866,7 +866,7 @@ func TestService_Warning_CountZero_NoSend(t *testing.T) {
 	settingsRepo := newFakeSettingsRepo()
 	settingsRepo.rows[[2]int64{testTenantID, -1001}] = settingsForWarningTest(3, 5, 10, true)
 	warnRepo := newFakeWarnRepo()
-	warnRepo.rows[[3]int64{testTenantID, -1001, 999}] 	= &WarningState{TenantID: testTenantID, GroupID: -1001, UserID: 999, WarningCount: 0}
+	warnRepo.rows[[3]int64{testTenantID, -1001, 999}] = &WarningState{TenantID: testTenantID, GroupID: -1001, UserID: 999, WarningCount: 0}
 	ch := make(chan AutoAction, 4)
 	sender := &fakeWarningSender{}
 	svc, _ := newSvcWithSender(settingsRepo, warnRepo, nil, map[int64]*groups.Group{
@@ -891,7 +891,7 @@ func TestService_Warning_AtThreshold_NoSend(t *testing.T) {
 	settingsRepo := newFakeSettingsRepo()
 	settingsRepo.rows[[2]int64{testTenantID, -1001}] = settingsForWarningTest(3, 5, 10, true)
 	warnRepo := newFakeWarnRepo()
-	warnRepo.rows[[3]int64{testTenantID, -1001, 999}] 	= &WarningState{TenantID: testTenantID, GroupID: -1001, UserID: 999, WarningCount: 2}
+	warnRepo.rows[[3]int64{testTenantID, -1001, 999}] = &WarningState{TenantID: testTenantID, GroupID: -1001, UserID: 999, WarningCount: 2}
 	ch := make(chan AutoAction, 4)
 	sender := &fakeWarningSender{}
 	svc, _ := newSvcWithSender(settingsRepo, warnRepo, nil, map[int64]*groups.Group{
@@ -922,7 +922,7 @@ func TestService_Warning_Disabled_NoSend(t *testing.T) {
 	settingsRepo := newFakeSettingsRepo()
 	settingsRepo.rows[[2]int64{testTenantID, -1001}] = settingsForWarningTest(3, 5, 10, false) // toggle off
 	warnRepo := newFakeWarnRepo()
-	warnRepo.rows[[3]int64{testTenantID, -1001, 999}] 	= &WarningState{TenantID: testTenantID, GroupID: -1001, UserID: 999, WarningCount: 1}
+	warnRepo.rows[[3]int64{testTenantID, -1001, 999}] = &WarningState{TenantID: testTenantID, GroupID: -1001, UserID: 999, WarningCount: 1}
 	ch := make(chan AutoAction, 4)
 	sender := &fakeWarningSender{}
 	svc, _ := newSvcWithSender(settingsRepo, warnRepo, nil, map[int64]*groups.Group{
@@ -946,7 +946,7 @@ func TestService_Warning_BotNotAdmin_NoSend(t *testing.T) {
 	settingsRepo := newFakeSettingsRepo()
 	settingsRepo.rows[[2]int64{testTenantID, -1001}] = settingsForWarningTest(3, 5, 10, true)
 	warnRepo := newFakeWarnRepo()
-	warnRepo.rows[[3]int64{testTenantID, -1001, 999}] 	= &WarningState{TenantID: testTenantID, GroupID: -1001, UserID: 999, WarningCount: 1}
+	warnRepo.rows[[3]int64{testTenantID, -1001, 999}] = &WarningState{TenantID: testTenantID, GroupID: -1001, UserID: 999, WarningCount: 1}
 	ch := make(chan AutoAction, 4)
 	sender := &fakeWarningSender{}
 	svc, _ := newSvcWithSender(settingsRepo, warnRepo, nil, map[int64]*groups.Group{
@@ -971,7 +971,7 @@ func TestService_Warning_AutomuteEqualsAutoban_SinglePreBan(t *testing.T) {
 	settingsRepo := newFakeSettingsRepo()
 	settingsRepo.rows[[2]int64{testTenantID, -1001}] = settingsForWarningTest(3, 3, 10, true) // mismo threshold
 	warnRepo := newFakeWarnRepo()
-	warnRepo.rows[[3]int64{testTenantID, -1001, 999}] 	= &WarningState{TenantID: testTenantID, GroupID: -1001, UserID: 999, WarningCount: 1}
+	warnRepo.rows[[3]int64{testTenantID, -1001, 999}] = &WarningState{TenantID: testTenantID, GroupID: -1001, UserID: 999, WarningCount: 1}
 	ch := make(chan AutoAction, 4)
 	sender := &fakeWarningSender{}
 	svc, _ := newSvcWithSender(settingsRepo, warnRepo, nil, map[int64]*groups.Group{
@@ -1004,7 +1004,7 @@ func TestService_Warning_SenderError_PipelineContinues(t *testing.T) {
 	// (== automute-1 → warning fires, sender fails) y NO mutea
 	// (count=2 < automute=3). Eso es lo que queremos testear: el
 	// warning dispara, falla, y el pipeline NO aborta.
-	warnRepo.rows[[3]int64{testTenantID, -1001, 999}] 	= &WarningState{TenantID: testTenantID, GroupID: -1001, UserID: 999, WarningCount: 1}
+	warnRepo.rows[[3]int64{testTenantID, -1001, 999}] = &WarningState{TenantID: testTenantID, GroupID: -1001, UserID: 999, WarningCount: 1}
 	ch := make(chan AutoAction, 4)
 	sender := &fakeWarningSender{err: errors.New("telegram exploded")}
 	svc, _ := newSvcWithSender(settingsRepo, warnRepo, nil, map[int64]*groups.Group{

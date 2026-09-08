@@ -44,8 +44,13 @@ func apiTestDB(t *testing.T) *sql.DB {
 	if err := database.Migrate(context.Background(), db); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	if _, err := db.ExecContext(context.Background(), "TRUNCATE admins"); err != nil {
-		t.Fatalf("truncate admins: %v", err)
+	// Limpieza total del dominio auth+tenants: los tests de signup
+	// crean tenants con slugs fijos (shop1, shop3...) y la base api se
+	// comparte entre tests y corridas; sin truncar tenants, un re-run
+	// colisionaria con slugs de la corrida anterior (409 fantasma).
+	// CASCADE por admins.tenant_id → tenants.
+	if _, err := db.ExecContext(context.Background(), "TRUNCATE admins, tenants CASCADE"); err != nil {
+		t.Fatalf("truncate admins, tenants: %v", err)
 	}
 	return db
 }

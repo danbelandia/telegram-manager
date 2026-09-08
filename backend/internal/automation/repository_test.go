@@ -81,7 +81,7 @@ func TestRepository_GetSettings_NotFound(t *testing.T) {
 	repo := NewRepository(db)
 	tid := testTenant(t, db)
 
-	_, err := 	repo.GetSettings(context.Background(), tid,  -1001)
+	_, err := repo.GetSettings(context.Background(), tid, -1001)
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("GetSettings(in = %d) = %v, want ErrNotFound", -1001, err)
 	}
@@ -115,7 +115,7 @@ func TestRepository_UpsertSettings_RoundTrip(t *testing.T) {
 		t.Fatalf("UpsertSettings: %v", err)
 	}
 
-	got, err := 	repo.GetSettings(context.Background(), tid,  -1001)
+	got, err := repo.GetSettings(context.Background(), tid, -1001)
 	if err != nil {
 		t.Fatalf("GetSettings: %v", err)
 	}
@@ -142,19 +142,19 @@ func TestRepository_UpsertSettings_Idempotent(t *testing.T) {
 	insertGroup(t, db, tid, -1001)
 
 	if err := repo.UpsertSettings(context.Background(), &Settings{
-		GroupID: -1001, Enabled: false, FloodEnabled: false, FloodMessages: 5, FloodSeconds: 10,
+		TenantID: tid, GroupID: -1001, Enabled: false, FloodEnabled: false, FloodMessages: 5, FloodSeconds: 10,
 		WarningLimit: 3, AutomuteWarnings: 3, AutomuteMinutes: 10, AutobanWarnings: 5, WarningExpireDays: 30,
 	}); err != nil {
 		t.Fatalf("first upsert: %v", err)
 	}
 	if err := repo.UpsertSettings(context.Background(), &Settings{
-		GroupID: -1001, Enabled: true, FloodEnabled: true, FloodMessages: 8, FloodSeconds: 20,
+		TenantID: tid, GroupID: -1001, Enabled: true, FloodEnabled: true, FloodMessages: 8, FloodSeconds: 20,
 		WarningLimit: 4, AutomuteWarnings: 4, AutomuteMinutes: 20, AutobanWarnings: 7, WarningExpireDays: 60,
 	}); err != nil {
 		t.Fatalf("second upsert: %v", err)
 	}
 
-	got, err := 	repo.GetSettings(context.Background(), tid,  -1001)
+	got, err := repo.GetSettings(context.Background(), tid, -1001)
 	if err != nil {
 		t.Fatalf("GetSettings: %v", err)
 	}
@@ -215,16 +215,16 @@ func TestRepository_WarningState_Lifecycle(t *testing.T) {
 	ctx := context.Background()
 
 	// Primer contacto: no existe fila.
-	_, err := 	repo.GetWarningState(ctx, tid,  -1001, 999)
+	_, err := repo.GetWarningState(ctx, tid, -1001, 999)
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("GetWarningState inicial = %v, want ErrNotFound", err)
 	}
 
 	// Create-if-missing: crea fila con counter=0.
-	if err := 	repo.CreateWarningStateIfMissing(ctx, tid,  -1001, 999); err != nil {
+	if err := repo.CreateWarningStateIfMissing(ctx, tid, -1001, 999); err != nil {
 		t.Fatalf("CreateWarningStateIfMissing: %v", err)
 	}
-	ws, err := 	repo.GetWarningState(ctx, tid,  -1001, 999)
+	ws, err := repo.GetWarningState(ctx, tid, -1001, 999)
 	if err != nil {
 		t.Fatalf("GetWarningState post-create: %v", err)
 	}
@@ -241,7 +241,7 @@ func TestRepository_WarningState_Lifecycle(t *testing.T) {
 		t.Fatalf("UpsertWarningState: %v", err)
 	}
 
-	got, err := 	repo.GetWarningState(ctx, tid,  -1001, 999)
+	got, err := repo.GetWarningState(ctx, tid, -1001, 999)
 	if err != nil {
 		t.Fatalf("GetWarningState post-upsert: %v", err)
 	}
@@ -261,17 +261,17 @@ func TestRepository_ListWarningStates_FilterByGroup(t *testing.T) {
 	tid := testTenant(t, db)
 	ctx := context.Background()
 
-	if err := 	repo.CreateWarningStateIfMissing(ctx, tid,  -1001, 1); err != nil {
+	if err := repo.CreateWarningStateIfMissing(ctx, tid, -1001, 1); err != nil {
 		t.Fatalf("create g1 u1: %v", err)
 	}
-	if err := 	repo.CreateWarningStateIfMissing(ctx, tid,  -1001, 2); err != nil {
+	if err := repo.CreateWarningStateIfMissing(ctx, tid, -1001, 2); err != nil {
 		t.Fatalf("create g1 u2: %v", err)
 	}
-	if err := 	repo.CreateWarningStateIfMissing(ctx, tid,  -1002, 3); err != nil {
+	if err := repo.CreateWarningStateIfMissing(ctx, tid, -1002, 3); err != nil {
 		t.Fatalf("create g2 u3: %v", err)
 	}
 
-	g1, err := 	repo.ListWarningStates(ctx, tid,  -1001)
+	g1, err := repo.ListWarningStates(ctx, tid, -1001)
 	if err != nil {
 		t.Fatalf("ListWarningStates(g1): %v", err)
 	}
@@ -284,7 +284,7 @@ func TestRepository_ListWarningStates_FilterByGroup(t *testing.T) {
 		}
 	}
 
-	g2, err := 	repo.ListWarningStates(ctx, tid,  -1002)
+	g2, err := repo.ListWarningStates(ctx, tid, -1002)
 	if err != nil {
 		t.Fatalf("ListWarningStates(g2): %v", err)
 	}
@@ -305,10 +305,10 @@ func TestRepository_ResetExpiredWarnings_OnlyAffectsExpired(t *testing.T) {
 	future := time.Now().Add(1 * time.Hour)
 
 	// Fila 1: expirada.
-	if err := 	repo.CreateWarningStateIfMissing(ctx, tid,  -1001, 1); err != nil {
+	if err := repo.CreateWarningStateIfMissing(ctx, tid, -1001, 1); err != nil {
 		t.Fatalf("create u1: %v", err)
 	}
-	ws1, _ := 	repo.GetWarningState(ctx, tid,  -1001, 1)
+	ws1, _ := repo.GetWarningState(ctx, tid, -1001, 1)
 	ws1.WarningCount = 5
 	ws1.ExpiresAt = &past
 	if err := repo.UpsertWarningState(ctx, ws1); err != nil {
@@ -316,10 +316,10 @@ func TestRepository_ResetExpiredWarnings_OnlyAffectsExpired(t *testing.T) {
 	}
 
 	// Fila 2: vigente.
-	if err := 	repo.CreateWarningStateIfMissing(ctx, tid,  -1001, 2); err != nil {
+	if err := repo.CreateWarningStateIfMissing(ctx, tid, -1001, 2); err != nil {
 		t.Fatalf("create u2: %v", err)
 	}
-	ws2, _ := 	repo.GetWarningState(ctx, tid,  -1001, 2)
+	ws2, _ := repo.GetWarningState(ctx, tid, -1001, 2)
 	ws2.WarningCount = 5
 	ws2.ExpiresAt = &future
 	if err := repo.UpsertWarningState(ctx, ws2); err != nil {
@@ -328,7 +328,7 @@ func TestRepository_ResetExpiredWarnings_OnlyAffectsExpired(t *testing.T) {
 
 	// Reset: solo la fila 1 deberia ser afectada.
 	now := time.Now()
-	n, err := 	repo.ResetExpiredWarnings(ctx, tid,  -1001, now)
+	n, err := repo.ResetExpiredWarnings(ctx, tid, -1001, now)
 	if err != nil {
 		t.Fatalf("ResetExpiredWarnings: %v", err)
 	}
@@ -336,14 +336,14 @@ func TestRepository_ResetExpiredWarnings_OnlyAffectsExpired(t *testing.T) {
 		t.Errorf("rows affected = %d, want 1", n)
 	}
 
-	got1, _ := 	repo.GetWarningState(ctx, tid,  -1001, 1)
+	got1, _ := repo.GetWarningState(ctx, tid, -1001, 1)
 	if got1.WarningCount != 0 {
 		t.Errorf("u1 counter post-reset = %d, want 0", got1.WarningCount)
 	}
 	if got1.ExpiresAt != nil {
 		t.Errorf("u1 expires_at post-reset = %v, want nil", got1.ExpiresAt)
 	}
-	got2, _ := 	repo.GetWarningState(ctx, tid,  -1001, 2)
+	got2, _ := repo.GetWarningState(ctx, tid, -1001, 2)
 	if got2.WarningCount != 5 {
 		t.Errorf("u2 counter post-reset = %d, want 5 (vigente)", got2.WarningCount)
 	}
@@ -357,13 +357,13 @@ func TestRepository_CreateWarningStateIfMissing_Idempotent(t *testing.T) {
 	tid := testTenant(t, db)
 	ctx := context.Background()
 
-	if err := 	repo.CreateWarningStateIfMissing(ctx, tid,  -1001, 999); err != nil {
+	if err := repo.CreateWarningStateIfMissing(ctx, tid, -1001, 999); err != nil {
 		t.Fatalf("first: %v", err)
 	}
-	if err := 	repo.CreateWarningStateIfMissing(ctx, tid,  -1001, 999); err != nil {
+	if err := repo.CreateWarningStateIfMissing(ctx, tid, -1001, 999); err != nil {
 		t.Fatalf("second: %v", err)
 	}
-	ws, err := 	repo.GetWarningState(ctx, tid,  -1001, 999)
+	ws, err := repo.GetWarningState(ctx, tid, -1001, 999)
 	if err != nil {
 		t.Fatalf("GetWarningState: %v", err)
 	}
@@ -385,14 +385,14 @@ func TestRepository_WarningState_NoCascadeWithoutFK(t *testing.T) {
 	// indice idx_user_warning_state_group). Por diseño, la limpieza
 	// de filas huerfanas queda para un job de slice 2+ (o el Delete
 	// del grupo en el modulo groups).
-	if err := 	repo.CreateWarningStateIfMissing(ctx, tid,  -1001, 999); err != nil {
+	if err := repo.CreateWarningStateIfMissing(ctx, tid, -1001, 999); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	if _, err := db.ExecContext(ctx, "DELETE FROM groups WHERE telegram_id = $1", -1001); err != nil {
 		t.Fatalf("delete group: %v", err)
 	}
 	// La warning_state sigue existiendo (sin FK).
-	_, err := 	repo.GetWarningState(ctx, tid,  -1001, 999)
+	_, err := repo.GetWarningState(ctx, tid, -1001, 999)
 	if err != nil {
 		t.Errorf("warning_state borrada junto al grupo (inesperado sin FK): %v", err)
 	}
@@ -408,7 +408,7 @@ func TestRepository_GroupCascadeOnSettingsDelete(t *testing.T) {
 	ctx := context.Background()
 
 	if err := repo.UpsertSettings(ctx, &Settings{
-		GroupID: -1001, FloodMessages: 5, FloodSeconds: 10, WarningLimit: 3,
+		TenantID: tid, GroupID: -1001, FloodMessages: 5, FloodSeconds: 10, WarningLimit: 3,
 		AutomuteWarnings: 3, AutomuteMinutes: 10, AutobanWarnings: 5,
 		WarningExpireDays: 30,
 	}); err != nil {
@@ -418,7 +418,7 @@ func TestRepository_GroupCascadeOnSettingsDelete(t *testing.T) {
 	if _, err := db.ExecContext(ctx, "DELETE FROM groups WHERE telegram_id = $1", -1001); err != nil {
 		t.Fatalf("delete group: %v", err)
 	}
-	_, err := 	repo.GetSettings(ctx, tid,  -1001)
+	_, err := repo.GetSettings(ctx, tid, -1001)
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("settings no borradas con el grupo: err = %v", err)
 	}
@@ -450,29 +450,29 @@ func TestRepository_ListActiveWarningStatesByGroup_FiltersCountZero(t *testing.T
 	groupID := int64(-100401)
 
 	// Fila 1: count=3 (activa).
-	if err := 	repo.CreateWarningStateIfMissing(ctx, tid,  groupID, 1); err != nil {
+	if err := repo.CreateWarningStateIfMissing(ctx, tid, groupID, 1); err != nil {
 		t.Fatalf("create u1: %v", err)
 	}
-	ws1, _ := 	repo.GetWarningState(ctx, tid,  groupID, 1)
+	ws1, _ := repo.GetWarningState(ctx, tid, groupID, 1)
 	ws1.WarningCount = 3
 	if err := repo.UpsertWarningState(ctx, ws1); err != nil {
 		t.Fatalf("upsert u1: %v", err)
 	}
 	// Fila 2: count=0 (NO debe aparecer).
-	if err := 	repo.CreateWarningStateIfMissing(ctx, tid,  groupID, 2); err != nil {
+	if err := repo.CreateWarningStateIfMissing(ctx, tid, groupID, 2); err != nil {
 		t.Fatalf("create u2: %v", err)
 	}
 	// Fila 3: count=1 (activa).
-	if err := 	repo.CreateWarningStateIfMissing(ctx, tid,  groupID, 3); err != nil {
+	if err := repo.CreateWarningStateIfMissing(ctx, tid, groupID, 3); err != nil {
 		t.Fatalf("create u3: %v", err)
 	}
-	ws3, _ := 	repo.GetWarningState(ctx, tid,  groupID, 3)
+	ws3, _ := repo.GetWarningState(ctx, tid, groupID, 3)
 	ws3.WarningCount = 1
 	if err := repo.UpsertWarningState(ctx, ws3); err != nil {
 		t.Fatalf("upsert u3: %v", err)
 	}
 
-	rows, truncated, err := 	repo.ListActiveWarningStatesByGroup(ctx, tid,  groupID, 100)
+	rows, truncated, err := repo.ListActiveWarningStatesByGroup(ctx, tid, groupID, 100)
 	if err != nil {
 		t.Fatalf("ListActiveWarningStatesByGroup: %v", err)
 	}
@@ -499,16 +499,16 @@ func TestRepository_ListActiveWarningStatesByGroup_LeftJoinPreservaFilaSinUsers(
 	ctx := context.Background()
 	groupID := int64(-100402)
 
-	if err := 	repo.CreateWarningStateIfMissing(ctx, tid,  groupID, 99); err != nil {
+	if err := repo.CreateWarningStateIfMissing(ctx, tid, groupID, 99); err != nil {
 		t.Fatalf("create ws: %v", err)
 	}
-	ws, _ := 	repo.GetWarningState(ctx, tid,  groupID, 99)
+	ws, _ := repo.GetWarningState(ctx, tid, groupID, 99)
 	ws.WarningCount = 2
 	if err := repo.UpsertWarningState(ctx, ws); err != nil {
 		t.Fatalf("upsert ws: %v", err)
 	}
 
-	rows, _, err := 	repo.ListActiveWarningStatesByGroup(ctx, tid,  groupID, 100)
+	rows, _, err := repo.ListActiveWarningStatesByGroup(ctx, tid, groupID, 100)
 	if err != nil {
 		t.Fatalf("ListActiveWarningStatesByGroup: %v", err)
 	}
@@ -539,16 +539,16 @@ func TestRepository_ListActiveWarningStatesByGroup_LeftJoinDisplayName(t *testin
 
 	insertUser(t, db, 50, "Ana", stringPtr("ana_p"))
 
-	if err := 	repo.CreateWarningStateIfMissing(ctx, tid,  groupID, 50); err != nil {
+	if err := repo.CreateWarningStateIfMissing(ctx, tid, groupID, 50); err != nil {
 		t.Fatalf("create ws: %v", err)
 	}
-	ws, _ := 	repo.GetWarningState(ctx, tid,  groupID, 50)
+	ws, _ := repo.GetWarningState(ctx, tid, groupID, 50)
 	ws.WarningCount = 1
 	if err := repo.UpsertWarningState(ctx, ws); err != nil {
 		t.Fatalf("upsert ws: %v", err)
 	}
 
-	rows, _, err := 	repo.ListActiveWarningStatesByGroup(ctx, tid,  groupID, 100)
+	rows, _, err := repo.ListActiveWarningStatesByGroup(ctx, tid, groupID, 100)
 	if err != nil {
 		t.Fatalf("ListActiveWarningStatesByGroup: %v", err)
 	}
@@ -577,10 +577,10 @@ func TestRepository_ListActiveWarningStatesByGroup_OrdenPorCountDesc(t *testing.
 
 	now := time.Now().UTC()
 	// count=1, last=t2
-	if err := 	repo.CreateWarningStateIfMissing(ctx, tid,  groupID, 1); err != nil {
+	if err := repo.CreateWarningStateIfMissing(ctx, tid, groupID, 1); err != nil {
 		t.Fatalf("create u1: %v", err)
 	}
-	ws1, _ := 	repo.GetWarningState(ctx, tid,  groupID, 1)
+	ws1, _ := repo.GetWarningState(ctx, tid, groupID, 1)
 	ws1.WarningCount = 1
 	t2 := now.Add(-2 * time.Hour)
 	ws1.LastWarningAt = &t2
@@ -588,19 +588,19 @@ func TestRepository_ListActiveWarningStatesByGroup_OrdenPorCountDesc(t *testing.
 		t.Fatalf("upsert u1: %v", err)
 	}
 	// count=2, last=NULL
-	if err := 	repo.CreateWarningStateIfMissing(ctx, tid,  groupID, 2); err != nil {
+	if err := repo.CreateWarningStateIfMissing(ctx, tid, groupID, 2); err != nil {
 		t.Fatalf("create u2: %v", err)
 	}
-	ws2, _ := 	repo.GetWarningState(ctx, tid,  groupID, 2)
+	ws2, _ := repo.GetWarningState(ctx, tid, groupID, 2)
 	ws2.WarningCount = 2
 	if err := repo.UpsertWarningState(ctx, ws2); err != nil {
 		t.Fatalf("upsert u2: %v", err)
 	}
 	// count=2, last=t1 (mas reciente)
-	if err := 	repo.CreateWarningStateIfMissing(ctx, tid,  groupID, 3); err != nil {
+	if err := repo.CreateWarningStateIfMissing(ctx, tid, groupID, 3); err != nil {
 		t.Fatalf("create u3: %v", err)
 	}
-	ws3, _ := 	repo.GetWarningState(ctx, tid,  groupID, 3)
+	ws3, _ := repo.GetWarningState(ctx, tid, groupID, 3)
 	ws3.WarningCount = 2
 	t1 := now.Add(-1 * time.Hour)
 	ws3.LastWarningAt = &t1
@@ -608,7 +608,7 @@ func TestRepository_ListActiveWarningStatesByGroup_OrdenPorCountDesc(t *testing.
 		t.Fatalf("upsert u3: %v", err)
 	}
 
-	rows, _, err := 	repo.ListActiveWarningStatesByGroup(ctx, tid,  groupID, 100)
+	rows, _, err := repo.ListActiveWarningStatesByGroup(ctx, tid, groupID, 100)
 	if err != nil {
 		t.Fatalf("ListActiveWarningStatesByGroup: %v", err)
 	}
@@ -634,10 +634,10 @@ func TestRepository_ResetWarningState_RetornaOldCountYSetea0(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(-100405)
 
-	if err := 	repo.CreateWarningStateIfMissing(ctx, tid,  groupID, 7); err != nil {
+	if err := repo.CreateWarningStateIfMissing(ctx, tid, groupID, 7); err != nil {
 		t.Fatalf("create ws: %v", err)
 	}
-	ws, _ := 	repo.GetWarningState(ctx, tid,  groupID, 7)
+	ws, _ := repo.GetWarningState(ctx, tid, groupID, 7)
 	now := time.Now().UTC()
 	ws.WarningCount = 5
 	ws.LastWarningAt = &now
@@ -647,7 +647,7 @@ func TestRepository_ResetWarningState_RetornaOldCountYSetea0(t *testing.T) {
 		t.Fatalf("upsert ws: %v", err)
 	}
 
-	previous, err := 	repo.ResetWarningState(ctx, tid,  groupID, 7)
+	previous, err := repo.ResetWarningState(ctx, tid, groupID, 7)
 	if err != nil {
 		t.Fatalf("ResetWarningState: %v", err)
 	}
@@ -655,7 +655,7 @@ func TestRepository_ResetWarningState_RetornaOldCountYSetea0(t *testing.T) {
 		t.Errorf("previous count = %d, want 5", previous)
 	}
 
-	got, err := 	repo.GetWarningState(ctx, tid,  groupID, 7)
+	got, err := repo.GetWarningState(ctx, tid, groupID, 7)
 	if err != nil {
 		t.Fatalf("GetWarningState post-reset: %v", err)
 	}
@@ -676,7 +676,7 @@ func TestRepository_ResetWarningState_NoFilaRetorna0(t *testing.T) {
 	tid := testTenant(t, db)
 	ctx := context.Background()
 
-	previous, err := 	repo.ResetWarningState(ctx, tid,  -100406, 999)
+	previous, err := repo.ResetWarningState(ctx, tid, -100406, 999)
 	if err != nil {
 		t.Fatalf("ResetWarningState (sin fila): %v", err)
 	}
@@ -697,7 +697,7 @@ func TestRepository_ListBannedWords_Empty(t *testing.T) {
 	ctx := context.Background()
 	insertGroup(t, db, tid, -1001)
 
-	list, err := 	repo.ListBannedWords(ctx, tid,  -1001)
+	list, err := repo.ListBannedWords(ctx, tid, -1001)
 	if err != nil {
 		t.Fatalf("ListBannedWords: %v", err)
 	}
@@ -719,12 +719,12 @@ func TestRepository_AddBannedWord_RoundTrip(t *testing.T) {
 	insertGroup(t, db, tid, -1001)
 
 	for _, w := range []string{"spam", "viagra", "free-money"} {
-		if err := 	repo.AddBannedWord(ctx, tid,  -1001, w); err != nil {
+		if err := repo.AddBannedWord(ctx, tid, -1001, w); err != nil {
 			t.Fatalf("AddBannedWord(%q): %v", w, err)
 		}
 	}
 
-	list, err := 	repo.ListBannedWords(ctx, tid,  -1001)
+	list, err := repo.ListBannedWords(ctx, tid, -1001)
 	if err != nil {
 		t.Fatalf("ListBannedWords: %v", err)
 	}
@@ -749,10 +749,10 @@ func TestRepository_AddBannedWord_Idempotent(t *testing.T) {
 	ctx := context.Background()
 	insertGroup(t, db, tid, -1001)
 
-	if err := 	repo.AddBannedWord(ctx, tid,  -1001, "spam"); err != nil {
+	if err := repo.AddBannedWord(ctx, tid, -1001, "spam"); err != nil {
 		t.Fatalf("first AddBannedWord: %v", err)
 	}
-	if err := 	repo.AddBannedWord(ctx, tid,  -1001, "spam"); err != nil {
+	if err := repo.AddBannedWord(ctx, tid, -1001, "spam"); err != nil {
 		t.Fatalf("second AddBannedWord: %v", err)
 	}
 
@@ -776,14 +776,14 @@ func TestRepository_RemoveBannedWord(t *testing.T) {
 	ctx := context.Background()
 	insertGroup(t, db, tid, -1001)
 
-	if err := 	repo.AddBannedWord(ctx, tid,  -1001, "spam"); err != nil {
+	if err := repo.AddBannedWord(ctx, tid, -1001, "spam"); err != nil {
 		t.Fatalf("add: %v", err)
 	}
-	if err := 	repo.RemoveBannedWord(ctx, tid,  -1001, "spam"); err != nil {
+	if err := repo.RemoveBannedWord(ctx, tid, -1001, "spam"); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
 
-	list, err := 	repo.ListBannedWords(ctx, tid,  -1001)
+	list, err := repo.ListBannedWords(ctx, tid, -1001)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -801,7 +801,7 @@ func TestRepository_RemoveBannedWord_NotFoundIsOK(t *testing.T) {
 	ctx := context.Background()
 	insertGroup(t, db, tid, -1001)
 
-	if err := 	repo.RemoveBannedWord(ctx, tid,  -1001, "does-not-exist"); err != nil {
+	if err := repo.RemoveBannedWord(ctx, tid, -1001, "does-not-exist"); err != nil {
 		t.Errorf("RemoveBannedWord(in = \"does-not-exist\") = %v, want nil", err)
 	}
 }
@@ -815,7 +815,7 @@ func TestRepository_AddBannedWord_CascadeOnGroupDelete(t *testing.T) {
 	ctx := context.Background()
 	insertGroup(t, db, tid, -1001)
 
-	if err := 	repo.AddBannedWord(ctx, tid,  -1001, "spam"); err != nil {
+	if err := repo.AddBannedWord(ctx, tid, -1001, "spam"); err != nil {
 		t.Fatalf("add: %v", err)
 	}
 
@@ -823,7 +823,7 @@ func TestRepository_AddBannedWord_CascadeOnGroupDelete(t *testing.T) {
 		t.Fatalf("delete group: %v", err)
 	}
 
-	list, err := 	repo.ListBannedWords(ctx, tid,  -1001)
+	list, err := repo.ListBannedWords(ctx, tid, -1001)
 	if err != nil {
 		t.Fatalf("list post-delete: %v", err)
 	}
@@ -841,7 +841,7 @@ func TestRepository_AddBannedWord_RejectsEmpty(t *testing.T) {
 	ctx := context.Background()
 	insertGroup(t, db, tid, -1001)
 
-	if err := 	repo.AddBannedWord(ctx, tid,  -1001, ""); err == nil {
+	if err := repo.AddBannedWord(ctx, tid, -1001, ""); err == nil {
 		t.Error("AddBannedWord(empty) = nil, want CHECK violation")
 	}
 }
@@ -856,12 +856,12 @@ func TestRepository_LinkAllowlist_RoundTrip(t *testing.T) {
 	insertGroup(t, db, tid, -1001)
 
 	for _, d := range []string{"example.com", "github.com", "MiDominio.org"} {
-		if err := 	repo.AddLinkAllowlist(ctx, tid,  -1001, d); err != nil {
+		if err := repo.AddLinkAllowlist(ctx, tid, -1001, d); err != nil {
 			t.Fatalf("AddLinkAllowlist(%q): %v", d, err)
 		}
 	}
 
-	list, err := 	repo.ListLinkAllowlist(ctx, tid,  -1001)
+	list, err := repo.ListLinkAllowlist(ctx, tid, -1001)
 	if err != nil {
 		t.Fatalf("ListLinkAllowlist: %v", err)
 	}
@@ -888,10 +888,10 @@ func TestRepository_AddLinkAllowlist_Idempotent(t *testing.T) {
 	ctx := context.Background()
 	insertGroup(t, db, tid, -1001)
 
-	if err := 	repo.AddLinkAllowlist(ctx, tid,  -1001, "example.com"); err != nil {
+	if err := repo.AddLinkAllowlist(ctx, tid, -1001, "example.com"); err != nil {
 		t.Fatalf("first: %v", err)
 	}
-	if err := 	repo.AddLinkAllowlist(ctx, tid,  -1001, "example.com"); err != nil {
+	if err := repo.AddLinkAllowlist(ctx, tid, -1001, "example.com"); err != nil {
 		t.Fatalf("second: %v", err)
 	}
 
@@ -915,14 +915,14 @@ func TestRepository_RemoveLinkAllowlist(t *testing.T) {
 	ctx := context.Background()
 	insertGroup(t, db, tid, -1001)
 
-	if err := 	repo.AddLinkAllowlist(ctx, tid,  -1001, "example.com"); err != nil {
+	if err := repo.AddLinkAllowlist(ctx, tid, -1001, "example.com"); err != nil {
 		t.Fatalf("add: %v", err)
 	}
-	if err := 	repo.RemoveLinkAllowlist(ctx, tid,  -1001, "example.com"); err != nil {
+	if err := repo.RemoveLinkAllowlist(ctx, tid, -1001, "example.com"); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
 
-	list, err := 	repo.ListLinkAllowlist(ctx, tid,  -1001)
+	list, err := repo.ListLinkAllowlist(ctx, tid, -1001)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -940,7 +940,7 @@ func TestRepository_AddLinkAllowlist_CascadeOnGroupDelete(t *testing.T) {
 	ctx := context.Background()
 	insertGroup(t, db, tid, -1001)
 
-	if err := 	repo.AddLinkAllowlist(ctx, tid,  -1001, "example.com"); err != nil {
+	if err := repo.AddLinkAllowlist(ctx, tid, -1001, "example.com"); err != nil {
 		t.Fatalf("add: %v", err)
 	}
 
@@ -948,7 +948,7 @@ func TestRepository_AddLinkAllowlist_CascadeOnGroupDelete(t *testing.T) {
 		t.Fatalf("delete group: %v", err)
 	}
 
-	list, err := 	repo.ListLinkAllowlist(ctx, tid,  -1001)
+	list, err := repo.ListLinkAllowlist(ctx, tid, -1001)
 	if err != nil {
 		t.Fatalf("list post-delete: %v", err)
 	}
@@ -966,7 +966,7 @@ func TestRepository_AddLinkAllowlist_RejectsEmpty(t *testing.T) {
 	ctx := context.Background()
 	insertGroup(t, db, tid, -1001)
 
-	if err := 	repo.AddLinkAllowlist(ctx, tid,  -1001, ""); err == nil {
+	if err := repo.AddLinkAllowlist(ctx, tid, -1001, ""); err == nil {
 		t.Error("AddLinkAllowlist(empty) = nil, want CHECK violation")
 	}
 }
@@ -993,7 +993,7 @@ func TestRepository_Settings_Defaults_WarnUserColumns(t *testing.T) {
 		t.Fatalf("UpsertSettings: %v", err)
 	}
 
-	got, err := 	repo.GetSettings(context.Background(), tid,  -1001)
+	got, err := repo.GetSettings(context.Background(), tid, -1001)
 	if err != nil {
 		t.Fatalf("GetSettings: %v", err)
 	}
@@ -1016,6 +1016,7 @@ func TestRepository_Settings_RoundTrip_WarnUserColumns(t *testing.T) {
 
 	custom := "⚠️ {nombre}, llevás {count} advertencias. Custom template."
 	s := &Settings{
+		TenantID:          tid,
 		GroupID:           -1001,
 		Enabled:           true,
 		FloodEnabled:      true,
@@ -1033,7 +1034,7 @@ func TestRepository_Settings_RoundTrip_WarnUserColumns(t *testing.T) {
 		t.Fatalf("UpsertSettings: %v", err)
 	}
 
-	got, err := 	repo.GetSettings(context.Background(), tid,  -1001)
+	got, err := repo.GetSettings(context.Background(), tid, -1001)
 	if err != nil {
 		t.Fatalf("GetSettings: %v", err)
 	}
@@ -1054,7 +1055,7 @@ func TestRepository_Settings_RoundTrip_WarnUserColumns(t *testing.T) {
 	if err := repo.UpsertSettings(context.Background(), s); err != nil {
 		t.Fatalf("second UpsertSettings: %v", err)
 	}
-	got2, _ := 	repo.GetSettings(context.Background(), tid,  -1001)
+	got2, _ := repo.GetSettings(context.Background(), tid, -1001)
 	if !got2.WarnUserEnabled {
 		t.Errorf("post-2nd-upsert WarnUserEnabled = false, want true")
 	}

@@ -63,6 +63,11 @@ func (s *Server) handleBan(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de moderacion no habilitado")
 		return
 	}
+	// Ownership del grupo (D9): ajeno → NOT_FOUND sin llamar a
+	// Telegram. El servicio re-verifica (defensa en profundidad).
+	if !checkGroupOwnership(s, w, r, tenantID, groupID) {
+		return
+	}
 
 	var req banRequest
 	if !decodeOptionalBody(r, w, &req) {
@@ -102,6 +107,11 @@ func (s *Server) handleUnban(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de moderacion no habilitado")
 		return
 	}
+	// Ownership del grupo (D9): ajeno → NOT_FOUND sin llamar a
+	// Telegram. El servicio re-verifica (defensa en profundidad).
+	if !checkGroupOwnership(s, w, r, tenantID, groupID) {
+		return
+	}
 
 	err := mod.Unban(r.Context(), actorID, groupID, userID)
 	if !respondModerationError(w, err) {
@@ -130,6 +140,11 @@ func (s *Server) handleMute(w http.ResponseWriter, r *http.Request) {
 	mod, ok := s.resolveModeration(tenantID)
 	if !ok {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de moderacion no habilitado")
+		return
+	}
+	// Ownership del grupo (D9): ajeno → NOT_FOUND sin llamar a
+	// Telegram. El servicio re-verifica (defensa en profundidad).
+	if !checkGroupOwnership(s, w, r, tenantID, groupID) {
 		return
 	}
 
@@ -167,6 +182,11 @@ func (s *Server) handleUnmute(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de moderacion no habilitado")
 		return
 	}
+	// Ownership del grupo (D9): ajeno → NOT_FOUND sin llamar a
+	// Telegram. El servicio re-verifica (defensa en profundidad).
+	if !checkGroupOwnership(s, w, r, tenantID, groupID) {
+		return
+	}
 
 	err := mod.Unmute(r.Context(), actorID, groupID, userID)
 	if !respondModerationError(w, err) {
@@ -195,6 +215,11 @@ func (s *Server) handleDeleteMessage(w http.ResponseWriter, r *http.Request) {
 	mod, ok := s.resolveModeration(tenantID)
 	if !ok {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de moderacion no habilitado")
+		return
+	}
+	// Ownership del grupo (D9): ajeno → NOT_FOUND sin llamar a
+	// Telegram. El servicio re-verifica (defensa en profundidad).
+	if !checkGroupOwnership(s, w, r, tenantID, groupID) {
 		return
 	}
 
@@ -227,6 +252,11 @@ func (s *Server) handlePinMessage(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de moderacion no habilitado")
 		return
 	}
+	// Ownership del grupo (D9): ajeno → NOT_FOUND sin llamar a
+	// Telegram. El servicio re-verifica (defensa en profundidad).
+	if !checkGroupOwnership(s, w, r, tenantID, groupID) {
+		return
+	}
 
 	err := mod.PinMessage(r.Context(), actorID, groupID, messageID)
 	if !respondModerationError(w, err) {
@@ -253,6 +283,11 @@ func (s *Server) handleLock(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de moderacion no habilitado")
 		return
 	}
+	// Ownership del grupo (D9): ajeno → NOT_FOUND sin llamar a
+	// Telegram. El servicio re-verifica (defensa en profundidad).
+	if !checkGroupOwnership(s, w, r, tenantID, groupID) {
+		return
+	}
 
 	err := mod.Lock(r.Context(), actorID, groupID)
 	if !respondModerationError(w, err) {
@@ -277,6 +312,11 @@ func (s *Server) handleUnlock(w http.ResponseWriter, r *http.Request) {
 	mod, ok := s.resolveModeration(tenantID)
 	if !ok {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de moderacion no habilitado")
+		return
+	}
+	// Ownership del grupo (D9): ajeno → NOT_FOUND sin llamar a
+	// Telegram. El servicio re-verifica (defensa en profundidad).
+	if !checkGroupOwnership(s, w, r, tenantID, groupID) {
 		return
 	}
 
