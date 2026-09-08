@@ -42,15 +42,45 @@ func setupRepoDB(t *testing.T) *sql.DB {
 	return db
 }
 
+// testTenant devuelve el id del tenant `default` (idempotente, slice
+// 0): todos los writes del paquete requieren tenant.
+func testTenant(t *testing.T, db *sql.DB) int64 {
+	t.Helper()
+	var id int64
+	const q = `
+INSERT INTO tenants (slug) VALUES ('default')
+ON CONFLICT (slug) DO UPDATE SET slug = EXCLUDED.slug
+RETURNING id`
+	if err := db.QueryRowContext(context.Background(), q).Scan(&id); err != nil {
+		t.Fatalf("ensure default tenant: %v", err)
+	}
+	return id
+}
+
+// testTenantSlug crea un tenant con el slug dado (aislamiento).
+func testTenantSlug(t *testing.T, db *sql.DB, slug string) int64 {
+	t.Helper()
+	var id int64
+	const q = `
+INSERT INTO tenants (slug) VALUES ($1)
+ON CONFLICT (slug) DO UPDATE SET slug = EXCLUDED.slug
+RETURNING id`
+	if err := db.QueryRowContext(context.Background(), q, slug).Scan(&id); err != nil {
+		t.Fatalf("ensure tenant %q: %v", slug, err)
+	}
+	return id
+}
+
 // insertPublication inserta una fila minima via SQL directo y devuelve
 // el id. Usamos INSERT directo (bypaseando Create) para evitar que los
 // tests dependan de actor_id NULL / MarshalButtons.
-func insertPublication(t *testing.T, db *sql.DB, telegramID int64, status Status, scheduledAt *time.Time) int64 {
+func insertPublication(t *testing.T, db *sql.DB, tenantID, telegramID int64, status Status, scheduledAt *time.Time) int64 {
 	t.Helper()
-	// Asegurar que el grupo existe (FK telegram_id -> groups.telegram_id).
+	// Asegurar que el grupo del tenant existe (FK compuesta
+	// (tenant_id, telegram_id) -> groups).
 	if _, err := db.ExecContext(context.Background(),
-		`INSERT INTO groups (telegram_id, title, type, bot_status) VALUES ($1, $2, 'supergroup', 'administrator') ON CONFLICT (telegram_id) DO NOTHING`,
-		telegramID, "test",
+		`INSERT INTO groups (tenant_id, telegram_id, title, type, bot_status) VALUES ($1, $2, $3, 'supergroup', 'administrator') ON CONFLICT (tenant_id, telegram_id) DO NOTHING`,
+		tenantID, telegramID, "test",
 	); err != nil {
 		t.Fatalf("insert group: %v", err)
 	}
@@ -60,8 +90,8 @@ func insertPublication(t *testing.T, db *sql.DB, telegramID int64, status Status
 	}
 	var id int64
 	if err := db.QueryRowContext(context.Background(),
-		`INSERT INTO publications (telegram_id, text, status, scheduled_at) VALUES ($1, $2, $3, $4) RETURNING id`,
-		telegramID, "x", string(status), scheduledArg,
+		`INSERT INTO publications (tenant_id, telegram_id, text, status, scheduled_at) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+		tenantID, telegramID, "x", string(status), scheduledArg,
 	).Scan(&id); err != nil {
 		t.Fatalf("insert row: %v", err)
 	}
@@ -73,14 +103,15 @@ func insertPublication(t *testing.T, db *sql.DB, telegramID int64, status Status
 func TestRepository_ClaimScheduledDue_BatchSize(t *testing.T) {
 	db := setupRepoDB(t)
 	repo := NewRepository(db)
+	tid := testTenant(t, db)
 
 	ctx := context.Background()
 	past := time.Now().Add(-1 * time.Minute)
 	for i := 0; i < 3; i++ {
-		insertPublication(t, db, -1000000000-int64(i), StatusScheduled, &past)
+		insertPublication(t, db, tid, -1000000000-int64(i), StatusScheduled, &past)
 	}
 
-	rows, err := repo.ClaimScheduledDue(ctx, 25)
+	rows, err := repo.ClaimScheduledDue(ctx, tid, 25)
 	if err != nil {
 		t.Fatalf("ClaimScheduledDue: %v", err)
 	}
@@ -99,11 +130,12 @@ func TestRepository_ClaimScheduledDue_BatchSize(t *testing.T) {
 // ve las filas que la primera tiene lockeadas.
 func TestRepository_ClaimScheduledDue_SkipsLockedByAnotherTxn(t *testing.T) {
 	db := setupRepoDB(t)
+	tid := testTenant(t, db)
 
 	ctx := context.Background()
 	past := time.Now().Add(-1 * time.Minute)
 	for i := 0; i < 2; i++ {
-		insertPublication(t, db, -1000000000-int64(i), StatusScheduled, &past)
+		insertPublication(t, db, tid, -1000000000-int64(i), StatusScheduled, &past)
 	}
 
 	// T1 abre BeginTx + SELECT FOR UPDATE SKIP LOCKED y NO commitea.
@@ -164,13 +196,14 @@ func TestRepository_ClaimScheduledDue_SkipsLockedByAnotherTxn(t *testing.T) {
 func TestRepository_List_LimitOffset_Pagina(t *testing.T) {
 	db := setupRepoDB(t)
 	repo := NewRepository(db)
+	tid := testTenant(t, db)
 
 	ctx := context.Background()
 	for i := 0; i < 75; i++ {
-		insertPublication(t, db, -1000000000-int64(i), StatusSent, nil)
+		insertPublication(t, db, tid, -1000000000-int64(i), StatusSent, nil)
 	}
 
-	list, err := repo.List(ctx, 10, 20)
+	list, err := repo.List(ctx, tid, 10, 20)
 	if err != nil {
 		t.Fatalf("List(10,20): %v", err)
 	}
@@ -191,15 +224,16 @@ func TestRepository_List_LimitOffset_Pagina(t *testing.T) {
 func TestRepository_Cancel_DeleteRow(t *testing.T) {
 	db := setupRepoDB(t)
 	repo := NewRepository(db)
+	tid := testTenant(t, db)
 
 	ctx := context.Background()
 	future := time.Now().Add(1 * time.Hour)
-	id := insertPublication(t, db, -1000000000, StatusScheduled, &future)
+	id := insertPublication(t, db, tid, -1000000000, StatusScheduled, &future)
 
-	if err := repo.Cancel(ctx, id); err != nil {
+	if err := repo.Cancel(ctx, tid, id); err != nil {
 		t.Fatalf("Cancel: %v", err)
 	}
-	if _, err := repo.GetByID(ctx, id); !errors.Is(err, ErrNotFound) {
+	if _, err := repo.GetByID(ctx, tid, id); !errors.Is(err, ErrNotFound) {
 		t.Errorf("post-cancel GetByID = %v, want ErrNotFound", err)
 	}
 }
@@ -208,15 +242,16 @@ func TestRepository_Cancel_DeleteRow(t *testing.T) {
 func TestRepository_Cancel_SentReturnsErrCancelNotAllowed(t *testing.T) {
 	db := setupRepoDB(t)
 	repo := NewRepository(db)
+	tid := testTenant(t, db)
 
 	ctx := context.Background()
-	id := insertPublication(t, db, -1000000000, StatusSent, nil)
+	id := insertPublication(t, db, tid, -1000000000, StatusSent, nil)
 
-	if err := repo.Cancel(ctx, id); !errors.Is(err, ErrCancelNotAllowed) {
+	if err := repo.Cancel(ctx, tid, id); !errors.Is(err, ErrCancelNotAllowed) {
 		t.Errorf("Cancel(sent) = %v, want ErrCancelNotAllowed", err)
 	}
 	// Fila intacta.
-	if _, err := repo.GetByID(ctx, id); err != nil {
+	if _, err := repo.GetByID(ctx, tid, id); err != nil {
 		t.Errorf("post-cancel GetByID = %v, want fila intacta", err)
 	}
 }
@@ -225,8 +260,9 @@ func TestRepository_Cancel_SentReturnsErrCancelNotAllowed(t *testing.T) {
 func TestRepository_Cancel_NotFoundReturnsErrNotFound(t *testing.T) {
 	db := setupRepoDB(t)
 	repo := NewRepository(db)
+	tid := testTenant(t, db)
 
-	err := repo.Cancel(context.Background(), 999999999)
+	err := repo.Cancel(context.Background(), tid, 999999999)
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("Cancel(inexistente) = %v, want ErrNotFound", err)
 	}
@@ -239,11 +275,12 @@ func TestRepository_Cancel_NotFoundReturnsErrNotFound(t *testing.T) {
 func TestRepository_Create_PersistsScheduledAt(t *testing.T) {
 	db := setupRepoDB(t)
 	repo := NewRepository(db)
+	tid := testTenant(t, db)
 
-	// Insertar un grupo para satisfacer la FK.
+	// Insertar un grupo del tenant para satisfacer la FK compuesta.
 	if _, err := db.ExecContext(context.Background(),
-		`INSERT INTO groups (telegram_id, title, type, bot_status) VALUES ($1, 'g', 'supergroup', 'administrator')`,
-		int64(-7770001),
+		`INSERT INTO groups (tenant_id, telegram_id, title, type, bot_status) VALUES ($1, $2, 'g', 'supergroup', 'administrator')`,
+		tid, int64(-7770001),
 	); err != nil {
 		t.Fatalf("insert group: %v", err)
 	}
@@ -260,6 +297,7 @@ func TestRepository_Create_PersistsScheduledAt(t *testing.T) {
 		{
 			name: "con scheduled_at se persiste",
 			input: &Publication{
+				TenantID:    tid,
 				TelegramID:  -7770001,
 				Text:        "hola scheduled",
 				Status:      StatusScheduled,
@@ -271,6 +309,7 @@ func TestRepository_Create_PersistsScheduledAt(t *testing.T) {
 		{
 			name: "sin scheduled_at queda NULL",
 			input: &Publication{
+				TenantID:   tid,
 				TelegramID: -7770001,
 				Text:       "hola inmediato",
 				Status:     StatusSent,
@@ -284,7 +323,7 @@ func TestRepository_Create_PersistsScheduledAt(t *testing.T) {
 			if err := repo.Create(ctx, tc.input); err != nil {
 				t.Fatalf("Create: %v", err)
 			}
-			got, err := repo.GetByID(ctx, tc.input.ID)
+			got, err := repo.GetByID(ctx, tid, tc.input.ID)
 			if err != nil {
 				t.Fatalf("GetByID: %v", err)
 			}
@@ -301,5 +340,45 @@ func TestRepository_Create_PersistsScheduledAt(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestRepository_CrossTenantIsolation(t *testing.T) {
+	db := setupRepoDB(t)
+	repo := NewRepository(db)
+	ctx := context.Background()
+	tidA := testTenant(t, db)
+	tidB := testTenantSlug(t, db, "pubs-other")
+
+	past := time.Now().Add(-1 * time.Minute)
+	idA := insertPublication(t, db, tidA, -1000000099, StatusScheduled, &past)
+	insertPublication(t, db, tidB, -1000000098, StatusScheduled, &past)
+
+	// Claim de A no toca filas de B.
+	rows, err := repo.ClaimScheduledDue(ctx, tidA, 25)
+	if err != nil {
+		t.Fatalf("claim A: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != idA {
+		t.Errorf("claim A = %+v, want solo fila %d", rows, idA)
+	}
+
+	// GetByID cruzado → NOT_FOUND; Cancel cruzado → NOT_FOUND.
+	if _, err := repo.GetByID(ctx, tidB, idA); !errors.Is(err, ErrNotFound) {
+		t.Errorf("cross get = %v, want ErrNotFound", err)
+	}
+	if err := repo.Cancel(ctx, tidB, idA); !errors.Is(err, ErrNotFound) {
+		t.Errorf("cross cancel = %v, want ErrNotFound", err)
+	}
+
+	// Listado de B no ve la fila de A.
+	listB, err := repo.List(ctx, tidB, 10, 0)
+	if err != nil {
+		t.Fatalf("list B: %v", err)
+	}
+	for _, p := range listB {
+		if p.ID == idA {
+			t.Error("list B fuga fila del tenant A")
+		}
 	}
 }

@@ -212,7 +212,7 @@ func TestRepository_CountByActionAndGroup_HappyPath(t *testing.T) {
 		insertLogAt(t, db, tid, groupID, ActionBanUser, now)
 	}
 
-	got, err := 	repo.CountByActionAndGroup(ctx, tid, groupID,
+	got, err := repo.CountByActionAndGroup(ctx, tid, groupID,
 		[]string{ActionRuleTriggered, ActionAutomuteUser, ActionAutobanUser},
 		now.Add(-1*time.Hour),
 	)
@@ -255,7 +255,7 @@ func TestRepository_CountByActionAndGroup_SinceFilter(t *testing.T) {
 	}
 
 	since := now.Add(-24 * time.Hour)
-	got, err := 	repo.CountByActionAndGroup(ctx, tid, groupID, []string{ActionRuleTriggered}, since)
+	got, err := repo.CountByActionAndGroup(ctx, tid, groupID, []string{ActionRuleTriggered}, since)
 	if err != nil {
 		t.Fatalf("CountByActionAndGroup: %v", err)
 	}
@@ -279,7 +279,7 @@ func TestRepository_CountByActionAndGroup_ActionsSubset(t *testing.T) {
 	}
 	insertLogAt(t, db, tid, groupID, ActionAutomuteUser, now)
 
-	got, err := 	repo.CountByActionAndGroup(ctx, tid, groupID, []string{ActionRuleTriggered}, now.Add(-1*time.Hour))
+	got, err := repo.CountByActionAndGroup(ctx, tid, groupID, []string{ActionRuleTriggered}, now.Add(-1*time.Hour))
 	if err != nil {
 		t.Fatalf("CountByActionAndGroup: %v", err)
 	}

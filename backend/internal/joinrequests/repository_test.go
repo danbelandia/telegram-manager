@@ -56,14 +56,14 @@ func TestRepository_UpsertPendingIdempotent(t *testing.T) {
 	// El indice parcial (tenant_id, group_id, user_id) WHERE
 	// status='pending' absorbe el segundo upsert: sigue habiendo una
 	// sola fila.
-	if err := 	repo.UpsertPending(ctx, tid, -1001, 42); err != nil {
+	if err := repo.UpsertPending(ctx, tid, -1001, 42); err != nil {
 		t.Fatalf("first upsert: %v", err)
 	}
-	if err := 	repo.UpsertPending(ctx, tid, -1001, 42); err != nil {
+	if err := repo.UpsertPending(ctx, tid, -1001, 42); err != nil {
 		t.Fatalf("second upsert: %v", err)
 	}
 
-	got, err := 	repo.ListByGroup(ctx, tid, -1001)
+	got, err := repo.ListByGroup(ctx, tid, -1001)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -83,10 +83,10 @@ func TestRepository_UpsertAfterResolveCreatesNewRow(t *testing.T) {
 	ctx := context.Background()
 	admin := int64(7)
 
-	if err := 	repo.UpsertPending(ctx, tid, -1001, 42); err != nil {
+	if err := repo.UpsertPending(ctx, tid, -1001, 42); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	first, err := 	repo.ListByGroup(ctx, tid, -1001)
+	first, err := repo.ListByGroup(ctx, tid, -1001)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -95,11 +95,11 @@ func TestRepository_UpsertAfterResolveCreatesNewRow(t *testing.T) {
 	}
 
 	// Nueva solicitud del mismo usuario: indice parcial no bloquea.
-	if err := 	repo.UpsertPending(ctx, tid, -1001, 42); err != nil {
+	if err := repo.UpsertPending(ctx, tid, -1001, 42); err != nil {
 		t.Fatalf("upsert tras resolver: %v", err)
 	}
 
-	got, err := 	repo.ListByGroup(ctx, tid, -1001)
+	got, err := repo.ListByGroup(ctx, tid, -1001)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -116,10 +116,10 @@ func TestRepository_Resolve(t *testing.T) {
 	ctx := context.Background()
 	admin := int64(3)
 
-	if err := 	repo.UpsertPending(ctx, tid, -1001, 42); err != nil {
+	if err := repo.UpsertPending(ctx, tid, -1001, 42); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	req, err := 	repo.ListByGroup(ctx, tid, -1001)
+	req, err := repo.ListByGroup(ctx, tid, -1001)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestRepository_Resolve(t *testing.T) {
 		t.Fatalf("resolve: %v", err)
 	}
 
-	got, err := 	repo.GetByID(ctx, tid, req[0].ID)
+	got, err := repo.GetByID(ctx, tid, req[0].ID)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -151,10 +151,10 @@ func TestRepository_ResolveNotPending(t *testing.T) {
 	ctx := context.Background()
 	admin := int64(3)
 
-	if err := 	repo.UpsertPending(ctx, tid, -1001, 42); err != nil {
+	if err := repo.UpsertPending(ctx, tid, -1001, 42); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	req, _ := 	repo.ListByGroup(ctx, tid, -1001)
+	req, _ := repo.ListByGroup(ctx, tid, -1001)
 	if err := repo.Resolve(ctx, req[0].ID, StatusApproved, &admin); err != nil {
 		t.Fatalf("first resolve: %v", err)
 	}
@@ -181,10 +181,10 @@ func TestRepository_ListFiltersByGroup(t *testing.T) {
 	tid := testTenant(t, db)
 
 	ctx := context.Background()
-	if err := 	repo.UpsertPending(ctx, tid, -1001, 42); err != nil {
+	if err := repo.UpsertPending(ctx, tid, -1001, 42); err != nil {
 		t.Fatalf("upsert group 1: %v", err)
 	}
-	if err := 	repo.UpsertPending(ctx, tid, -1002, 43); err != nil {
+	if err := repo.UpsertPending(ctx, tid, -1002, 43); err != nil {
 		t.Fatalf("upsert group 2: %v", err)
 	}
 

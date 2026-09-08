@@ -24,7 +24,7 @@ func TestScheduler_Tick_NoDue_NoSend(t *testing.T) {
 	})
 	sch := NewScheduler(store, &fakeGroupsPub{groups: map[int64]*groups.Group{
 		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
-	}}, tg, svc.logs, 100*time.Millisecond, nil)
+	}}, tg, svc.logs, 100*time.Millisecond, nil, testTenantID)
 
 	sch.tick(context.Background())
 
@@ -50,7 +50,7 @@ func TestScheduler_Tick_ClaimsAndPublishes(t *testing.T) {
 	actor := int64(7)
 	past := time.Now().Add(-time.Minute)
 	for _, gid := range []int64{-1001, -1002} {
-		p := &Publication{
+		p := &Publication{TenantID: testTenantID,
 			TelegramID:  gid,
 			Text:        "hola",
 			Status:      StatusScheduled,
@@ -62,7 +62,7 @@ func TestScheduler_Tick_ClaimsAndPublishes(t *testing.T) {
 		}
 	}
 
-	sch := NewScheduler(store, &fakeGroupsPub{groups: groupsMap}, tg, svc.logs, 100*time.Millisecond, nil)
+	sch := NewScheduler(store, &fakeGroupsPub{groups: groupsMap}, tg, svc.logs, 100*time.Millisecond, nil, testTenantID)
 	sch.tick(context.Background())
 
 	// Ambas filas deben haber sido enviadas.
@@ -92,7 +92,7 @@ func TestScheduler_Tick_TelegramError_StaysFailed(t *testing.T) {
 
 	actor := int64(7)
 	past := time.Now().Add(-time.Minute)
-	p := &Publication{
+	p := &Publication{TenantID: testTenantID,
 		TelegramID:  -1001,
 		Text:        "x",
 		Status:      StatusScheduled,
@@ -103,7 +103,7 @@ func TestScheduler_Tick_TelegramError_StaysFailed(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	sch := NewScheduler(store, &fakeGroupsPub{groups: groupsMap}, tg, svc.logs, 100*time.Millisecond, nil)
+	sch := NewScheduler(store, &fakeGroupsPub{groups: groupsMap}, tg, svc.logs, 100*time.Millisecond, nil, testTenantID)
 	sch.tick(context.Background())
 
 	got, ok := store.pubs[p.ID]
@@ -131,7 +131,7 @@ func TestScheduler_Tick_PermissionDenied_StaysFailed(t *testing.T) {
 
 	actor := int64(7)
 	past := time.Now().Add(-time.Minute)
-	p := &Publication{
+	p := &Publication{TenantID: testTenantID,
 		TelegramID:  -1001,
 		Text:        "x",
 		Status:      StatusScheduled,
@@ -142,7 +142,7 @@ func TestScheduler_Tick_PermissionDenied_StaysFailed(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	sch := NewScheduler(store, &fakeGroupsPub{groups: groupsMap}, tg, svc.logs, 100*time.Millisecond, nil)
+	sch := NewScheduler(store, &fakeGroupsPub{groups: groupsMap}, tg, svc.logs, 100*time.Millisecond, nil, testTenantID)
 	sch.tick(context.Background())
 
 	got, ok := store.pubs[p.ID]
@@ -168,7 +168,7 @@ func TestScheduler_Tick_PermissionDenied_StaysFailed(t *testing.T) {
 func TestScheduler_ContextCancel_ReturnsNil(t *testing.T) {
 	tg := &fakeTelegramPub{}
 	store := newFakePubStore()
-	sch := NewScheduler(store, &fakeGroupsPub{}, tg, &fakeLogsPub{}, 50*time.Millisecond, nil)
+	sch := NewScheduler(store, &fakeGroupsPub{}, tg, &fakeLogsPub{}, 50*time.Millisecond, nil, testTenantID)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)

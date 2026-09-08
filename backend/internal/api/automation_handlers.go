@@ -203,7 +203,7 @@ func (s *Server) handleGetAutomationSettings(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	settings, err := 	auto.GetSettings(r.Context(), groupID)
+	settings, err := auto.GetSettings(r.Context(), groupID)
 	if err != nil && !errors.Is(err, automation.ErrNotFound) {
 		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "no se pudieron obtener los settings")
 		return
@@ -259,7 +259,7 @@ func (s *Server) handlePutAutomationSettings(w http.ResponseWriter, r *http.Requ
 	// Mezclar con defaults/fila existente: arrancar de defaults si no
 	// hay fila, luego pisar con body. Si la fila existe, arrancar de
 	// ahi. Asi el body parcial funciona correctamente.
-	existing, err := 	auto.GetSettings(r.Context(), groupID)
+	existing, err := auto.GetSettings(r.Context(), groupID)
 	settings := automation.DefaultSettings(tenantID, groupID)
 	if err == nil {
 		settings = existing
@@ -318,7 +318,7 @@ func (s *Server) handlePutAutomationSettings(w http.ResponseWriter, r *http.Requ
 		settings.WarnUserTemplate = req.WarnUserTemplate
 	}
 
-	if err := 	auto.UpsertSettings(r.Context(), settings); err != nil {
+	if err := auto.UpsertSettings(r.Context(), settings); err != nil {
 		respondAutomationError(w, err)
 		return
 	}
@@ -327,10 +327,10 @@ func (s *Server) handlePutAutomationSettings(w http.ResponseWriter, r *http.Requ
 	if s.automationLogs != nil {
 		entry := &logs.Entry{
 			TenantID: tenantID,
-			ActorID: &actorID,
-			GroupID: groupID,
-			Action:  logs.ActionUpdateAutomationSettings,
-			Status:  logs.StatusSuccess,
+			ActorID:  &actorID,
+			GroupID:  groupID,
+			Action:   logs.ActionUpdateAutomationSettings,
+			Status:   logs.StatusSuccess,
 			Metadata: map[string]any{
 				"enabled":              settings.Enabled,
 				"anti_spam_enabled":    settings.AntiSpamEnabled,
@@ -343,7 +343,7 @@ func (s *Server) handlePutAutomationSettings(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Releer para devolver la fila actualizada con updated_at fresco.
-	updated, _ := 	auto.GetSettings(r.Context(), groupID)
+	updated, _ := auto.GetSettings(r.Context(), groupID)
 	if updated == nil {
 		updated = settings
 	}
@@ -365,7 +365,7 @@ func (s *Server) handleListBannedWords(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	list, err := 	auto.ListBannedWords(r.Context(), groupID)
+	list, err := auto.ListBannedWords(r.Context(), groupID)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "no se pudieron listar las palabras prohibidas")
 		return
@@ -404,24 +404,24 @@ func (s *Server) handleAddBannedWord(w http.ResponseWriter, r *http.Request) {
 			"palabra invalida (1-100 caracteres, letras/digitos/espacios/guion/underscore)")
 		return
 	}
-	if err := 	auto.AddBannedWord(r.Context(), groupID, word); err != nil {
+	if err := auto.AddBannedWord(r.Context(), groupID, word); err != nil {
 		respondAutomationError(w, err)
 		return
 	}
 	if s.automationLogs != nil {
 		entry := &logs.Entry{
 			TenantID: tenantID,
-			ActorID: &actorID,
-			GroupID: groupID,
-			Action:  logs.ActionAddBannedWord,
-			Status:  logs.StatusSuccess,
+			ActorID:  &actorID,
+			GroupID:  groupID,
+			Action:   logs.ActionAddBannedWord,
+			Status:   logs.StatusSuccess,
 			Metadata: map[string]any{
 				"word": word,
 			},
 		}
 		_ = s.automationLogs.Create(r.Context(), entry)
 	}
-	list, _ := 	auto.ListBannedWords(r.Context(), groupID)
+	list, _ := auto.ListBannedWords(r.Context(), groupID)
 	respond(w, http.StatusOK, map[string]any{"words": list})
 }
 
@@ -450,24 +450,24 @@ func (s *Server) handleRemoveBannedWord(w http.ResponseWriter, r *http.Request) 
 		respondError(w, http.StatusBadRequest, "VALIDATION_ERROR", "word vacio")
 		return
 	}
-	if err := 	auto.RemoveBannedWord(r.Context(), groupID, word); err != nil {
+	if err := auto.RemoveBannedWord(r.Context(), groupID, word); err != nil {
 		respondAutomationError(w, err)
 		return
 	}
 	if s.automationLogs != nil {
 		entry := &logs.Entry{
 			TenantID: tenantID,
-			ActorID: &actorID,
-			GroupID: groupID,
-			Action:  logs.ActionRemoveBannedWord,
-			Status:  logs.StatusSuccess,
+			ActorID:  &actorID,
+			GroupID:  groupID,
+			Action:   logs.ActionRemoveBannedWord,
+			Status:   logs.StatusSuccess,
 			Metadata: map[string]any{
 				"word": word,
 			},
 		}
 		_ = s.automationLogs.Create(r.Context(), entry)
 	}
-	list, _ := 	auto.ListBannedWords(r.Context(), groupID)
+	list, _ := auto.ListBannedWords(r.Context(), groupID)
 	respond(w, http.StatusOK, map[string]any{"words": list})
 }
 
@@ -486,7 +486,7 @@ func (s *Server) handleListLinkAllowlist(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	list, err := 	auto.ListLinkAllowlist(r.Context(), groupID)
+	list, err := auto.ListLinkAllowlist(r.Context(), groupID)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "no se pudieron listar los dominios permitidos")
 		return
@@ -524,24 +524,24 @@ func (s *Server) handleAddLinkAllowlist(w http.ResponseWriter, r *http.Request) 
 			"dominio invalido (1-253 caracteres, formato basico)")
 		return
 	}
-	if err := 	auto.AddLinkAllowlist(r.Context(), groupID, domain); err != nil {
+	if err := auto.AddLinkAllowlist(r.Context(), groupID, domain); err != nil {
 		respondAutomationError(w, err)
 		return
 	}
 	if s.automationLogs != nil {
 		entry := &logs.Entry{
 			TenantID: tenantID,
-			ActorID: &actorID,
-			GroupID: groupID,
-			Action:  logs.ActionAddLinkAllowlist,
-			Status:  logs.StatusSuccess,
+			ActorID:  &actorID,
+			GroupID:  groupID,
+			Action:   logs.ActionAddLinkAllowlist,
+			Status:   logs.StatusSuccess,
 			Metadata: map[string]any{
 				"domain": domain,
 			},
 		}
 		_ = s.automationLogs.Create(r.Context(), entry)
 	}
-	list, _ := 	auto.ListLinkAllowlist(r.Context(), groupID)
+	list, _ := auto.ListLinkAllowlist(r.Context(), groupID)
 	respond(w, http.StatusOK, map[string]any{"domains": list})
 }
 
@@ -570,24 +570,24 @@ func (s *Server) handleRemoveLinkAllowlist(w http.ResponseWriter, r *http.Reques
 		respondError(w, http.StatusBadRequest, "VALIDATION_ERROR", "domain vacio")
 		return
 	}
-	if err := 	auto.RemoveLinkAllowlist(r.Context(), groupID, domain); err != nil {
+	if err := auto.RemoveLinkAllowlist(r.Context(), groupID, domain); err != nil {
 		respondAutomationError(w, err)
 		return
 	}
 	if s.automationLogs != nil {
 		entry := &logs.Entry{
 			TenantID: tenantID,
-			ActorID: &actorID,
-			GroupID: groupID,
-			Action:  logs.ActionRemoveLinkAllowlist,
-			Status:  logs.StatusSuccess,
+			ActorID:  &actorID,
+			GroupID:  groupID,
+			Action:   logs.ActionRemoveLinkAllowlist,
+			Status:   logs.StatusSuccess,
 			Metadata: map[string]any{
 				"domain": domain,
 			},
 		}
 		_ = s.automationLogs.Create(r.Context(), entry)
 	}
-	list, _ := 	auto.ListLinkAllowlist(r.Context(), groupID)
+	list, _ := auto.ListLinkAllowlist(r.Context(), groupID)
 	respond(w, http.StatusOK, map[string]any{"domains": list})
 }
 
