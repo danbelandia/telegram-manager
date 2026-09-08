@@ -201,6 +201,107 @@ WHERE group_id = $1 AND expires_at IS NOT NULL AND expires_at <= $2`
 	return n, nil
 }
 
+// --- banned_words (slice 2) ---
+
+// ListBannedWords devuelve la lista ordenada alfabeticamente (lower-case,
+// normalizada por el INSERT). Se usa desde el Service.HandleMessage
+// para pre-cargar la lista por mensaje (1 query por mensaje cuando
+// BannedWordsEnabled esta on). El matcher de la regla lowercases el
+// texto para que coincida.
+func (r *Repository) ListBannedWords(ctx context.Context, groupID int64) ([]string, error) {
+	const q = `SELECT word FROM banned_words WHERE group_id = $1 ORDER BY word ASC`
+	rows, err := r.db.QueryContext(ctx, q, groupID)
+	if err != nil {
+		return nil, fmt.Errorf("automation: list banned words %d: %w", groupID, err)
+	}
+	defer rows.Close()
+	out := make([]string, 0)
+	for rows.Next() {
+		var w string
+		if err := rows.Scan(&w); err != nil {
+			return nil, fmt.Errorf("automation: scan banned word: %w", err)
+		}
+		out = append(out, w)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("automation: list banned words %d: %w", groupID, err)
+	}
+	return out, nil
+}
+
+// AddBannedWord inserta (idempotente via ON CONFLICT DO NOTHING). El
+// handler normaliza `word` con LOWER() antes de llamar; aca solo
+// persistimos. Devuelve nil si la fila ya existia (POST idempotente:
+// spec REQ-8).
+func (r *Repository) AddBannedWord(ctx context.Context, groupID int64, word string) error {
+	const q = `
+INSERT INTO banned_words (group_id, word) VALUES ($1, $2)
+ON CONFLICT (group_id, word) DO NOTHING`
+	if _, err := r.db.ExecContext(ctx, q, groupID, word); err != nil {
+		return fmt.Errorf("automation: add banned word: %w", err)
+	}
+	return nil
+}
+
+// RemoveBannedWord borra la fila. Devuelve nil si no existia (DELETE
+// idempotente: spec REQ-8). El handler normaliza `word` con LOWER().
+func (r *Repository) RemoveBannedWord(ctx context.Context, groupID int64, word string) error {
+	const q = `DELETE FROM banned_words WHERE group_id = $1 AND word = $2`
+	if _, err := r.db.ExecContext(ctx, q, groupID, word); err != nil {
+		return fmt.Errorf("automation: remove banned word: %w", err)
+	}
+	return nil
+}
+
+// --- link_allowlist (slice 2) ---
+
+// ListLinkAllowlist devuelve la lista ordenada alfabeticamente (case
+// preserved: el matcher lowercases en evaluacion, no en storage).
+func (r *Repository) ListLinkAllowlist(ctx context.Context, groupID int64) ([]string, error) {
+	const q = `SELECT domain FROM link_allowlist WHERE group_id = $1 ORDER BY domain ASC`
+	rows, err := r.db.QueryContext(ctx, q, groupID)
+	if err != nil {
+		return nil, fmt.Errorf("automation: list link allowlist %d: %w", groupID, err)
+	}
+	defer rows.Close()
+	out := make([]string, 0)
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err != nil {
+			return nil, fmt.Errorf("automation: scan link allowlist: %w", err)
+		}
+		out = append(out, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("automation: list link allowlist %d: %w", groupID, err)
+	}
+	return out, nil
+}
+
+// AddLinkAllowlist inserta (idempotente via ON CONFLICT DO NOTHING).
+// Case preserved: no normalizamos el dominio (los hosts son
+// case-insensitive en la practica pero el matcher lowercases en
+// evaluacion).
+func (r *Repository) AddLinkAllowlist(ctx context.Context, groupID int64, domain string) error {
+	const q = `
+INSERT INTO link_allowlist (group_id, domain) VALUES ($1, $2)
+ON CONFLICT (group_id, domain) DO NOTHING`
+	if _, err := r.db.ExecContext(ctx, q, groupID, domain); err != nil {
+		return fmt.Errorf("automation: add link allowlist: %w", err)
+	}
+	return nil
+}
+
+// RemoveLinkAllowlist borra la fila. Devuelve nil si no existia
+// (DELETE idempotente).
+func (r *Repository) RemoveLinkAllowlist(ctx context.Context, groupID int64, domain string) error {
+	const q = `DELETE FROM link_allowlist WHERE group_id = $1 AND domain = $2`
+	if _, err := r.db.ExecContext(ctx, q, groupID, domain); err != nil {
+		return fmt.Errorf("automation: remove link allowlist: %w", err)
+	}
+	return nil
+}
+
 // rowScanner es la vista minima de fila que el scanner necesita.
 type rowScanner interface {
 	Scan(dest ...any) error

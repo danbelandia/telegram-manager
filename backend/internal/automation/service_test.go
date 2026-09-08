@@ -84,6 +84,100 @@ func (f *fakeSettingsRepo) UpsertSettings(_ context.Context, s *Settings) error 
 	return nil
 }
 
+// fakeListsRepo implementa ListsRepo contando invocaciones para
+// verificar la logica de pre-load (optimizacion cuando ambos toggles
+// dependientes estan off).
+type fakeListsRepo struct {
+	mu               sync.Mutex
+	bannedWords      map[int64][]string
+	linkAllowlist    map[int64][]string
+	bannedCalls      int
+	allowlistCalls   int
+	errBannedWords   error
+	errLinkAllowlist error
+}
+
+func newFakeListsRepo() *fakeListsRepo {
+	return &fakeListsRepo{
+		bannedWords:   make(map[int64][]string),
+		linkAllowlist: make(map[int64][]string),
+	}
+}
+
+func (f *fakeListsRepo) ListBannedWords(_ context.Context, groupID int64) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.bannedCalls++
+	if f.errBannedWords != nil {
+		return nil, f.errBannedWords
+	}
+	cp := make([]string, len(f.bannedWords[groupID]))
+	copy(cp, f.bannedWords[groupID])
+	return cp, nil
+}
+
+func (f *fakeListsRepo) AddBannedWord(_ context.Context, groupID int64, word string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, w := range f.bannedWords[groupID] {
+		if w == word {
+			return nil // idempotent
+		}
+	}
+	f.bannedWords[groupID] = append(f.bannedWords[groupID], word)
+	return nil
+}
+
+func (f *fakeListsRepo) RemoveBannedWord(_ context.Context, groupID int64, word string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := f.bannedWords[groupID][:0]
+	for _, w := range f.bannedWords[groupID] {
+		if w != word {
+			out = append(out, w)
+		}
+	}
+	f.bannedWords[groupID] = out
+	return nil
+}
+
+func (f *fakeListsRepo) ListLinkAllowlist(_ context.Context, groupID int64) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.allowlistCalls++
+	if f.errLinkAllowlist != nil {
+		return nil, f.errLinkAllowlist
+	}
+	cp := make([]string, len(f.linkAllowlist[groupID]))
+	copy(cp, f.linkAllowlist[groupID])
+	return cp, nil
+}
+
+func (f *fakeListsRepo) AddLinkAllowlist(_ context.Context, groupID int64, domain string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, d := range f.linkAllowlist[groupID] {
+		if d == domain {
+			return nil // idempotent
+		}
+	}
+	f.linkAllowlist[groupID] = append(f.linkAllowlist[groupID], domain)
+	return nil
+}
+
+func (f *fakeListsRepo) RemoveLinkAllowlist(_ context.Context, groupID int64, domain string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := f.linkAllowlist[groupID][:0]
+	for _, d := range f.linkAllowlist[groupID] {
+		if d != domain {
+			out = append(out, d)
+		}
+	}
+	f.linkAllowlist[groupID] = out
+	return nil
+}
+
 // newSvc construye un Service para tests unit. AutoActionCh tiene
 // buffer 4 (suficiente para los tests; spec REQ-11 usa 100).
 func newSvc(
@@ -96,7 +190,28 @@ func newSvc(
 	gr := &fakeGroups{groups: groupsMap}
 	reg := NewRegistry()
 	reg.Register(NewFloodRule())
-	svc := NewService(settingsRepo, warnRepo, reg, lg, gr, ch, nil)
+	svc := NewService(settingsRepo, warnRepo, nil, reg, lg, gr, ch, nil)
+	return svc, lg
+}
+
+// newSvcWithLists construye un Service con fakeListsRepo inyectado y
+// las 4 reglas del registry (Flood + AntiSpam + AntiLink +
+// BannedWords). Para tests de pre-load.
+func newSvcWithLists(
+	settingsRepo *fakeSettingsRepo,
+	warnRepo *fakeWarnRepo,
+	listsRepo *fakeListsRepo,
+	groupsMap map[int64]*groups.Group,
+	ch chan<- AutoAction,
+) (*Service, *fakeLogs) {
+	lg := &fakeLogs{}
+	gr := &fakeGroups{groups: groupsMap}
+	reg := NewRegistry()
+	reg.Register(NewFloodRule())
+	reg.Register(NewAntiSpamRule())
+	reg.Register(NewAntiLinkRule())
+	reg.Register(NewBannedWordsRule())
+	svc := NewService(settingsRepo, warnRepo, listsRepo, reg, lg, gr, ch, nil)
 	return svc, lg
 }
 
@@ -405,5 +520,203 @@ func TestService_AutoCreateChannelBuffer_Overflow(t *testing.T) {
 	// reencolan (counter >= automute+1 pero < autoban).
 	if len(ch) != 1 {
 		t.Errorf("autoActionCh = %d, want 1", len(ch))
+	}
+}
+
+// --- Tests de pre-load de listas (slice 2) ---
+
+// TestService_PreLoadLists_BothTogglesOn: con BannedWordsEnabled y
+// AntiLinkEnabled ambos ON, el Service hace 2 calls (una por lista).
+func TestService_PreLoadLists_BothTogglesOn(t *testing.T) {
+	settingsRepo := newFakeSettingsRepo()
+	settingsRepo.rows[-1001] = &Settings{
+		GroupID: -1001, Enabled: true,
+		FloodEnabled: true, FloodMessages: 5, FloodSeconds: 10,
+		AutomuteWarnings: 3, AutobanWarnings: 5, AutomuteMinutes: 10,
+		BannedWordsEnabled: true, AntiLinkEnabled: true,
+	}
+	warnRepo := newFakeWarnRepo()
+	listsRepo := newFakeListsRepo()
+	listsRepo.bannedWords[-1001] = []string{"spam"}
+	listsRepo.linkAllowlist[-1001] = []string{"example.com"}
+	ch := make(chan AutoAction, 4)
+	svc, _ := newSvcWithLists(settingsRepo, warnRepo, listsRepo, map[int64]*groups.Group{
+		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
+	}, ch)
+
+	// Manejar 1 mensaje.
+	if err := svc.HandleMessage(context.Background(), msg(-1001, 999)); err != nil {
+		t.Fatalf("HandleMessage: %v", err)
+	}
+	if listsRepo.bannedCalls != 1 {
+		t.Errorf("ListBannedWords calls = %d, want 1", listsRepo.bannedCalls)
+	}
+	if listsRepo.allowlistCalls != 1 {
+		t.Errorf("ListLinkAllowlist calls = %d, want 1", listsRepo.allowlistCalls)
+	}
+}
+
+// TestService_PreLoadLists_BothTogglesOff: con ambos toggles OFF, el
+// Service NUNCA llama al listsRepo (optimizacion, spec REQ-13).
+func TestService_PreLoadLists_BothTogglesOff(t *testing.T) {
+	settingsRepo := newFakeSettingsRepo()
+	settingsRepo.rows[-1001] = &Settings{
+		GroupID: -1001, Enabled: true,
+		FloodEnabled: true, FloodMessages: 5, FloodSeconds: 10,
+		AutomuteWarnings: 3, AutobanWarnings: 5, AutomuteMinutes: 10,
+		// BannedWordsEnabled y AntiLinkEnabled default = false.
+	}
+	warnRepo := newFakeWarnRepo()
+	listsRepo := newFakeListsRepo()
+	ch := make(chan AutoAction, 4)
+	svc, _ := newSvcWithLists(settingsRepo, warnRepo, listsRepo, map[int64]*groups.Group{
+		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
+	}, ch)
+
+	for i := 0; i < 5; i++ {
+		if err := svc.HandleMessage(context.Background(), msg(-1001, 999)); err != nil {
+			t.Fatalf("HandleMessage %d: %v", i+1, err)
+		}
+	}
+	if listsRepo.bannedCalls != 0 {
+		t.Errorf("ListBannedWords calls = %d, want 0 (toggle off)", listsRepo.bannedCalls)
+	}
+	if listsRepo.allowlistCalls != 0 {
+		t.Errorf("ListLinkAllowlist calls = %d, want 0 (toggle off)", listsRepo.allowlistCalls)
+	}
+}
+
+// TestService_PreLoadLists_OnlyBannedWordsOn: solo BannedWordsEnabled
+// → 1 call a banned, 0 a allowlist.
+func TestService_PreLoadLists_OnlyBannedWordsOn(t *testing.T) {
+	settingsRepo := newFakeSettingsRepo()
+	settingsRepo.rows[-1001] = &Settings{
+		GroupID: -1001, Enabled: true,
+		FloodEnabled: true, FloodMessages: 5, FloodSeconds: 10,
+		AutomuteWarnings: 3, AutobanWarnings: 5, AutomuteMinutes: 10,
+		BannedWordsEnabled: true,
+	}
+	warnRepo := newFakeWarnRepo()
+	listsRepo := newFakeListsRepo()
+	ch := make(chan AutoAction, 4)
+	svc, _ := newSvcWithLists(settingsRepo, warnRepo, listsRepo, map[int64]*groups.Group{
+		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
+	}, ch)
+
+	if err := svc.HandleMessage(context.Background(), msg(-1001, 999)); err != nil {
+		t.Fatalf("HandleMessage: %v", err)
+	}
+	if listsRepo.bannedCalls != 1 {
+		t.Errorf("ListBannedWords calls = %d, want 1", listsRepo.bannedCalls)
+	}
+	if listsRepo.allowlistCalls != 0 {
+		t.Errorf("ListLinkAllowlist calls = %d, want 0 (toggle off)", listsRepo.allowlistCalls)
+	}
+}
+
+// TestService_PreLoadLists_OnlyAntiLinkOn: solo AntiLinkEnabled → 1
+// call a allowlist, 0 a banned.
+func TestService_PreLoadLists_OnlyAntiLinkOn(t *testing.T) {
+	settingsRepo := newFakeSettingsRepo()
+	settingsRepo.rows[-1001] = &Settings{
+		GroupID: -1001, Enabled: true,
+		FloodEnabled: true, FloodMessages: 5, FloodSeconds: 10,
+		AutomuteWarnings: 3, AutobanWarnings: 5, AutomuteMinutes: 10,
+		AntiLinkEnabled: true,
+	}
+	warnRepo := newFakeWarnRepo()
+	listsRepo := newFakeListsRepo()
+	ch := make(chan AutoAction, 4)
+	svc, _ := newSvcWithLists(settingsRepo, warnRepo, listsRepo, map[int64]*groups.Group{
+		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
+	}, ch)
+
+	if err := svc.HandleMessage(context.Background(), msg(-1001, 999)); err != nil {
+		t.Fatalf("HandleMessage: %v", err)
+	}
+	if listsRepo.bannedCalls != 0 {
+		t.Errorf("ListBannedWords calls = %d, want 0 (toggle off)", listsRepo.bannedCalls)
+	}
+	if listsRepo.allowlistCalls != 1 {
+		t.Errorf("ListLinkAllowlist calls = %d, want 1", listsRepo.allowlistCalls)
+	}
+}
+
+// TestService_BannedWordsRule_FiresWhenListed: smoke test de la
+// regla de palabras prohibidas end-to-end via el Service. Mensaje
+// con palabra prohibida → warning_count sube y se encola la auto-action
+// si supera thresholds.
+func TestService_BannedWordsRule_FiresWhenListed(t *testing.T) {
+	settingsRepo := newFakeSettingsRepo()
+	settingsRepo.rows[-1001] = &Settings{
+		GroupID: -1001, Enabled: true,
+		BannedWordsEnabled: true,
+		AutomuteWarnings:   1, AutobanWarnings: 100, AutomuteMinutes: 5,
+		WarningExpireDays: 30,
+	}
+	warnRepo := newFakeWarnRepo()
+	listsRepo := newFakeListsRepo()
+	listsRepo.bannedWords[-1001] = []string{"spam"}
+	ch := make(chan AutoAction, 4)
+	svc, lg := newSvcWithLists(settingsRepo, warnRepo, listsRepo, map[int64]*groups.Group{
+		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
+	}, ch)
+
+	m := &telegram.Message{
+		MessageID: 1,
+		From:      &telegram.User{ID: 999},
+		Chat:      telegram.Chat{ID: -1001, Type: "supergroup"},
+		Text:      "esto es spam claramente",
+	}
+	if err := svc.HandleMessage(context.Background(), m); err != nil {
+		t.Fatalf("HandleMessage: %v", err)
+	}
+
+	ws, _ := warnRepo.GetWarningState(context.Background(), -1001, 999)
+	if ws == nil {
+		t.Fatal("warning_state no creada")
+	}
+	if ws.WarningCount != 1 {
+		t.Errorf("WarningCount = %d, want 1 (banned_words hit)", ws.WarningCount)
+	}
+	// Log RULE_TRIGGERED con rule_name=banned_words.
+	var found bool
+	for _, e := range lg.entries {
+		if e.Action == logs.ActionRuleTriggered {
+			if name, _ := e.Metadata["rule_name"].(string); name == "banned_words" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Errorf("no log RULE_TRIGGERED con rule_name=banned_words")
+	}
+	// Auto-action: counter 1 == automute_warnings → encola mute.
+	if len(ch) != 1 {
+		t.Errorf("autoActionCh = %d, want 1 mute", len(ch))
+	}
+}
+
+// TestService_NilListsRepo_NoPanic: listsRepo nil + FloodRule unica
+// regla (caso degradado) → no panic. preloadLists retorna nil y las
+// reglas que necesitan listas vuelven nil sin tocar el repo.
+func TestService_NilListsRepo_NoPanic(t *testing.T) {
+	settingsRepo := newFakeSettingsRepo()
+	settingsRepo.rows[-1001] = &Settings{
+		GroupID: -1001, Enabled: true,
+		FloodEnabled: true, FloodMessages: 5, FloodSeconds: 10,
+		AutomuteWarnings: 3, AutobanWarnings: 5, AutomuteMinutes: 10,
+	}
+	warnRepo := newFakeWarnRepo()
+	ch := make(chan AutoAction, 4)
+	// newSvc usa listsRepo nil intencionalmente.
+	svc, _ := newSvc(settingsRepo, warnRepo, map[int64]*groups.Group{
+		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
+	}, ch)
+
+	for i := 0; i < 3; i++ {
+		if err := svc.HandleMessage(context.Background(), msg(-1001, 999)); err != nil {
+			t.Fatalf("HandleMessage %d: %v", i+1, err)
+		}
 	}
 }

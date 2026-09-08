@@ -38,9 +38,10 @@ func setupRepoDB(t *testing.T) *sql.DB {
 	// CASCADE porque group_moderation_settings tiene FK a
 	// groups.telegram_id, y user_warning_state se referencia por
 	// (group_id, user_id) (no FK formal, pero TRUNCATE CASCADE limpia
-	// cualquier cosa colgada).
+	// cualquier cosa colgada). Slice 2: banned_words y link_allowlist
+	// tambien tienen FK CASCADE a groups y se truncan aqui.
 	if _, err := db.ExecContext(context.Background(),
-		"TRUNCATE groups, group_moderation_settings, user_warning_state CASCADE"); err != nil {
+		"TRUNCATE groups, group_moderation_settings, user_warning_state, banned_words, link_allowlist CASCADE"); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 	return db
@@ -393,5 +394,277 @@ func TestRepository_GroupCascadeOnSettingsDelete(t *testing.T) {
 	_, err := repo.GetSettings(ctx, -1001)
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("settings no borradas con el grupo: err = %v", err)
+	}
+}
+
+// --- Tests de listas (slice 2): banned_words y link_allowlist ---
+
+// TestRepository_ListBannedWords_Empty: grupo sin palabras → lista vacia.
+func TestRepository_ListBannedWords_Empty(t *testing.T) {
+	db := setupRepoDB(t)
+	repo := NewRepository(db)
+	ctx := context.Background()
+	insertGroup(t, db, -1001)
+
+	list, err := repo.ListBannedWords(ctx, -1001)
+	if err != nil {
+		t.Fatalf("ListBannedWords: %v", err)
+	}
+	if len(list) != 0 {
+		t.Errorf("list len = %d, want 0", len(list))
+	}
+}
+
+// TestRepository_AddBannedWord_Lowercased: el INSERT del repo recibe
+// la palabra ya normalizada (lo normaliza el handler); un insert
+// directo con "BUZON" verifica que queda como "buzon" cuando el handler
+// pre-normaliza. La normalizacion real vive en el handler
+// (automation_handlers.go); el repo solo persiste lo que recibe.
+func TestRepository_AddBannedWord_RoundTrip(t *testing.T) {
+	db := setupRepoDB(t)
+	repo := NewRepository(db)
+	ctx := context.Background()
+	insertGroup(t, db, -1001)
+
+	for _, w := range []string{"spam", "viagra", "free-money"} {
+		if err := repo.AddBannedWord(ctx, -1001, w); err != nil {
+			t.Fatalf("AddBannedWord(%q): %v", w, err)
+		}
+	}
+
+	list, err := repo.ListBannedWords(ctx, -1001)
+	if err != nil {
+		t.Fatalf("ListBannedWords: %v", err)
+	}
+	want := []string{"free-money", "spam", "viagra"}
+	if len(list) != len(want) {
+		t.Fatalf("list = %v, want %v", list, want)
+	}
+	for i, w := range want {
+		if list[i] != w {
+			t.Errorf("list[%d] = %q, want %q", i, list[i], w)
+		}
+	}
+}
+
+// TestRepository_AddBannedWord_Idempotent: dos adds del mismo word →
+// una sola fila. Confirma que ON CONFLICT DO NOTHING funciona
+// (spec REQ-8: POST idempotente).
+func TestRepository_AddBannedWord_Idempotent(t *testing.T) {
+	db := setupRepoDB(t)
+	repo := NewRepository(db)
+	ctx := context.Background()
+	insertGroup(t, db, -1001)
+
+	if err := repo.AddBannedWord(ctx, -1001, "spam"); err != nil {
+		t.Fatalf("first AddBannedWord: %v", err)
+	}
+	if err := repo.AddBannedWord(ctx, -1001, "spam"); err != nil {
+		t.Fatalf("second AddBannedWord: %v", err)
+	}
+
+	var n int
+	if err := db.QueryRowContext(ctx,
+		"SELECT count(*) FROM banned_words WHERE group_id = $1 AND word = $2",
+		-1001, "spam",
+	).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("rows = %d, want 1", n)
+	}
+}
+
+// TestRepository_RemoveBannedWord: add + remove + list devuelve vacio.
+func TestRepository_RemoveBannedWord(t *testing.T) {
+	db := setupRepoDB(t)
+	repo := NewRepository(db)
+	ctx := context.Background()
+	insertGroup(t, db, -1001)
+
+	if err := repo.AddBannedWord(ctx, -1001, "spam"); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if err := repo.RemoveBannedWord(ctx, -1001, "spam"); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+
+	list, err := repo.ListBannedWords(ctx, -1001)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(list) != 0 {
+		t.Errorf("post-remove list = %v, want []", list)
+	}
+}
+
+// TestRepository_RemoveBannedWord_NotFoundIsOK: remove de word que
+// no existe → nil error (DELETE idempotente, spec REQ-8).
+func TestRepository_RemoveBannedWord_NotFoundIsOK(t *testing.T) {
+	db := setupRepoDB(t)
+	repo := NewRepository(db)
+	ctx := context.Background()
+	insertGroup(t, db, -1001)
+
+	if err := repo.RemoveBannedWord(ctx, -1001, "does-not-exist"); err != nil {
+		t.Errorf("RemoveBannedWord(in = \"does-not-exist\") = %v, want nil", err)
+	}
+}
+
+// TestRepository_AddBannedWord_CascadeOnGroupDelete: borrar el grupo
+// cascadea las banned_words del grupo (FK CASCADE).
+func TestRepository_AddBannedWord_CascadeOnGroupDelete(t *testing.T) {
+	db := setupRepoDB(t)
+	repo := NewRepository(db)
+	ctx := context.Background()
+	insertGroup(t, db, -1001)
+
+	if err := repo.AddBannedWord(ctx, -1001, "spam"); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+
+	if _, err := db.ExecContext(ctx, "DELETE FROM groups WHERE telegram_id = $1", -1001); err != nil {
+		t.Fatalf("delete group: %v", err)
+	}
+
+	list, err := repo.ListBannedWords(ctx, -1001)
+	if err != nil {
+		t.Fatalf("list post-delete: %v", err)
+	}
+	if len(list) != 0 {
+		t.Errorf("banned_words post group delete = %v, want []", list)
+	}
+}
+
+// TestRepository_AddBannedWord_RejectsEmpty: el CHECK length 1-100
+// rechaza insertar string vacio (spec REQ-7).
+func TestRepository_AddBannedWord_RejectsEmpty(t *testing.T) {
+	db := setupRepoDB(t)
+	repo := NewRepository(db)
+	ctx := context.Background()
+	insertGroup(t, db, -1001)
+
+	if err := repo.AddBannedWord(ctx, -1001, ""); err == nil {
+		t.Error("AddBannedWord(empty) = nil, want CHECK violation")
+	}
+}
+
+// TestRepository_LinkAllowlist_RoundTrip: add + add + list devuelve
+// las 2 dominios ordenados. Case preserved en storage.
+func TestRepository_LinkAllowlist_RoundTrip(t *testing.T) {
+	db := setupRepoDB(t)
+	repo := NewRepository(db)
+	ctx := context.Background()
+	insertGroup(t, db, -1001)
+
+	for _, d := range []string{"example.com", "github.com", "MiDominio.org"} {
+		if err := repo.AddLinkAllowlist(ctx, -1001, d); err != nil {
+			t.Fatalf("AddLinkAllowlist(%q): %v", d, err)
+		}
+	}
+
+	list, err := repo.ListLinkAllowlist(ctx, -1001)
+	if err != nil {
+		t.Fatalf("ListLinkAllowlist: %v", err)
+	}
+	// El orden es case-sensitive por el ORDER BY de PostgreSQL
+	// ("MiDominio.org" < "example.com" en ASCII uppercase). Verificamos
+	// que las 3 estan presentes, case preserved.
+	got := make(map[string]bool)
+	for _, d := range list {
+		got[d] = true
+	}
+	for _, d := range []string{"example.com", "github.com", "MiDominio.org"} {
+		if !got[d] {
+			t.Errorf("list no contiene %q (case preserved): %v", d, list)
+		}
+	}
+}
+
+// TestRepository_AddLinkAllowlist_Idempotent: dos adds del mismo
+// dominio → una sola fila.
+func TestRepository_AddLinkAllowlist_Idempotent(t *testing.T) {
+	db := setupRepoDB(t)
+	repo := NewRepository(db)
+	ctx := context.Background()
+	insertGroup(t, db, -1001)
+
+	if err := repo.AddLinkAllowlist(ctx, -1001, "example.com"); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	if err := repo.AddLinkAllowlist(ctx, -1001, "example.com"); err != nil {
+		t.Fatalf("second: %v", err)
+	}
+
+	var n int
+	if err := db.QueryRowContext(ctx,
+		"SELECT count(*) FROM link_allowlist WHERE group_id = $1 AND domain = $2",
+		-1001, "example.com",
+	).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("rows = %d, want 1", n)
+	}
+}
+
+// TestRepository_RemoveLinkAllowlist: add + remove + list vacio.
+func TestRepository_RemoveLinkAllowlist(t *testing.T) {
+	db := setupRepoDB(t)
+	repo := NewRepository(db)
+	ctx := context.Background()
+	insertGroup(t, db, -1001)
+
+	if err := repo.AddLinkAllowlist(ctx, -1001, "example.com"); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if err := repo.RemoveLinkAllowlist(ctx, -1001, "example.com"); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+
+	list, err := repo.ListLinkAllowlist(ctx, -1001)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(list) != 0 {
+		t.Errorf("post-remove list = %v, want []", list)
+	}
+}
+
+// TestRepository_AddLinkAllowlist_CascadeOnGroupDelete: borrar el
+// grupo cascadea las link_allowlist del grupo.
+func TestRepository_AddLinkAllowlist_CascadeOnGroupDelete(t *testing.T) {
+	db := setupRepoDB(t)
+	repo := NewRepository(db)
+	ctx := context.Background()
+	insertGroup(t, db, -1001)
+
+	if err := repo.AddLinkAllowlist(ctx, -1001, "example.com"); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+
+	if _, err := db.ExecContext(ctx, "DELETE FROM groups WHERE telegram_id = $1", -1001); err != nil {
+		t.Fatalf("delete group: %v", err)
+	}
+
+	list, err := repo.ListLinkAllowlist(ctx, -1001)
+	if err != nil {
+		t.Fatalf("list post-delete: %v", err)
+	}
+	if len(list) != 0 {
+		t.Errorf("link_allowlist post group delete = %v, want []", list)
+	}
+}
+
+// TestRepository_AddLinkAllowlist_RejectsEmpty: el CHECK length 1-253
+// rechaza string vacio.
+func TestRepository_AddLinkAllowlist_RejectsEmpty(t *testing.T) {
+	db := setupRepoDB(t)
+	repo := NewRepository(db)
+	ctx := context.Background()
+	insertGroup(t, db, -1001)
+
+	if err := repo.AddLinkAllowlist(ctx, -1001, ""); err == nil {
+		t.Error("AddLinkAllowlist(empty) = nil, want CHECK violation")
 	}
 }
