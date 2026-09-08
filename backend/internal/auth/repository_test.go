@@ -12,7 +12,21 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/telegram-manager/backend/internal/database"
+	"github.com/telegram-manager/backend/internal/tenants"
 )
+
+// tenantsRepo expone *tenants.Repository como tenantEnsurer del seed.
+// Requiere la migracion 00009 aplicada (testDB migra todo).
+func tenantsRepo(t *testing.T, db *sql.DB) *tenants.Repository {
+	t.Helper()
+	return tenants.NewRepository(db)
+}
+
+// ensureDefaultTenant crea el tenant `default` si falta (idempotente).
+func ensureDefaultTenant(t *testing.T, db *sql.DB) (int64, error) {
+	t.Helper()
+	return tenants.NewRepository(db).EnsureDefault(context.Background())
+}
 
 // testDB abre una PostgreSQL real (convencion del proyecto: no mockear
 // la capa DB) y aplica las migraciones. Se saltea en -short o si no
@@ -47,8 +61,12 @@ func seedAdmin(t *testing.T, db *sql.DB, username, password string) Admin {
 	if err != nil {
 		t.Fatalf("bcrypt: %v", err)
 	}
+	tenantID, err := ensureDefaultTenant(t, db)
+	if err != nil {
+		t.Fatalf("ensure default tenant: %v", err)
+	}
 	repo := NewRepository(db)
-	id, err := repo.Create(context.Background(), username, string(hash))
+	id, err := repo.Create(context.Background(), username, string(hash), tenantID)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -123,7 +141,7 @@ func TestEnsureInitialAdmin_EmptyTableCreates(t *testing.T) {
 	db := testDB(t)
 	repo := NewRepository(db)
 
-	if err := EnsureInitialAdmin(context.Background(), repo, "admin", "secret123"); err != nil {
+	if err := EnsureInitialAdmin(context.Background(), repo, tenantsRepo(t, db), "admin", "secret123"); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}
 
@@ -135,6 +153,9 @@ func TestEnsureInitialAdmin_EmptyTableCreates(t *testing.T) {
 	if err := bcrypt.CompareHashAndPassword([]byte(got.PasswordHash), []byte("secret123")); err != nil {
 		t.Errorf("password no valida tras bootstrap: %v", err)
 	}
+	if got.TenantID == 0 {
+		t.Error("admin bootstrap sin tenant: TenantID == 0, want tenant default")
+	}
 }
 
 func TestEnsureInitialAdmin_DoesNotDuplicate(t *testing.T) {
@@ -142,7 +163,7 @@ func TestEnsureInitialAdmin_DoesNotDuplicate(t *testing.T) {
 	repo := NewRepository(db)
 	seedAdmin(t, db, "admin", "secret123")
 
-	if err := EnsureInitialAdmin(context.Background(), repo, "admin", "otro-password"); err != nil {
+	if err := EnsureInitialAdmin(context.Background(), repo, tenantsRepo(t, db), "admin", "otro-password"); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}
 

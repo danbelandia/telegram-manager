@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -15,6 +16,11 @@ import (
 type authService interface {
 	Login(ctx context.Context, username, password string) (auth.LoginResult, error)
 	Refresh(ctx context.Context, refreshToken string) (string, error)
+}
+
+// signupService es la vista minima del alta de tenants (slice 0).
+type signupService interface {
+	Signup(ctx context.Context, in auth.SignupInput) (auth.SignupResult, error)
 }
 
 // loginRequest es el body de POST /api/auth/login.
@@ -75,17 +81,83 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleMe devuelve la identidad del admin autenticado. Es la prueba de
-// que requireAuth funciona; el paso 10 expondra rutas protegidas reales.
+// handleMe devuelve la identidad del admin autenticado, incluyendo su
+// tenant (slice 0). Es la prueba de que requireAuth funciona.
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	claims := claimsFromContext(r.Context())
 	if claims == nil {
 		respondError(w, http.StatusUnauthorized, "UNAUTHORIZED", "no autenticado")
 		return
 	}
-	respond(w, http.StatusOK, map[string]string{
-		"id":       claims.Subject,
-		"username": claims.Username,
+	respond(w, http.StatusOK, map[string]any{
+		"id":        claims.Subject,
+		"username":  claims.Username,
+		"tenant_id": claims.TenantID,
+	})
+}
+
+// signupRequest es el body de POST /api/auth/signup (slice 0).
+type signupRequest struct {
+	Slug     string `json:"slug"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+	BotToken string `json:"bot_token"`
+}
+
+// handleSignup da de alta un tenant bot-per-tenant (201 con
+// tenant+admin). El token NUNCA vuelve en la respuesta ni en logs.
+// Tras el commit, levanta el poller en caliente via onTenantReady sin
+// tocar los demas pollers (falla el registro → warn, el tenant queda
+// creado y el boot lo levanta al reiniciar).
+func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
+	if s.signup == nil {
+		respondError(w, http.StatusNotFound, "NOT_FOUND", "registro de tenants no habilitado")
+		return
+	}
+	var req signupRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "VALIDATION_ERROR", "body invalido")
+		return
+	}
+
+	res, err := s.signup.Signup(r.Context(), auth.SignupInput{
+		Slug:     req.Slug,
+		Username: req.Username,
+		Password: req.Password,
+		BotToken: req.BotToken,
+	})
+	switch {
+	case err == nil:
+		// ok, sigue abajo
+	case errors.Is(err, auth.ErrSignupValidation):
+		respondError(w, http.StatusBadRequest, "VALIDATION_ERROR", "slug, username, password (minimo 8 caracteres) y bot_token son requeridos")
+		return
+	case errors.Is(err, auth.ErrSlugTaken):
+		respondError(w, http.StatusConflict, "CONFLICT", "el slug ya esta registrado")
+		return
+	case errors.Is(err, auth.ErrUsernameTaken):
+		respondError(w, http.StatusConflict, "CONFLICT", "el username ya esta en uso")
+		return
+	case errors.Is(err, auth.ErrInvalidBotToken):
+		respondError(w, http.StatusBadGateway, "TELEGRAM_ERROR", "Telegram rechazo el bot token")
+		return
+	default:
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "no se pudo crear el tenant")
+		return
+	}
+
+	// Poller en caliente con el token del request (en memoria, nunca
+	// en logs: solo slug e ids).
+	if s.onTenantReady != nil {
+		if herr := s.onTenantReady(r.Context(), res.TenantID, req.BotToken); herr != nil {
+			slog.Warn("auth: signup ok pero poller en caliente fallo; se levantara al reiniciar",
+				"tenant_id", res.TenantID, "slug", res.TenantSlug, "error", herr)
+		}
+	}
+	slog.Info("auth: signup", "tenant_id", res.TenantID, "slug", res.TenantSlug, "admin_id", res.AdminID)
+	respond(w, http.StatusCreated, map[string]any{
+		"tenant": map[string]any{"id": res.TenantID, "slug": res.TenantSlug},
+		"admin":  map[string]any{"id": res.AdminID, "username": res.AdminUsername},
 	})
 }
 

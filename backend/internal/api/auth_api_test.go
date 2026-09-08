@@ -15,6 +15,7 @@ import (
 
 	"github.com/telegram-manager/backend/internal/auth"
 	"github.com/telegram-manager/backend/internal/database"
+	"github.com/telegram-manager/backend/internal/tenants"
 )
 
 const testSecret = "test-secret-ojos-que-no-ven-corazon-que-no-siente-x"
@@ -66,7 +67,11 @@ func buildAuthServer(t *testing.T) (*Server, *auth.TokenManager, string) {
 	repo := auth.NewRepository(db)
 	tokenManager := auth.NewTokenManager(testSecret)
 	svc := auth.NewService(repo, tokenManager)
-	if _, err := repo.Create(context.Background(), "admin", mustHash(t, "secret123")); err != nil {
+	tenantID, err := tenants.NewRepository(db).EnsureDefault(context.Background())
+	if err != nil {
+		t.Fatalf("ensure default tenant: %v", err)
+	}
+	if _, err := repo.Create(context.Background(), "admin", mustHash(t, "secret123"), tenantID); err != nil {
 		t.Fatalf("create admin: %v", err)
 	}
 	server := NewServer(db, botStatusStub{}, WithAuth(svc, tokenManager, false))
@@ -216,7 +221,7 @@ func TestLogout_ExpiresCookie(t *testing.T) {
 
 func TestMe_WithValidAccess(t *testing.T) {
 	server, tokenManager, username := buildAuthServer(t)
-	admin := auth.Admin{ID: 1, Username: username}
+	admin := auth.Admin{ID: 1, Username: username, TenantID: 1}
 	access, err := tokenManager.IssueAccess(admin)
 	if err != nil {
 		t.Fatalf("issue: %v", err)

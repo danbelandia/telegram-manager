@@ -20,6 +20,12 @@ type Server struct {
 	cookieSecure bool
 	mux          *http.ServeMux
 
+	// Alta de tenants bot-per-tenant (slice 0). signup ejecuta la
+	// transaccion; onTenantReady levanta el poller en caliente tras el
+	// commit (lo provee main con el registry). Nils = signup apagado.
+	signup        signupService
+	onTenantReady func(ctx context.Context, tenantID int64, tokenPlain string) error
+
 	// Modulos del paso 10 (moderacion). Se inyectan via options; cada
 	// handler verifica que su modulo este habilitado antes de actuar.
 	groups       groupStore
@@ -75,6 +81,16 @@ func WithAuth(svc authService, verifier authenticator, cookieSecure bool) Option
 		s.mux.HandleFunc("POST /api/auth/refresh", s.handleRefresh)
 		s.mux.HandleFunc("POST /api/auth/logout", s.handleLogout)
 		s.mux.HandleFunc("GET /api/auth/me", s.requireAuth(s.handleMe))
+	}
+}
+
+// WithSignup monta POST /api/auth/signup (slice 0). onReady puede ser
+// nil en tests (sin poller en caliente).
+func WithSignup(svc signupService, onReady func(ctx context.Context, tenantID int64, tokenPlain string) error) Option {
+	return func(s *Server) {
+		s.signup = svc
+		s.onTenantReady = onReady
+		s.mux.HandleFunc("POST /api/auth/signup", s.handleSignup)
 	}
 }
 

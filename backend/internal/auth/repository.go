@@ -32,7 +32,7 @@ func (r *Repository) GetByID(ctx context.Context, id int64) (Admin, error) {
 
 func (r *Repository) get(ctx context.Context, where string, arg any) (Admin, error) {
 	const base = `
-SELECT id, username, password_hash, created_at, last_login_at
+SELECT id, username, password_hash, tenant_id, created_at, last_login_at
 FROM admins
 WHERE `
 
@@ -42,12 +42,18 @@ WHERE `
 	row := r.db.QueryRowContext(ctx, q, arg)
 
 	var lastLogin sql.NullTime
-	err := row.Scan(&a.ID, &a.Username, &a.PasswordHash, &a.CreatedAt, &lastLogin)
+	var tenantID sql.NullInt64
+	err := row.Scan(&a.ID, &a.Username, &a.PasswordHash, &tenantID, &a.CreatedAt, &lastLogin)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Admin{}, ErrNotFound
 	}
 	if err != nil {
 		return Admin{}, fmt.Errorf("auth: get admin: %w", err)
+	}
+	// tenant_id NULL solo en filas pre-00009 si la migracion no corrio:
+	// el middleware trata TenantID==0 como sesion legacy (401 re-login).
+	if tenantID.Valid {
+		a.TenantID = tenantID.Int64
 	}
 	if lastLogin.Valid {
 		t := lastLogin.Time
@@ -66,16 +72,16 @@ func (r *Repository) UpdateLastLogin(ctx context.Context, id int64, at time.Time
 	return nil
 }
 
-// Create inserta un admin con su hash bcrypt ya calculado. Se usa en
-// el bootstrap (seed) del primer admin.
-func (r *Repository) Create(ctx context.Context, username, passwordHash string) (int64, error) {
+// Create inserta un admin con su hash bcrypt ya calculado y su tenant.
+// Se usa en el bootstrap (seed) del primer admin y en el signup.
+func (r *Repository) Create(ctx context.Context, username, passwordHash string, tenantID int64) (int64, error) {
 	const q = `
-INSERT INTO admins (username, password_hash)
-VALUES ($1, $2)
+INSERT INTO admins (username, password_hash, tenant_id)
+VALUES ($1, $2, $3)
 RETURNING id`
 
 	var id int64
-	if err := r.db.QueryRowContext(ctx, q, username, passwordHash).Scan(&id); err != nil {
+	if err := r.db.QueryRowContext(ctx, q, username, passwordHash, tenantID).Scan(&id); err != nil {
 		return 0, fmt.Errorf("auth: create: %w", err)
 	}
 	return id, nil

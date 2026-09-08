@@ -34,8 +34,11 @@ func (f fixedAuthenticator) ParseAccess(token string) (*auth.Claims, error) {
 }
 
 // testClaims es la identidad del admin de prueba (actor en logs).
+// Lleva TenantID (slice 0): requireAuth rechaza claims legacy sin
+// tenant con 401.
 var testClaims = &auth.Claims{
 	Username: "admin",
+	TenantID: 1,
 	RegisteredClaims: jwt.RegisteredClaims{
 		Subject: "1",
 	},

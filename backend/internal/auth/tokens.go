@@ -16,9 +16,12 @@ const (
 )
 
 // Claims es la identidad que viaja en los tokens. sub es el id del
-// admin; username es informativo para el panel.
+// admin; username es informativo para el panel; tenant_id aisla los
+// datos del tenant (slice 0). omitempty: los tokens legacy no lo
+// traen y requireAuth los rechaza con re-login.
 type Claims struct {
 	Username string `json:"username"`
+	TenantID int64  `json:"tenant_id,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -52,6 +55,7 @@ func (m *TokenManager) issue(a Admin, ttl time.Duration) (string, error) {
 	now := m.now()
 	claims := Claims{
 		Username: a.Username,
+		TenantID: a.TenantID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   fmt.Sprintf("%d", a.ID),
 			IssuedAt:  jwt.NewNumericDate(now),

@@ -40,6 +40,15 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
+		if claims.TenantID == 0 {
+			// Access legacy pre-multitenancy (valido en firma pero sin
+			// tenant): no puede aislar datos → 401 con re-login. El
+			// refresh sigue vigente y re-emite con tenant (ver
+			// Service.Refresh); no se exige re-signup.
+			respondError(w, http.StatusUnauthorized, "UNAUTHORIZED", "sesion anterior a multitenancy: volve a iniciar sesion")
+			return
+		}
+
 		ctx := context.WithValue(r.Context(), claimsKey, claims)
 		next(w, r.WithContext(ctx))
 	}

@@ -26,6 +26,7 @@ import (
 	"github.com/telegram-manager/backend/internal/moderation"
 	"github.com/telegram-manager/backend/internal/publications"
 	"github.com/telegram-manager/backend/internal/telegram"
+	"github.com/telegram-manager/backend/internal/tenants"
 	"github.com/telegram-manager/backend/internal/users"
 )
 
@@ -108,7 +109,8 @@ func run() error {
 	// Autenticacion del panel: seed del primer admin (si tabla vacia),
 	// emision/validacion de tokens y servicio de login.
 	authRepo := auth.NewRepository(db)
-	if err := auth.EnsureInitialAdmin(ctx, authRepo, cfg.AdminUsername, cfg.AdminPassword); err != nil {
+	tenantsRepo := tenants.NewRepository(db)
+	if err := auth.EnsureInitialAdmin(ctx, authRepo, tenantsRepo, cfg.AdminUsername, cfg.AdminPassword); err != nil {
 		return fmt.Errorf("startup: seed admin: %w", err)
 	}
 	slog.Info("auth: admin bootstrap ok")

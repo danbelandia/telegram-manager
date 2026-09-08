@@ -14,8 +14,11 @@ type Admin struct {
 	ID           int64
 	Username     string
 	PasswordHash string
-	CreatedAt    time.Time
-	LastLoginAt  *time.Time
+	// TenantID aisla al admin (slice 0, bot-per-tenant: 1 user = 1
+	// tenant). 0 solo en tokens legacy pre-multitenancy.
+	TenantID    int64
+	CreatedAt   time.Time
+	LastLoginAt *time.Time
 }
 
 // ErrCredentialInvalid se devuelve cuando username o password no

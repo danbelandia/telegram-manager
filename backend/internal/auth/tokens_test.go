@@ -7,7 +7,7 @@ import (
 
 func testAdmin() Admin {
 	now := time.Now()
-	return Admin{ID: 42, Username: "admin", CreatedAt: now}
+	return Admin{ID: 42, Username: "admin", TenantID: 7, CreatedAt: now}
 }
 
 func TestTokenManager_IssueAndParseAccess(t *testing.T) {
@@ -28,6 +28,9 @@ func TestTokenManager_IssueAndParseAccess(t *testing.T) {
 	}
 	if claims.Username != "admin" {
 		t.Errorf("username = %q, want admin", claims.Username)
+	}
+	if claims.TenantID != 7 {
+		t.Errorf("tenant_id = %d, want 7", claims.TenantID)
 	}
 }
 

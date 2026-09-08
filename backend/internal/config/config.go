@@ -3,6 +3,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"fmt"
 	"os"
 	"strconv"
@@ -21,6 +22,12 @@ type Config struct {
 	CookieSecure          bool
 	Port                  string
 	RunMigrations         bool
+	// TenantTokenEncKey es la clave de cifrado AES-GCM de los tokens de
+	// bot por tenant (slice 0). OPCIONAL en Load (D10, backward-compat:
+	// deploys legacy sin la var deben arrancar): solo fail-fast si esta
+	// presente pero es invalida. Requerida solo para signup de nuevos
+	// tenants (sin clave valida no se puede cifrar el token).
+	TenantTokenEncKey string
 	// PublicationsSchedulerIntervalSeconds es el intervalo entre ticks
 	// del worker de publicaciones programadas (slice 3). Default 30s.
 	// Tests/operacion: bajar para mayor reactividad a costa de carga DB.
@@ -55,6 +62,7 @@ func Load() (Config, error) {
 		CookieSecure:                         envBoolOr("COOKIE_SECURE", false),
 		Port:                                 envOr("PORT", "8080"),
 		RunMigrations:                        envBoolOr("RUN_MIGRATIONS", true),
+		TenantTokenEncKey:                    os.Getenv("TENANT_TOKEN_ENC_KEY"),
 		PublicationsSchedulerIntervalSeconds: envIntOr("PUBLICATIONS_SCHEDULER_INTERVAL_SECONDS", 30),
 		AutomationEnabled:                    envBoolOr("AUTOMATION_ENABLED", true),
 		AutoActionBufferSize:                 envIntOr("AUTOMATION_AUTOACTION_BUFFER_SIZE", 100),
@@ -106,6 +114,14 @@ func Load() (Config, error) {
 		return cfg, fmt.Errorf("config: AUTOMATION_WORKER_CONCURRENCY must be >= 1, got %d",
 			cfg.WorkerConcurrency)
 	}
+	if cfg.TenantTokenEncKey != "" {
+		// D10: solo fail-fast si presente-pero-invalida. La clave debe
+		// resultar en 32 B exactos (base64 de 32 B o string crudo de
+		// 32 chars); la validacion canonica vive en internal/tenants.
+		if !validTenantEncKey(cfg.TenantTokenEncKey) {
+			return cfg, fmt.Errorf("config: TENANT_TOKEN_ENC_KEY must decode to exactly 32 bytes (base64 of 32 B or raw 32-char string)")
+		}
+	}
 	return cfg, nil
 }
 
@@ -125,6 +141,15 @@ func validateWebhookSecret(secret string) error {
 		return fmt.Errorf("config: TELEGRAM_WEBHOOK_SECRET contains invalid char %q (allowed: A-Za-z0-9_-)", r)
 	}
 	return nil
+}
+
+// validTenantEncKey espeja tenants.ParseKey sin importar el paquete
+// (config es hoja de dependencias): base64 de 32 B o crudo de 32.
+func validTenantEncKey(raw string) bool {
+	if decoded, err := base64.StdEncoding.DecodeString(raw); err == nil && len(decoded) == 32 {
+		return true
+	}
+	return len(raw) == 32
 }
 
 func envOr(key, fallback string) string {
