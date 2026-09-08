@@ -4,6 +4,8 @@
 //
 // Slice 2 de moderacion automatica (Fase 3): ruta /groups/:id/automation
 // para el editor de settings + listas.
+// Slice 3 (Fase 3): ruta /groups/:id/moderation para el dashboard de
+// observacion (stats + advertencias activas + reset manual).
 import { Navigate, Route, Routes } from 'react-router-dom'
 import RequireAuth from './components/RequireAuth'
 import Layout from './components/Layout'
@@ -15,6 +17,7 @@ import GroupUsersPage from './pages/GroupUsersPage'
 import GroupRequestsPage from './pages/GroupRequestsPage'
 import GroupLogsPage from './pages/GroupLogsPage'
 import GroupAutomationPage from './pages/GroupAutomationPage'
+import GroupModerationPage from './pages/GroupModerationPage'
 import PublicationsPage from './pages/PublicationsPage'
 import NotFoundPage from './pages/NotFoundPage'
 
@@ -38,6 +41,7 @@ export default function App() {
         <Route path="/groups/:id/requests" element={<GroupRequestsPage />} />
         <Route path="/groups/:id/logs" element={<GroupLogsPage />} />
         <Route path="/groups/:id/automation" element={<GroupAutomationPage />} />
+        <Route path="/groups/:id/moderation" element={<GroupModerationPage />} />
         <Route path="/publications" element={<PublicationsPage />} />
       </Route>
 
