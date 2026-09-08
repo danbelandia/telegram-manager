@@ -365,4 +365,17 @@ describe('GroupModerationPage', () => {
     expect(await screen.findByText('user 99')).toBeInTheDocument()
     expect(screen.getByTestId('warning-reset-99')).toBeInTheDocument()
   })
+
+  it('muestra el link "Volver al grupo" apuntando al detalle del grupo', async () => {
+    mockFetchRoutes({
+      '/api/groups': () => okJson([{ telegram_id: groupId, title: 'Test Group' }]),
+      '/automation/warnings': () => okJson({ warnings: [], truncated: false }),
+      '/automation/stats': () => okJson(sampleStats),
+    })
+
+    renderPage()
+
+    const back = await screen.findByRole('link', { name: /volver al grupo/i })
+    expect(back).toHaveAttribute('href', `/groups/${groupId}`)
+  })
 })

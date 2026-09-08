@@ -153,7 +153,7 @@ export default function GroupModerationPage() {
   return (
     <Container size="lg" py="md">
       <Stack gap="md">
-        <Anchor component={Link} to={`/groups/${groupId}`} size="sm">
+        <Anchor component={Link} to={`/groups/${groupId}`} size="md" fw={500}>
           ← Volver al grupo
         </Anchor>
         <Box>
