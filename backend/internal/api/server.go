@@ -30,6 +30,13 @@ type Server struct {
 
 	// Modulo de publicaciones (Fase 2, slice 1).
 	publications publicationStore
+
+	// Modulo de moderacion automatica (Fase 3, slice 2): settings +
+	// listas. Los handlers reciben el Service (que expone los metodos
+	// de settings + listas) y el logs.Repository para auditoria manual.
+	automation       automationService
+	automationLogs   automationLogWriter
+	automationGroups automationGroupChecker
 }
 
 // NewServer construye el handler HTTP del API.
@@ -141,6 +148,31 @@ func WithPublications(pubs publicationStore) Option {
 		s.mux.HandleFunc("GET /api/publications", s.requireAuth(s.handleListPublications))
 		s.mux.HandleFunc("GET /api/publications/{id}", s.requireAuth(s.handleGetPublication))
 		s.mux.HandleFunc("DELETE /api/publications/{id}", s.requireAuth(s.handleDeletePublication))
+	}
+}
+
+// WithAutomation monta las rutas del modulo de moderacion automatica
+// (Fase 3, slice 2): 9 handlers bajo /api/groups/{id}/automation/...
+// El service expone settings + listas; el handler escribe en logs los
+// cambios manuales (ActorID != nil) — distinto del patron slice 1
+// donde los auto-actions del pipeline llevan ActorID=nil.
+//
+// `groups` permite al handler validar que el grupo existe antes de
+// aceptar cambios (404 NOT_FOUND). Puede omitirse (nil) en tests que
+// solo verifican auth/validacion, pero el main.go siempre lo pasa.
+func WithAutomation(auto automationService, logs automationLogWriter, groups automationGroupChecker) Option {
+	return func(s *Server) {
+		s.automation = auto
+		s.automationLogs = logs
+		s.automationGroups = groups
+		s.mux.HandleFunc("GET /api/groups/{id}/automation/settings", s.requireAuth(s.handleGetAutomationSettings))
+		s.mux.HandleFunc("PUT /api/groups/{id}/automation/settings", s.requireAuth(s.handlePutAutomationSettings))
+		s.mux.HandleFunc("GET /api/groups/{id}/automation/banned-words", s.requireAuth(s.handleListBannedWords))
+		s.mux.HandleFunc("POST /api/groups/{id}/automation/banned-words", s.requireAuth(s.handleAddBannedWord))
+		s.mux.HandleFunc("DELETE /api/groups/{id}/automation/banned-words/{word}", s.requireAuth(s.handleRemoveBannedWord))
+		s.mux.HandleFunc("GET /api/groups/{id}/automation/link-allowlist", s.requireAuth(s.handleListLinkAllowlist))
+		s.mux.HandleFunc("POST /api/groups/{id}/automation/link-allowlist", s.requireAuth(s.handleAddLinkAllowlist))
+		s.mux.HandleFunc("DELETE /api/groups/{id}/automation/link-allowlist/{domain}", s.requireAuth(s.handleRemoveLinkAllowlist))
 	}
 }
 
