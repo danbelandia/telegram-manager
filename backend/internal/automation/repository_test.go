@@ -397,6 +397,263 @@ func TestRepository_GroupCascadeOnSettingsDelete(t *testing.T) {
 	}
 }
 
+// --- Tests de slice 3: ListActiveWarningStatesByGroup + ResetWarningState ---
+
+// insertUser agrega una fila a la tabla users (necesaria para LEFT JOIN
+// en ListActiveWarningStatesByGroup).
+func insertUser(t *testing.T, db *sql.DB, telegramID int64, firstName string, username *string) {
+	t.Helper()
+	if _, err := db.ExecContext(context.Background(),
+		`INSERT INTO users (telegram_id, first_name, username) VALUES ($1, $2, $3)
+         ON CONFLICT (telegram_id) DO UPDATE SET first_name = EXCLUDED.first_name, username = EXCLUDED.username`,
+		telegramID, firstName, username,
+	); err != nil {
+		t.Fatalf("insert user %d: %v", telegramID, err)
+	}
+}
+
+// TestRepository_ListActiveWarningStatesByGroup_FiltersCountZero:
+// inserta 3 filas (count=3, count=0, count=1); retorna solo las 2 con
+// count > 0.
+func TestRepository_ListActiveWarningStatesByGroup_FiltersCountZero(t *testing.T) {
+	db := setupRepoDB(t)
+	repo := NewRepository(db)
+	ctx := context.Background()
+	groupID := int64(-100401)
+
+	// Fila 1: count=3 (activa).
+	if err := repo.CreateWarningStateIfMissing(ctx, groupID, 1); err != nil {
+		t.Fatalf("create u1: %v", err)
+	}
+	ws1, _ := repo.GetWarningState(ctx, groupID, 1)
+	ws1.WarningCount = 3
+	if err := repo.UpsertWarningState(ctx, ws1); err != nil {
+		t.Fatalf("upsert u1: %v", err)
+	}
+	// Fila 2: count=0 (NO debe aparecer).
+	if err := repo.CreateWarningStateIfMissing(ctx, groupID, 2); err != nil {
+		t.Fatalf("create u2: %v", err)
+	}
+	// Fila 3: count=1 (activa).
+	if err := repo.CreateWarningStateIfMissing(ctx, groupID, 3); err != nil {
+		t.Fatalf("create u3: %v", err)
+	}
+	ws3, _ := repo.GetWarningState(ctx, groupID, 3)
+	ws3.WarningCount = 1
+	if err := repo.UpsertWarningState(ctx, ws3); err != nil {
+		t.Fatalf("upsert u3: %v", err)
+	}
+
+	rows, truncated, err := repo.ListActiveWarningStatesByGroup(ctx, groupID, 100)
+	if err != nil {
+		t.Fatalf("ListActiveWarningStatesByGroup: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Errorf("rows len = %d, want 2 (solo count>0): got %+v", len(rows), rows)
+	}
+	if truncated {
+		t.Errorf("truncated = true, want false (2 filas < limit 100)")
+	}
+	for _, r := range rows {
+		if r.UserID == 2 {
+			t.Errorf("u2 (count=0) no debio aparecer: %+v", r)
+		}
+	}
+}
+
+// TestRepository_ListActiveWarningStatesByGroup_LeftJoinPreservaFilaSinUsers:
+// inserta fila en user_warning_state sin fila en users; retorna
+// WarningStateRow{FirstName:"", Username:nil} sin panic ni error.
+func TestRepository_ListActiveWarningStatesByGroup_LeftJoinPreservaFilaSinUsers(t *testing.T) {
+	db := setupRepoDB(t)
+	repo := NewRepository(db)
+	ctx := context.Background()
+	groupID := int64(-100402)
+
+	if err := repo.CreateWarningStateIfMissing(ctx, groupID, 99); err != nil {
+		t.Fatalf("create ws: %v", err)
+	}
+	ws, _ := repo.GetWarningState(ctx, groupID, 99)
+	ws.WarningCount = 2
+	if err := repo.UpsertWarningState(ctx, ws); err != nil {
+		t.Fatalf("upsert ws: %v", err)
+	}
+
+	rows, _, err := repo.ListActiveWarningStatesByGroup(ctx, groupID, 100)
+	if err != nil {
+		t.Fatalf("ListActiveWarningStatesByGroup: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows len = %d, want 1", len(rows))
+	}
+	if rows[0].FirstName != "" {
+		t.Errorf("FirstName = %q, want \"\" (sin fila users)", rows[0].FirstName)
+	}
+	if rows[0].Username != nil {
+		t.Errorf("Username = %v, want nil (sin fila users)", *rows[0].Username)
+	}
+	// DisplayName cae al fallback.
+	if got := rows[0].DisplayName(); got != "user 99" {
+		t.Errorf("DisplayName = %q, want %q", got, "user 99")
+	}
+}
+
+// TestRepository_ListActiveWarningStatesByGroup_LeftJoinDisplayName:
+// con fila en users → FirstName + Username populados; DisplayName
+// devuelve FirstName (prioridad).
+func TestRepository_ListActiveWarningStatesByGroup_LeftJoinDisplayName(t *testing.T) {
+	db := setupRepoDB(t)
+	repo := NewRepository(db)
+	ctx := context.Background()
+	groupID := int64(-100403)
+
+	insertUser(t, db, 50, "Ana", stringPtr("ana_p"))
+
+	if err := repo.CreateWarningStateIfMissing(ctx, groupID, 50); err != nil {
+		t.Fatalf("create ws: %v", err)
+	}
+	ws, _ := repo.GetWarningState(ctx, groupID, 50)
+	ws.WarningCount = 1
+	if err := repo.UpsertWarningState(ctx, ws); err != nil {
+		t.Fatalf("upsert ws: %v", err)
+	}
+
+	rows, _, err := repo.ListActiveWarningStatesByGroup(ctx, groupID, 100)
+	if err != nil {
+		t.Fatalf("ListActiveWarningStatesByGroup: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows len = %d, want 1", len(rows))
+	}
+	if rows[0].FirstName != "Ana" {
+		t.Errorf("FirstName = %q, want \"Ana\"", rows[0].FirstName)
+	}
+	if rows[0].Username == nil || *rows[0].Username != "ana_p" {
+		t.Errorf("Username = %v, want \"ana_p\"", rows[0].Username)
+	}
+	if got := rows[0].DisplayName(); got != "Ana" {
+		t.Errorf("DisplayName = %q, want \"Ana\"", got)
+	}
+}
+
+// TestRepository_ListActiveWarningStatesByGroup_OrdenPorCountDesc:
+// 3 filas con counts variables → orden consistente.
+func TestRepository_ListActiveWarningStatesByGroup_OrdenPorCountDesc(t *testing.T) {
+	db := setupRepoDB(t)
+	repo := NewRepository(db)
+	ctx := context.Background()
+	groupID := int64(-100404)
+
+	now := time.Now().UTC()
+	// count=1, last=t2
+	if err := repo.CreateWarningStateIfMissing(ctx, groupID, 1); err != nil {
+		t.Fatalf("create u1: %v", err)
+	}
+	ws1, _ := repo.GetWarningState(ctx, groupID, 1)
+	ws1.WarningCount = 1
+	t2 := now.Add(-2 * time.Hour)
+	ws1.LastWarningAt = &t2
+	if err := repo.UpsertWarningState(ctx, ws1); err != nil {
+		t.Fatalf("upsert u1: %v", err)
+	}
+	// count=2, last=NULL
+	if err := repo.CreateWarningStateIfMissing(ctx, groupID, 2); err != nil {
+		t.Fatalf("create u2: %v", err)
+	}
+	ws2, _ := repo.GetWarningState(ctx, groupID, 2)
+	ws2.WarningCount = 2
+	if err := repo.UpsertWarningState(ctx, ws2); err != nil {
+		t.Fatalf("upsert u2: %v", err)
+	}
+	// count=2, last=t1 (mas reciente)
+	if err := repo.CreateWarningStateIfMissing(ctx, groupID, 3); err != nil {
+		t.Fatalf("create u3: %v", err)
+	}
+	ws3, _ := repo.GetWarningState(ctx, groupID, 3)
+	ws3.WarningCount = 2
+	t1 := now.Add(-1 * time.Hour)
+	ws3.LastWarningAt = &t1
+	if err := repo.UpsertWarningState(ctx, ws3); err != nil {
+		t.Fatalf("upsert u3: %v", err)
+	}
+
+	rows, _, err := repo.ListActiveWarningStatesByGroup(ctx, groupID, 100)
+	if err != nil {
+		t.Fatalf("ListActiveWarningStatesByGroup: %v", err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("rows len = %d, want 3", len(rows))
+	}
+	// Esperado: [u3 count=2 last=t1, u2 count=2 last=NULL, u1 count=1 last=t2]
+	if rows[0].UserID != 3 || rows[1].UserID != 2 || rows[2].UserID != 1 {
+		t.Errorf("orden = [%d, %d, %d]; want [3, 2, 1] (count DESC, last_warning_at DESC NULLS LAST)",
+			rows[0].UserID, rows[1].UserID, rows[2].UserID)
+	}
+	if rows[1].LastWarningAt != nil {
+		t.Errorf("rows[1] (u2) LastWarningAt = %v, want NULL", rows[1].LastWarningAt)
+	}
+}
+
+// TestRepository_ResetWarningState_RetornaOldCountYSetea0: el reset
+// devuelve el counter previo y deja la fila en 0 con timestamps NULL.
+func TestRepository_ResetWarningState_RetornaOldCountYSetea0(t *testing.T) {
+	db := setupRepoDB(t)
+	repo := NewRepository(db)
+	ctx := context.Background()
+	groupID := int64(-100405)
+
+	if err := repo.CreateWarningStateIfMissing(ctx, groupID, 7); err != nil {
+		t.Fatalf("create ws: %v", err)
+	}
+	ws, _ := repo.GetWarningState(ctx, groupID, 7)
+	now := time.Now().UTC()
+	ws.WarningCount = 5
+	ws.LastWarningAt = &now
+	ws.LastActionAt = &now
+	ws.ExpiresAt = &now
+	if err := repo.UpsertWarningState(ctx, ws); err != nil {
+		t.Fatalf("upsert ws: %v", err)
+	}
+
+	previous, err := repo.ResetWarningState(ctx, groupID, 7)
+	if err != nil {
+		t.Fatalf("ResetWarningState: %v", err)
+	}
+	if previous != 5 {
+		t.Errorf("previous count = %d, want 5", previous)
+	}
+
+	got, err := repo.GetWarningState(ctx, groupID, 7)
+	if err != nil {
+		t.Fatalf("GetWarningState post-reset: %v", err)
+	}
+	if got.WarningCount != 0 {
+		t.Errorf("counter post-reset = %d, want 0", got.WarningCount)
+	}
+	if got.LastWarningAt != nil || got.LastActionAt != nil || got.ExpiresAt != nil {
+		t.Errorf("timestamps post-reset = (%v, %v, %v); want (nil, nil, nil)",
+			got.LastWarningAt, got.LastActionAt, got.ExpiresAt)
+	}
+}
+
+// TestRepository_ResetWarningState_NoFilaRetorna0: si no existe fila
+// previa, retorna (0, nil) sin error (el handler mapea a 404).
+func TestRepository_ResetWarningState_NoFilaRetorna0(t *testing.T) {
+	db := setupRepoDB(t)
+	repo := NewRepository(db)
+	ctx := context.Background()
+
+	previous, err := repo.ResetWarningState(ctx, -100406, 999)
+	if err != nil {
+		t.Fatalf("ResetWarningState (sin fila): %v", err)
+	}
+	if previous != 0 {
+		t.Errorf("previous count = %d, want 0", previous)
+	}
+}
+
+func stringPtr(s string) *string { return &s }
+
 // --- Tests de listas (slice 2): banned_words y link_allowlist ---
 
 // TestRepository_ListBannedWords_Empty: grupo sin palabras → lista vacia.

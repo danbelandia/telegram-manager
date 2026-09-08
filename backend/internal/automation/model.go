@@ -23,6 +23,7 @@ package automation
 
 import (
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -117,6 +118,35 @@ type WarningState struct {
 	LastWarningAt *time.Time
 	LastActionAt  *time.Time
 	ExpiresAt     *time.Time
+}
+
+// WarningStateRow extiende WarningState con datos de display (first_name
+// y username del usuario desde la tabla users via LEFT JOIN) para el
+// dashboard de moderacion de slice 3 (Fase 3). Si el usuario no tiene
+// fila en `users` (entraron al grupo sin pasar por chat_join_request),
+// FirstName queda "" y Username queda nil; el helper DisplayName()
+// aplica el fallback "user {id}" para la UI.
+//
+// Slice 3: queries en automation/repository.go usan este tipo para el
+// handler GET .../automation/warnings.
+type WarningStateRow struct {
+	WarningState
+	FirstName string
+	Username  *string
+}
+
+// DisplayName devuelve el nombre legible para el admin en el panel.
+// Prioridad: FirstName → @Username → "user {user_id}". Encapsula el
+// fallback para que el handler devuelva `display_name` listo y el
+// frontend no tenga que replicar la logica (D14 del design).
+func (w WarningStateRow) DisplayName() string {
+	if w.FirstName != "" {
+		return w.FirstName
+	}
+	if w.Username != nil && *w.Username != "" {
+		return "@" + *w.Username
+	}
+	return fmt.Sprintf("user %d", w.UserID)
 }
 
 // RuleHit es el resultado de una regla individual. RuleName es el

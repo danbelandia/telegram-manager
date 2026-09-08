@@ -207,6 +207,102 @@ WHERE group_id = $1 AND expires_at IS NOT NULL AND expires_at <= $2`
 	return n, nil
 }
 
+// ListActiveWarningStatesByGroup devuelve las warning_state activas
+// (warning_count > 0) del grupo con display name via LEFT JOIN a users
+// (best-effort: si el user no tiene fila en users, FirstName="" y
+// Username=nil; el helper WarningStateRow.DisplayName aplica el
+// fallback). Slice 3 (Fase 3) usa este metodo para el handler GET
+// .../automation/warnings del dashboard.
+//
+// `limit` es un cap defensivo (default 100 desde el handler): si hay
+// mas de `limit` advertencias activas, devuelve las primeras `limit`
+// ordenadas por warning_count DESC, last_warning_at DESC NULLS LAST y
+// `truncated=true`. Si el caller quiere saber si hay mas sin paginar,
+// consulta ademas el `truncated` retornado.
+func (r *Repository) ListActiveWarningStatesByGroup(ctx context.Context, groupID int64, limit int) ([]WarningStateRow, bool, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	const q = `
+SELECT uws.group_id, uws.user_id, uws.warning_count,
+       uws.last_warning_at, uws.last_action_at, uws.expires_at,
+       COALESCE(u.first_name, '') AS first_name,
+       u.username
+FROM user_warning_state uws
+LEFT JOIN users u ON u.telegram_id = uws.user_id
+WHERE uws.group_id = $1 AND uws.warning_count > 0
+ORDER BY uws.warning_count DESC, uws.last_warning_at DESC NULLS LAST
+LIMIT $2`
+
+	rows, err := r.db.QueryContext(ctx, q, groupID, limit)
+	if err != nil {
+		return nil, false, fmt.Errorf("automation: list active warning states %d: %w", groupID, err)
+	}
+	defer rows.Close()
+
+	out := make([]WarningStateRow, 0)
+	for rows.Next() {
+		w, err := scanWarningStateRow(rows)
+		if err != nil {
+			return nil, false, fmt.Errorf("automation: scan warning state row: %w", err)
+		}
+		out = append(out, w)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("automation: list active warning states %d: %w", groupID, err)
+	}
+	// truncated = true si el resultset alcanzo el cap (puede haber mas).
+	truncated := len(out) == limit
+	return out, truncated, nil
+}
+
+// ResetWarningState resetea manualmente el counter de un (group, user)
+// para el dashboard de slice 3. Retorna el warning_count previo (0 si
+// la fila no existia) y deja la fila con warning_count=0 + timestamps
+// NULL. D12 del design: best-effort via SELECT prev + UPDATE; race con
+// HandleMessage es tolerable (admin puede reintentar).
+//
+// Retorna (0, nil) si la fila no existia; el handler distingue "no
+// habia estado para resetear" (404 NOT_FOUND) vs "reseteado OK".
+func (r *Repository) ResetWarningState(ctx context.Context, groupID, userID int64) (int64, error) {
+	// 1) SELECT previo para auditoria (warning_count_before_reset en
+	//    metadata del log). Si la fila no existe → 404 desde el handler.
+	var previousCount int64
+	row := r.db.QueryRowContext(ctx,
+		`SELECT warning_count FROM user_warning_state WHERE group_id = $1 AND user_id = $2`,
+		groupID, userID,
+	)
+	if err := row.Scan(&previousCount); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("automation: reset warning state read previous (%d,%d): %w", groupID, userID, err)
+	}
+	// 2) UPDATE atomico: 0 + timestamps NULL.
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE user_warning_state
+         SET warning_count    = 0,
+             last_warning_at  = NULL,
+             last_action_at   = NULL,
+             expires_at       = NULL
+         WHERE group_id = $1 AND user_id = $2`,
+		groupID, userID,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("automation: reset warning state (%d,%d): %w", groupID, userID, err)
+	}
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("automation: reset warning state (%d,%d): rows: %w", groupID, userID, err)
+	}
+	if rowsAffected == 0 {
+		// Fila borrada entre el SELECT y el UPDATE (concurrencia
+		// extrema). Devolvemos 0; el caller tratara como 404.
+		return 0, nil
+	}
+	return previousCount, nil
+}
+
 // --- banned_words (slice 2) ---
 
 // ListBannedWords devuelve la lista ordenada alfabeticamente (lower-case,
@@ -341,4 +437,20 @@ func scanWarningState(row rowScanner) (WarningState, error) {
 		return WarningState{}, err
 	}
 	return ws, nil
+}
+
+// scanWarningStateRow desempaqueta una fila de
+// ListActiveWarningStatesByGroup (incluye display name via LEFT JOIN).
+// FirstName se devuelve vacio si el user no tenia fila en users;
+// Username es nil si el user no tenia fila o el username era NULL.
+func scanWarningStateRow(row rowScanner) (WarningStateRow, error) {
+	var w WarningStateRow
+	if err := row.Scan(
+		&w.GroupID, &w.UserID, &w.WarningCount,
+		&w.LastWarningAt, &w.LastActionAt, &w.ExpiresAt,
+		&w.FirstName, &w.Username,
+	); err != nil {
+		return WarningStateRow{}, err
+	}
+	return w, nil
 }
