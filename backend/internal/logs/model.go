@@ -57,6 +57,11 @@ const (
 	// Slice 2.1 — warning visual al usuario antes de la auto-action.
 	// ActorID=nil (sistema). Disparado por automation.WarningSender.
 	ActionWarnUserSent = "WARN_USER_SENT"
+	// Slice 3 — dashboard de moderacion (Fase 3): reset manual del
+	// counter de advertencias desde /groups/:id/moderation. ActorID !=
+	// nil (admin del panel). Metadata incluye user_id + el warning_count
+	// previo al reset, para auditoria (cuanto se perdono).
+	ActionResetWarnings = "RESET_WARNINGS"
 )
 
 // Entry es una fila de auditoria. ActorID es el id del admin del panel

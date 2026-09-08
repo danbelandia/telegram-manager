@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"time"
 )
 
 // Repository persiste logs de auditoria en PostgreSQL.
@@ -88,4 +89,59 @@ func marshalMetadata(m map[string]any) (any, error) {
 		return nil, fmt.Errorf("marshal metadata: %w", err)
 	}
 	return b, nil
+}
+
+// CountByActionAndGroup agrega logs por action en una ventana temporal
+// para un grupo. Usado por el handler GET .../automation/stats del
+// dashboard de slice 3 (Fase 3). 1 roundtrip para los 3 actions
+// (RULE_TRIGGERED, AUTOMUTE_USER, AUTOBAN_USER) gracias a `action =
+// ANY($2)` con array bounded.
+//
+// Retorna map[action]count con todos los actions que tengan count > 0
+// en la ventana (los actions sin ocurrencias NO aparecen en el map).
+// El caller rellena los contadores faltantes con 0 antes de responder
+// al panel (ej. `{rule_triggered: 0, automute: 0, autoban: 0}`).
+func (r *Repository) CountByActionAndGroup(ctx context.Context, groupID int64, actions []string, since time.Time) (map[string]int, error) {
+	const q = `
+SELECT action, COUNT(*)
+FROM logs
+WHERE group_id = $1 AND action = ANY($2) AND created_at >= $3
+GROUP BY action`
+
+	rows, err := r.db.QueryContext(ctx, q, groupID, actions, since.UTC())
+	if err != nil {
+		return nil, fmt.Errorf("logs: count actions %d: %w", groupID, err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]int)
+	for rows.Next() {
+		action, count, err := scanCount(rows)
+		if err != nil {
+			return nil, fmt.Errorf("logs: count actions %d: scan: %w", groupID, err)
+		}
+		out[action] = count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("logs: count actions %d: %w", groupID, err)
+	}
+	return out, nil
+}
+
+// scanCount desempaqueta la fila (action, count) de
+// CountByActionAndGroup. Reutilizable si futuros reportes piden
+// agregaciones similares.
+func scanCount(row rowScanner) (string, int, error) {
+	var action string
+	var count int
+	if err := row.Scan(&action, &count); err != nil {
+		return "", 0, err
+	}
+	return action, count, nil
+}
+
+// rowScanner es la vista minima que scanCount necesita (compatible
+// con *sql.Rows y *sql.Row).
+type rowScanner interface {
+	Scan(dest ...any) error
 }
