@@ -31,7 +31,49 @@ import (
 var (
 	// ErrNotFound: settings o warning_state inexistente.
 	ErrNotFound = errors.New("automation: not found")
+	// ErrAutomationGroupNotFound: el group_id de un endpoint de
+	// automation no existe en la tabla groups (404 al admin).
+	// Distinto de ErrNotFound: ErrNotFound es para sub-filas
+	// (settings, warning_state, word); ErrAutomationGroupNotFound
+	// es para el grupo de Telegram mismo.
+	ErrAutomationGroupNotFound = errors.New("automation: group not found")
 )
+
+// Lists son las dos listas que el Service pre-carga una vez por
+// mensaje y propaga a las reglas via Rule.Evaluate. Si el Service
+// detecta que ningun toggle dependiente esta activo, pasa nil para
+// ahorrar 2 queries a la DB. nil es defensivo en todas las reglas
+// (que vuelven nil si lists == nil y la lista correspondiente
+// estuviera vacia).
+type Lists struct {
+	BannedWords   []string
+	LinkAllowlist []string
+}
+
+// DefaultSettings devuelve los valores por defecto del modulo de
+// moderacion automatica (mismos que Service.LoadOrCreateSettings:
+// todos los toggles en false, flood 5/10, warning_limit 3,
+// automute 3/10min, autoban 5, expire 30d). Usado por el handler
+// GET /automation/settings cuando la fila no existe: el primer PUT
+// la persiste con UPSERT.
+//
+// Consistente con Service.LoadOrCreateSettings (model.go de
+// service.go); cualquier cambio en defaults debe replicarse en
+// ambos lugares.
+func DefaultSettings(groupID int64) *Settings {
+	return &Settings{
+		GroupID:           groupID,
+		Enabled:           false,
+		FloodEnabled:      false,
+		FloodMessages:     5,
+		FloodSeconds:      10,
+		WarningLimit:      3,
+		AutomuteWarnings:  3,
+		AutomuteMinutes:   10,
+		AutobanWarnings:   5,
+		WarningExpireDays: 30,
+	}
+}
 
 // Settings es la fila de group_moderation_settings. GroupID es el
 // telegram_id del grupo (id natural que usamos en todas las llamadas a
