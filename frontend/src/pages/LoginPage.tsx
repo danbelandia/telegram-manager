@@ -6,8 +6,9 @@
 import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { Navigate, useLocation, useNavigate } from 'react-router-dom'
+import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import {
+  Alert,
   Button,
   Center,
   Paper,
@@ -30,6 +31,12 @@ export default function LoginPage() {
   const { user, login } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
+  // Degradacion del signup (Q2/D6): ?username= pre-rellena y
+  // ?created=1 muestra el aviso. Query params (no location.state)
+  // para sobrevivir al redirect tras el auto-login fallido.
+  const [searchParams] = useSearchParams()
+  const prefilledUsername = searchParams.get('username') ?? ''
+  const justCreated = searchParams.get('created') === '1'
 
   const {
     control,
@@ -37,7 +44,7 @@ export default function LoginPage() {
     formState: { errors, isSubmitting },
   } = useForm<LoginForm>({
     resolver: zodResolver(loginSchema),
-    defaultValues: { username: '', password: '' },
+    defaultValues: { username: prefilledUsername, password: '' },
   })
 
   if (user) {
@@ -65,6 +72,9 @@ export default function LoginPage() {
         </Title>
         <form onSubmit={handleSubmit(onSubmit)} noValidate>
           <Stack>
+            {justCreated ? (
+              <Alert color="green" title="Cuenta creada, iniciá sesión" />
+            ) : null}
             <Controller
               name="username"
               control={control}
