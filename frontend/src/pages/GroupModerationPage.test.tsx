@@ -210,6 +210,7 @@ describe('GroupModerationPage', () => {
   })
 
   it('abre el Modal de confirm al click en Reset y cancela sin disparar POST', async () => {
+    const user = userEvent.setup()
     let resetCalls = 0
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = String(input)
@@ -241,15 +242,19 @@ describe('GroupModerationPage', () => {
     // body esta montado con resetTarget != null). El texto del body
     // ("Resetear las advertencias de Ana", "No desmutea") se fragmenta
     // por los <strong> wrappers; no es estable de matchear via
-    // getByText — los buttons son anclas mas confiables.
+    // getByText — los buttons son anclas mas confiables. Mantine v7
+    // Modal tiene open animation (~150ms); usamos findByTestId async
+    // para esperar el render del contenido. Nota: el Modal usa Portal
+    // que monta los buttons fuera del data-testid root, asi que
+    // usamos screen (no within) para las busquedas.
     expect(await screen.findByTestId('reset-warning-modal')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Cancelar' })).toBeInTheDocument()
-    expect(screen.getByTestId('reset-warning-confirm')).toBeInTheDocument()
+    expect(await screen.findByTestId('reset-warning-cancel')).toBeInTheDocument()
+    expect(await screen.findByTestId('reset-warning-confirm')).toBeInTheDocument()
 
     // Cancelar → cierra sin POST. Mantine v7 Modal tiene exit animation
     // (transitionProps default); usamos findBy para esperar a que
     // el modal desaparezca del DOM.
-    screen.getByTestId('reset-warning-cancel').click()
+    await user.click(await screen.findByTestId('reset-warning-cancel'))
     // El modal cerrado: el body (texto "no desmutea") ya no esta.
     await waitFor(() => {
       expect(screen.queryByText(/no desmutea/i)).not.toBeInTheDocument()

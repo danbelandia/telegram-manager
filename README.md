@@ -3,16 +3,16 @@
 Plataforma para administrar grupos de Telegram: bot, backend en Go, panel
 React + TypeScript y PostgreSQL.
 
-> **Estado: MVP Fase 1 + Fase 2 slice 1-2-3 + Fase 3 slice 1-2**
+> **Estado: MVP Fase 1 + Fase 2 slice 1-2-3 + Fase 3 slice 1-2-2.1-3**
 > (AGENTS.md §22-23): administración de grupos, membresía y moderación
 > básica, solicitudes de ingreso, logs, autenticación del panel,
 > publicaciones con foto por URL + botones inline + envío multi-grupo +
 > programación (`scheduled_at`) + cancelación + historial paginado, y
-> **moderación automática** (Fase 3, slice 1 foundation: Flood + auto-
-> mute/ban + audit; slice 2: anti-spam + anti-link + banned-words +
-> allowlist + editor de settings en el panel). Las fases 4
-> (automatizaciones) y 3-slice-3 (dashboard de warnings) son
-> posteriores y **no** están en esta versión.
+> **moderación automática** (Fase 3: Flood + auto-mute/ban + audit +
+> anti-spam/anti-link/banned-words + editor de settings + warning
+> visual al usuario + **dashboard de warnings** con stats 24h/7d y
+> reset manual). Las fases 4 (automatizaciones trigger/condition/
+> action) son posteriores y **no** están en esta versión.
 
 ## Quick path
 
@@ -87,6 +87,7 @@ y el login falla con **HTTP 405**. Dejá la variable vacía o comentada.
 | `/groups/:telegram_id/logs` | Auditoría de acciones administrativas |
 | `/publications` | Publicar ahora con foto URL + botones inline, multi-grupo, filtro por grupo en historial |
 | `/groups/:telegram_id/automation` | Editor de moderación automática: toggles (Flood / Anti-spam / Anti-link / Banned-words), umbrales, listas de palabras prohibidas y allowlist de enlaces |
+| `/groups/:telegram_id/moderation` | Dashboard de moderación: estadísticas 24h/7d (reglas disparadas, auto-mute, auto-ban) + advertencias activas con display name + botón Reset manual |
 
 Nota: el `:telegram_id` de las URLs es el ID de Telegram del grupo (ej.
 `-100123456789`), no un id interno.
@@ -332,9 +333,38 @@ aborta el resto.
 | GET | `/api/groups/{id}/automation/link-allowlist` | — | `{domains: []string}` (200) |
 | POST | `/api/groups/{id}/automation/link-allowlist` | `{domain: string}` | `{domains: []string}` (200 / 400) |
 | DELETE | `/api/groups/{id}/automation/link-allowlist/{domain}` | — | `{domains: []string}` (200) |
+| GET | `/api/groups/{id}/automation/warnings` | — | `{warnings: [{user_id, display_name, username, warning_count, last_warning_at, ...}], truncated: bool}` (cap top 100 + LEFT JOIN a `users`) |
+| POST | `/api/groups/{id}/automation/warnings/{user_id}/reset` | — | `{user_id, warning_count: 0, reset: true}` + log `RESET_WARNINGS` con `ActorID` admin y metadata `{user_id, warning_count_before_reset}` |
+| GET | `/api/groups/{id}/automation/stats?period=24h\|7d` | — | `{rule_triggered, automute, autoban, period}` (default `24h`; otros valores → 400 `VALIDATION_ERROR`) |
 
 Todas requieren `requireAuth` (panel admin) y validan el grupo
 (`groups.GetByTelegramID` → 404 si no existe).
+
+### Dashboard de moderación (panel, slice 3)
+
+Ruta `/groups/:telegram_id/moderation`. Es la contraparte de observación
+de `/automation`: settings se editan en `/automation`; el dashboard
+muestra lo que la moderación automática está haciendo. Dos secciones sin
+Save button (read-only + reset manual):
+
+1. **Estadísticas**: 3 Cards (Reglas disparadas / Auto-mute / Auto-ban)
+   con conteos agregados de los logs de auto-moderación en la ventana
+   seleccionada. `<Select>` con periodos `24h` (default) y `7d`; botón
+   Refrescar que invalida las queries (sin auto-poll, YAGNI).
+2. **Advertencias activas**: `<Table>` con display name (LEFT JOIN a
+   `users`: FirstName → @username → "user {id}"), counter como Badge
+   numérico, última advertencia formateada (`Intl.RelativeTimeFormat`
+   es-AR), y botón Reset por fila. Cap defensivo top 100 con `<Alert>`
+   amarillo si `truncated=true`. Empty state cuando no hay activas.
+
+Reset abre `<Modal>` Mantine v7 con confirmación ("¿Resetear las
+advertencias de {nombre}?"). **Importante**: reset SOLO limpia el
+counter en DB (`user_warning_state`); NO desmutea al usuario en
+Telegram — si el admin quiere desmutear, usa el endpoint
+`POST /api/groups/{id}/users/{userId}/unmute` desde la vista de
+membresía. La acción se audita con `ActorID=<admin>` y metadata
+`warning_count_before_reset` para que el equipo vea cuánto se perdonó
+sin tener que cruzar logs a mano.
 
 ### Audit log (slice 1 vs slice 2)
 
@@ -350,17 +380,6 @@ desde el panel):
 
 El comentario en `logs/model.go` documenta la distinción para futuros
 mantenedores.
-
-`GET /api/publications` acepta:
-
-- `?group_id=<int64>` (filtro por grupo, slice 2).
-- `?limit=<int>` (default `50`, max `100`). Valores fuera de rango
-  devuelven 400 `VALIDATION_ERROR`.
-- `?offset=<int>` (default `0`). Valores negativos devuelven 400.
-
-El panel muestra los controles **Anterior / Siguiente** debajo del
-listado (Prev deshabilitado en `offset=0`; Next deshabilitado cuando
-la página retornada tiene menos filas que `limit`).
 
 ## Limitaciones reales de la Bot API
 
