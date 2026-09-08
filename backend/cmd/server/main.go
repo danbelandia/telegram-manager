@@ -146,6 +146,7 @@ func run() error {
 	// Invariante (bugfix #172): permissionOkAdmin =
 	// g.BotStatus == StatusAdministrator; NUNCA claves can_*.
 	var (
+		automationService    *automation.Service
 		automationSubscriber *automation.Subscriber
 		automationWorkerErrs chan error
 	)
@@ -153,10 +154,17 @@ func run() error {
 		automationRepo := automation.NewRepository(db)
 		autoActionCh := make(chan automation.AutoAction, cfg.AutoActionBufferSize)
 		registry := automation.NewRegistry()
+		// Orden cheap-first (design D4): in-mem → CPU → DB-pre-loaded.
+		// Flood (in-mem ventana deslizante), AntiSpam (CPU puro sobre
+		// texto), AntiLink (CPU + lists.LinkAllowlist pre-cargada),
+		// BannedWords (lists.BannedWords pre-cargada; substring match).
 		registry.Register(automation.NewFloodRule())
+		registry.Register(automation.NewAntiSpamRule())
+		registry.Register(automation.NewAntiLinkRule())
+		registry.Register(automation.NewBannedWordsRule())
 		actioner := automation.NewAutoActioner(bot, logsRepo, groupsRepo, slog.Default())
-		automationService := automation.NewService(
-			automationRepo, automationRepo, registry,
+		automationService = automation.NewService(
+			automationRepo, automationRepo, automationRepo, registry,
 			logsRepo, groupsRepo, autoActionCh, slog.Default(),
 		)
 		automationWorker := automation.NewWorker(autoActionCh, actioner, slog.Default())
@@ -231,6 +239,7 @@ func run() error {
 			api.WithJoinRequests(joinRequestsRepo, moderationService),
 			api.WithLogs(logsRepo),
 			api.WithPublications(pubsService),
+			api.WithAutomation(automationService, logsRepo, groupsRepo),
 		)
 
 	case "polling":
@@ -241,6 +250,7 @@ func run() error {
 			api.WithJoinRequests(joinRequestsRepo, moderationService),
 			api.WithLogs(logsRepo),
 			api.WithPublications(pubsService),
+			api.WithAutomation(automationService, logsRepo, groupsRepo),
 		)
 		poller := telegram.NewPoller(bot, telegram.WithPollerLogger(slog.Default()))
 		pollerErrCh = make(chan error, 1)
