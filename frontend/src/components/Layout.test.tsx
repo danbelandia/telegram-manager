@@ -12,10 +12,19 @@ import { mantineTheme } from '../theme'
 
 // Mock del hook de auth: Layout consume `useAuth` para el username y
 // para `logout` (se ejecuta async en el wrapper). El mock evita la red.
+// `mockUser` es mutable para cubrir badge con slug y fallback #id
+// (spec frontend-auth REQ badge).
+let mockUser: { id: string; username: string; tenantId: number | null; tenantSlug: string | null } = {
+  id: '1',
+  username: 'admin',
+  tenantId: 7,
+  tenantSlug: 'acme',
+}
+
 vi.mock('../lib/auth-context', () => ({
   useAuth: () => ({
     loading: false,
-    user: { id: '1', username: 'admin' },
+    user: mockUser,
     login: vi.fn(),
     logout: vi.fn(async () => {}),
   }),
@@ -60,5 +69,19 @@ describe('Layout', () => {
 
     // Outlet: el contenido de la ruta hija.
     expect(screen.getByTestId('outlet-content')).toBeInTheDocument()
+  })
+
+  it('badge: muestra el slug cuando se conoce', async () => {
+    mockUser = { id: '1', username: 'admin', tenantId: 7, tenantSlug: 'acme' }
+    renderLayout()
+
+    expect(screen.getByTestId('tenant-badge')).toHaveTextContent('acme')
+  })
+
+  it('badge: fallback a Tenant #id sin slug', async () => {
+    mockUser = { id: '1', username: 'admin', tenantId: 7, tenantSlug: null }
+    renderLayout()
+
+    expect(screen.getByTestId('tenant-badge')).toHaveTextContent('Tenant #7')
   })
 })

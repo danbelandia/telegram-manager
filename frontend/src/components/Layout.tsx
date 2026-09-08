@@ -82,9 +82,16 @@ export default function Layout() {
           </Group>
           <Group gap="sm" wrap="nowrap">
             {user ? (
-              <Text size="sm" c="dimmed" visibleFrom="sm">
-                {user.username}
-              </Text>
+              <>
+                <Text size="sm" c="dimmed" visibleFrom="sm">
+                  {user.username}
+                </Text>
+                {/* Badge del tenant (REQ badge): slug conocido o
+                    fallback "Tenant #id"; nunca vacio. */}
+                <Text size="sm" fw={600} data-testid="tenant-badge">
+                  {user.tenantSlug ?? (user.tenantId !== null ? `Tenant #${user.tenantId}` : 'Tenant')}
+                </Text>
+              </>
             ) : null}
             <ColorSchemeToggle />
             <Button
