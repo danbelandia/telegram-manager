@@ -51,15 +51,16 @@ type ListsRepo interface {
 // de grupos no las puebla completas; la Bot API no las exige para
 // sendMessage/restrictChatMember/banChatMember en grupos siendo admin.
 type Service struct {
-	settingsRepo SettingsRepo
-	warnRepo     WarnRepo
-	listsRepo    ListsRepo
-	registry     *Registry
-	logs         LogWriter
-	groups       GroupReader
-	autoActionCh chan<- AutoAction
-	logger       *slog.Logger
-	now          func() time.Time
+	settingsRepo  SettingsRepo
+	warnRepo      WarnRepo
+	listsRepo     ListsRepo
+	registry      *Registry
+	logs          LogWriter
+	groups        GroupReader
+	autoActionCh  chan<- AutoAction
+	warningSender WarningSender // slice 2.1; nil-safe
+	logger        *slog.Logger
+	now           func() time.Time
 }
 
 // NewService construye el Service. autoActionCh es el buffer que el
@@ -69,6 +70,9 @@ type Service struct {
 // listsRepo puede ser nil solo si NINGUNA regla registrada depende
 // de listas (registro puro de FloodRule); en produccion el main.go
 // siempre lo inyecta.
+//
+// warningSender (slice 2.1) puede ser nil para tests/deploys donde no
+// se quiere enviar warnings visuales; el pipeline skipea el paso 7.5.
 func NewService(
 	settingsRepo SettingsRepo,
 	warnRepo WarnRepo,
@@ -77,21 +81,23 @@ func NewService(
 	logs LogWriter,
 	groups GroupReader,
 	autoActionCh chan<- AutoAction,
+	warningSender WarningSender,
 	logger *slog.Logger,
 ) *Service {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &Service{
-		settingsRepo: settingsRepo,
-		warnRepo:     warnRepo,
-		listsRepo:    listsRepo,
-		registry:     registry,
-		logs:         logs,
-		groups:       groups,
-		autoActionCh: autoActionCh,
-		logger:       logger,
-		now:          time.Now,
+		settingsRepo:  settingsRepo,
+		warnRepo:      warnRepo,
+		listsRepo:     listsRepo,
+		registry:      registry,
+		logs:          logs,
+		groups:        groups,
+		autoActionCh:  autoActionCh,
+		warningSender: warningSender,
+		logger:        logger,
+		now:           time.Now,
 	}
 }
 
@@ -106,6 +112,10 @@ func NewService(
 //  6. hit := Registry.Evaluate(msg, settings, ws).
 //  7. Si hit → ws.WarningCount++, actualizar last_warning_at, registrar
 //     log ActionRuleTriggered.
+//     7.5. Slice 2.1: si WarningUserEnabled + count coincide con
+//     automute-1 (pre-mute) o autoban-1 (pre-ban) → SendWarning via
+//     WarningSender con context.WithTimeout(5s). Failure no aborta
+//     el pipeline (best-effort feedback).
 //  8. Si ws.WarningCount >= autoban → enqueue AutoAction{ban}; sino
 //     si >= automute → enqueue AutoAction{mute, minutes: settings.AutomuteMinutes}.
 //
@@ -192,6 +202,24 @@ func (s *Service) HandleMessage(ctx context.Context, msg *telegram.Message) erro
 		// No abortamos: el counter ya esta persistido.
 	}
 
+	// Paso 7.5 (slice 2.1): enviar warning al usuario si corresponde.
+	// Sync con timeout 5s (spec D5). Falla del sender NO aborta el
+	// pipeline (log warn + continue).
+	if s.warningSender != nil && settings.WarnUserEnabled {
+		if kind := thresholdKindFor(settings, ws.WarningCount); kind != "" {
+			ctxSend, cancel := context.WithTimeout(ctx, warningSendTimeout)
+			if err := s.warningSender.SendWarning(ctxSend, msg, ws.WarningCount, kind); err != nil {
+				s.logger.Warn("automation: warning send failed",
+					"group_id", msg.Chat.ID,
+					"user_id", msg.From.ID,
+					"kind", string(kind),
+					"count", ws.WarningCount,
+					"error", err)
+			}
+			cancel()
+		}
+	}
+
 	// Paso 8: encolar auto-action si corresponde.
 	if ws.WarningCount >= settings.AutobanWarnings {
 		s.enqueueAction(AutoAction{
@@ -214,12 +242,36 @@ func (s *Service) HandleMessage(ctx context.Context, msg *telegram.Message) erro
 	return nil
 }
 
+// thresholdKindFor retorna el WarningKind que corresponde al count
+// post-increment, o "" si no hay warning que enviar.
+//
+// Reglas (spec REQ-26, REQ-27):
+//   - count == AutobanWarnings-1 → WarningPreBan (prioridad alta)
+//   - count == AutomuteWarnings-1 → WarningPreMute
+//   - sino → "" (skip)
+//
+// Prioridad pre-ban > pre-mute: si AutomuteWarnings == AutobanWarnings
+// (e.g. ambos = 3) y count == 2, ambos matchean pero solo se envia
+// pre-ban (un solo warning). Esto resuelve el edge case documentado en
+// REQ-27.
+func thresholdKindFor(s *Settings, count int16) WarningKind {
+	if s == nil {
+		return ""
+	}
+	if s.AutobanWarnings > 0 && count == s.AutobanWarnings-1 {
+		return WarningPreBan
+	}
+	if s.AutomuteWarnings > 0 && count == s.AutomuteWarnings-1 {
+		return WarningPreMute
+	}
+	return ""
+}
+
 // LoadOrCreateSettings devuelve los settings del grupo, creando la
 // fila con defaults si no existe (idempotente).
 //
-// Defaults: enabled=false, todos los toggles=false, flood_messages=5,
-// flood_seconds=10, warning_limit=3, automute_warnings=3,
-// automute_minutes=10, autoban_warnings=5, warning_expire_days=30.
+// Defaults: ver DefaultSettings() en model.go (unica fuente de verdad
+// para mantener consistencia entre handler y Service).
 func (s *Service) LoadOrCreateSettings(ctx context.Context, groupID int64) (*Settings, error) {
 	settings, err := s.settingsRepo.GetSettings(ctx, groupID)
 	if err == nil {
@@ -228,19 +280,9 @@ func (s *Service) LoadOrCreateSettings(ctx context.Context, groupID int64) (*Set
 	if !errors.Is(err, ErrNotFound) {
 		return nil, err
 	}
-	// Auto-create con defaults.
-	defaults := &Settings{
-		GroupID:           groupID,
-		Enabled:           false,
-		FloodEnabled:      false,
-		FloodMessages:     5,
-		FloodSeconds:      10,
-		WarningLimit:      3,
-		AutomuteWarnings:  3,
-		AutomuteMinutes:   10,
-		AutobanWarnings:   5,
-		WarningExpireDays: 30,
-	}
+	// Auto-create con defaults desde DefaultSettings (incluye slice 2.1
+	// WarnUserEnabled=true + WarnUserTemplate=nil).
+	defaults := DefaultSettings(groupID)
 	if err := s.settingsRepo.UpsertSettings(ctx, defaults); err != nil {
 		return nil, fmt.Errorf("automation: create default settings: %w", err)
 	}

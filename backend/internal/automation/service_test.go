@@ -2,6 +2,7 @@ package automation
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -180,17 +181,34 @@ func (f *fakeListsRepo) RemoveLinkAllowlist(_ context.Context, groupID int64, do
 
 // newSvc construye un Service para tests unit. AutoActionCh tiene
 // buffer 4 (suficiente para los tests; spec REQ-11 usa 100).
+//
+// warningSender se pasa nil por default (slice 2.1: el pipeline skipea
+// el paso 7.5 si nil). Tests que ejercen el path del warning usan
+// newSvcWithSender.
 func newSvc(
 	settingsRepo *fakeSettingsRepo,
 	warnRepo *fakeWarnRepo,
 	groupsMap map[int64]*groups.Group,
 	ch chan<- AutoAction,
 ) (*Service, *fakeLogs) {
+	return newSvcWithSender(settingsRepo, warnRepo, nil, groupsMap, ch, nil)
+}
+
+// newSvcWithSender es la variante que acepta WarningSender (slice 2.1).
+// Si se pasa nil para sender, el pipeline skipea el paso 7.5.
+func newSvcWithSender(
+	settingsRepo *fakeSettingsRepo,
+	warnRepo *fakeWarnRepo,
+	listsRepo *fakeListsRepo,
+	groupsMap map[int64]*groups.Group,
+	ch chan<- AutoAction,
+	sender WarningSender,
+) (*Service, *fakeLogs) {
 	lg := &fakeLogs{}
 	gr := &fakeGroups{groups: groupsMap}
 	reg := NewRegistry()
 	reg.Register(NewFloodRule())
-	svc := NewService(settingsRepo, warnRepo, nil, reg, lg, gr, ch, nil)
+	svc := NewService(settingsRepo, warnRepo, listsRepo, reg, lg, gr, ch, sender, nil)
 	return svc, lg
 }
 
@@ -211,7 +229,7 @@ func newSvcWithLists(
 	reg.Register(NewAntiSpamRule())
 	reg.Register(NewAntiLinkRule())
 	reg.Register(NewBannedWordsRule())
-	svc := NewService(settingsRepo, warnRepo, listsRepo, reg, lg, gr, ch, nil)
+	svc := NewService(settingsRepo, warnRepo, listsRepo, reg, lg, gr, ch, nil, nil)
 	return svc, lg
 }
 
@@ -718,5 +736,316 @@ func TestService_NilListsRepo_NoPanic(t *testing.T) {
 		if err := svc.HandleMessage(context.Background(), msg(-1001, 999)); err != nil {
 			t.Fatalf("HandleMessage %d: %v", i+1, err)
 		}
+	}
+}
+
+// --- Tests de slice 2.1 (paso 7.5: warning visual al usuario) ---
+
+// fakeWarningSender implementa WarningSender capturando calls.
+type fakeWarningSender struct {
+	mu    sync.Mutex
+	calls []warningCall
+	err   error
+}
+
+type warningCall struct {
+	groupID int64
+	userID  int64
+	count   int16
+	kind    WarningKind
+}
+
+func (f *fakeWarningSender) SendWarning(_ context.Context, msg *telegram.Message, count int16, kind WarningKind) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if msg == nil {
+		f.calls = append(f.calls, warningCall{count: count, kind: kind})
+	} else {
+		f.calls = append(f.calls, warningCall{
+			groupID: msg.Chat.ID,
+			userID:  msg.From.ID,
+			count:   count,
+			kind:    kind,
+		})
+	}
+	return f.err
+}
+
+// settings con WarnUserEnabled=true y los thresholds pedidos.
+func settingsForWarningTest(automute, autoban, muteMin int16, enabled bool) *Settings {
+	return &Settings{
+		GroupID: -1001, Enabled: true,
+		FloodEnabled:  true,
+		FloodMessages: 3, FloodSeconds: 10,
+		AutomuteWarnings:  automute,
+		AutomuteMinutes:   muteMin,
+		AutobanWarnings:   autoban,
+		WarningExpireDays: 30,
+		WarnUserEnabled:   enabled,
+	}
+}
+
+// TestService_Warning_CountAutomuteMinusOne_TriggersPreMute: pre-seed
+// count=1 + automute=3 → HandleMessage post-inc count=2 (== automute-1)
+// → SendWarning con WarningPreMute. NO encola auto-action (count <
+// automute todavía).
+func TestService_Warning_CountAutomuteMinusOne_TriggersPreMute(t *testing.T) {
+	settingsRepo := newFakeSettingsRepo()
+	settingsRepo.rows[-1001] = settingsForWarningTest(3, 5, 10, true)
+	warnRepo := newFakeWarnRepo()
+	warnRepo.rows[[2]int64{-1001, 999}] = &WarningState{GroupID: -1001, UserID: 999, WarningCount: 1}
+	ch := make(chan AutoAction, 4)
+	sender := &fakeWarningSender{}
+	svc, _ := newSvcWithSender(settingsRepo, warnRepo, nil, map[int64]*groups.Group{
+		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
+	}, ch, sender)
+
+	// Disparar 3 hits para forzar FloodRule → warning_count sube a 2.
+	for i := 0; i < 3; i++ {
+		if err := svc.HandleMessage(context.Background(), msg(-1001, 999)); err != nil {
+			t.Fatalf("HandleMessage %d: %v", i+1, err)
+		}
+	}
+
+	if len(sender.calls) != 1 {
+		t.Fatalf("warning calls = %d, want 1 (count=2 == automute-1)", len(sender.calls))
+	}
+	if sender.calls[0].kind != WarningPreMute {
+		t.Errorf("kind = %q, want %q", sender.calls[0].kind, WarningPreMute)
+	}
+	if sender.calls[0].count != 2 {
+		t.Errorf("count = %d, want 2", sender.calls[0].count)
+	}
+}
+
+// TestService_Warning_CountAutobanMinusOne_TriggersPreBan: pre-seed
+// count=3 + autoban=5 → HandleMessage post-inc count=4 (== autoban-1)
+// → SendWarning con WarningPreBan.
+func TestService_Warning_CountAutobanMinusOne_TriggersPreBan(t *testing.T) {
+	settingsRepo := newFakeSettingsRepo()
+	settingsRepo.rows[-1001] = settingsForWarningTest(3, 5, 10, true)
+	warnRepo := newFakeWarnRepo()
+	warnRepo.rows[[2]int64{-1001, 999}] = &WarningState{GroupID: -1001, UserID: 999, WarningCount: 3}
+	ch := make(chan AutoAction, 4)
+	sender := &fakeWarningSender{}
+	svc, _ := newSvcWithSender(settingsRepo, warnRepo, nil, map[int64]*groups.Group{
+		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
+	}, ch, sender)
+
+	for i := 0; i < 3; i++ {
+		if err := svc.HandleMessage(context.Background(), msg(-1001, 999)); err != nil {
+			t.Fatalf("HandleMessage %d: %v", i+1, err)
+		}
+	}
+
+	if len(sender.calls) != 1 {
+		t.Fatalf("warning calls = %d, want 1", len(sender.calls))
+	}
+	if sender.calls[0].kind != WarningPreBan {
+		t.Errorf("kind = %q, want %q", sender.calls[0].kind, WarningPreBan)
+	}
+	if sender.calls[0].count != 4 {
+		t.Errorf("count = %d, want 4", sender.calls[0].count)
+	}
+}
+
+// TestService_Warning_CountZero_NoSend: post-inc count=1 (NO matchea
+// ningún threshold-1) → NO SendWarning.
+func TestService_Warning_CountZero_NoSend(t *testing.T) {
+	settingsRepo := newFakeSettingsRepo()
+	settingsRepo.rows[-1001] = settingsForWarningTest(3, 5, 10, true)
+	warnRepo := newFakeWarnRepo()
+	warnRepo.rows[[2]int64{-1001, 999}] = &WarningState{GroupID: -1001, UserID: 999, WarningCount: 0}
+	ch := make(chan AutoAction, 4)
+	sender := &fakeWarningSender{}
+	svc, _ := newSvcWithSender(settingsRepo, warnRepo, nil, map[int64]*groups.Group{
+		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
+	}, ch, sender)
+
+	for i := 0; i < 3; i++ {
+		if err := svc.HandleMessage(context.Background(), msg(-1001, 999)); err != nil {
+			t.Fatalf("HandleMessage %d: %v", i+1, err)
+		}
+	}
+
+	if len(sender.calls) != 0 {
+		t.Errorf("warning calls = %d, want 0 (count=1 no matchea threshold-1)", len(sender.calls))
+	}
+}
+
+// TestService_Warning_AtThreshold_NoSend: post-inc count == threshold
+// → NO warning (la auto-action ocurre en el mismo HandleMessage; el
+// warning pre-action solo va en threshold-1).
+func TestService_Warning_AtThreshold_NoSend(t *testing.T) {
+	settingsRepo := newFakeSettingsRepo()
+	settingsRepo.rows[-1001] = settingsForWarningTest(3, 5, 10, true)
+	warnRepo := newFakeWarnRepo()
+	warnRepo.rows[[2]int64{-1001, 999}] = &WarningState{GroupID: -1001, UserID: 999, WarningCount: 2}
+	ch := make(chan AutoAction, 4)
+	sender := &fakeWarningSender{}
+	svc, _ := newSvcWithSender(settingsRepo, warnRepo, nil, map[int64]*groups.Group{
+		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
+	}, ch, sender)
+
+	for i := 0; i < 3; i++ {
+		if err := svc.HandleMessage(context.Background(), msg(-1001, 999)); err != nil {
+			t.Fatalf("HandleMessage %d: %v", i+1, err)
+		}
+	}
+
+	// En el 1er hit: count 2→3 == automute → encola mute. NO warning.
+	// En hits siguientes: count sigue subiendo pero >= automute, ya no
+	// matchea automute-1 ni autoban-1.
+	if len(sender.calls) != 0 {
+		t.Errorf("warning calls = %d, want 0 (count == threshold no envia warning)", len(sender.calls))
+	}
+	// Verificamos que la auto-action SI se encolo.
+	if len(ch) == 0 {
+		t.Errorf("autoActionCh vacia, want 1 mute (la accion se ejecuto)")
+	}
+}
+
+// TestService_Warning_Disabled_NoSend: WarnUserEnabled=false → NO
+// warning aunque count matchee.
+func TestService_Warning_Disabled_NoSend(t *testing.T) {
+	settingsRepo := newFakeSettingsRepo()
+	settingsRepo.rows[-1001] = settingsForWarningTest(3, 5, 10, false) // toggle off
+	warnRepo := newFakeWarnRepo()
+	warnRepo.rows[[2]int64{-1001, 999}] = &WarningState{GroupID: -1001, UserID: 999, WarningCount: 1}
+	ch := make(chan AutoAction, 4)
+	sender := &fakeWarningSender{}
+	svc, _ := newSvcWithSender(settingsRepo, warnRepo, nil, map[int64]*groups.Group{
+		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
+	}, ch, sender)
+
+	for i := 0; i < 3; i++ {
+		if err := svc.HandleMessage(context.Background(), msg(-1001, 999)); err != nil {
+			t.Fatalf("HandleMessage %d: %v", i+1, err)
+		}
+	}
+
+	if len(sender.calls) != 0 {
+		t.Errorf("warning calls = %d, want 0 (WarnUserEnabled=false)", len(sender.calls))
+	}
+}
+
+// TestService_Warning_BotNotAdmin_NoSend: bot member → skip silencioso
+// en paso 4 → NO warning (paso 7.5 no se ejecuta).
+func TestService_Warning_BotNotAdmin_NoSend(t *testing.T) {
+	settingsRepo := newFakeSettingsRepo()
+	settingsRepo.rows[-1001] = settingsForWarningTest(3, 5, 10, true)
+	warnRepo := newFakeWarnRepo()
+	warnRepo.rows[[2]int64{-1001, 999}] = &WarningState{GroupID: -1001, UserID: 999, WarningCount: 1}
+	ch := make(chan AutoAction, 4)
+	sender := &fakeWarningSender{}
+	svc, _ := newSvcWithSender(settingsRepo, warnRepo, nil, map[int64]*groups.Group{
+		-1001: {TelegramID: -1001, BotStatus: groups.StatusMember}, // NO admin
+	}, ch, sender)
+
+	for i := 0; i < 3; i++ {
+		if err := svc.HandleMessage(context.Background(), msg(-1001, 999)); err != nil {
+			t.Fatalf("HandleMessage %d: %v", i+1, err)
+		}
+	}
+
+	if len(sender.calls) != 0 {
+		t.Errorf("warning calls = %d, want 0 (bot not admin, skip silencioso)", len(sender.calls))
+	}
+}
+
+// TestService_Warning_AutomuteEqualsAutoban_SinglePreBan: edge case
+// spec REQ-27: automute==autoban==3, count=2 → pre_ban unico (no
+// doble warning).
+func TestService_Warning_AutomuteEqualsAutoban_SinglePreBan(t *testing.T) {
+	settingsRepo := newFakeSettingsRepo()
+	settingsRepo.rows[-1001] = settingsForWarningTest(3, 3, 10, true) // mismo threshold
+	warnRepo := newFakeWarnRepo()
+	warnRepo.rows[[2]int64{-1001, 999}] = &WarningState{GroupID: -1001, UserID: 999, WarningCount: 1}
+	ch := make(chan AutoAction, 4)
+	sender := &fakeWarningSender{}
+	svc, _ := newSvcWithSender(settingsRepo, warnRepo, nil, map[int64]*groups.Group{
+		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
+	}, ch, sender)
+
+	for i := 0; i < 3; i++ {
+		if err := svc.HandleMessage(context.Background(), msg(-1001, 999)); err != nil {
+			t.Fatalf("HandleMessage %d: %v", i+1, err)
+		}
+	}
+
+	if len(sender.calls) != 1 {
+		t.Fatalf("warning calls = %d, want 1 (solo pre-ban, no pre-mute)", len(sender.calls))
+	}
+	if sender.calls[0].kind != WarningPreBan {
+		t.Errorf("kind = %q, want %q (prioridad pre-ban)", sender.calls[0].kind, WarningPreBan)
+	}
+}
+
+// TestService_Warning_SenderError_PipelineContinues: sender devuelve
+// error → HandleMessage NO retorna error (pipeline continua). El send
+// falla pero el resto del pipeline (paso 8 auto-action) sigue.
+func TestService_Warning_SenderError_PipelineContinues(t *testing.T) {
+	settingsRepo := newFakeSettingsRepo()
+	settingsRepo.rows[-1001] = settingsForWarningTest(3, 5, 10, true)
+	warnRepo := newFakeWarnRepo()
+	// Pre-seed count=1: con FloodRule (threshold 3), necesitamos 3
+	// hits para que dispare. El primer hit que dispare deja count=2
+	// (== automute-1 → warning fires, sender fails) y NO mutea
+	// (count=2 < automute=3). Eso es lo que queremos testear: el
+	// warning dispara, falla, y el pipeline NO aborta.
+	warnRepo.rows[[2]int64{-1001, 999}] = &WarningState{GroupID: -1001, UserID: 999, WarningCount: 1}
+	ch := make(chan AutoAction, 4)
+	sender := &fakeWarningSender{err: errors.New("telegram exploded")}
+	svc, _ := newSvcWithSender(settingsRepo, warnRepo, nil, map[int64]*groups.Group{
+		-1001: {TelegramID: -1001, BotStatus: groups.StatusAdministrator},
+	}, ch, sender)
+
+	// 3 hits → flood fires en el 3ro, count 1→2, warning fires, sender fails.
+	for i := 0; i < 3; i++ {
+		if err := svc.HandleMessage(context.Background(), msg(-1001, 999)); err != nil {
+			t.Fatalf("HandleMessage %d: %v (expected nil, pipeline debe continuar)", i+1, err)
+		}
+	}
+	if len(sender.calls) != 1 {
+		t.Errorf("sender calls = %d, want 1 (se intento enviar)", len(sender.calls))
+	}
+	if sender.calls[0].kind != WarningPreMute {
+		t.Errorf("kind = %q, want %q", sender.calls[0].kind, WarningPreMute)
+	}
+}
+
+// TestService_ThresholdKindFor_Helper: tests directos del helper puro
+// (cubre el branch coverage sin pasar por HandleMessage).
+func TestService_ThresholdKindFor_Helper(t *testing.T) {
+	cases := []struct {
+		name              string
+		automute, autoban int16
+		count             int16
+		want              WarningKind
+	}{
+		{"pre-mute match", 3, 5, 2, WarningPreMute},
+		{"pre-ban match", 3, 5, 4, WarningPreBan},
+		{"pre-ban priority when both match", 3, 3, 2, WarningPreBan},
+		{"count=0 no match", 3, 5, 0, ""},
+		{"count==threshold no match", 3, 5, 3, ""},
+		{"count==threshold+1 no match", 3, 5, 6, ""},
+		{"count==1 no match", 3, 5, 1, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &Settings{AutomuteWarnings: tc.automute, AutobanWarnings: tc.autoban}
+			got := thresholdKindFor(s, tc.count)
+			if got != tc.want {
+				t.Errorf("thresholdKindFor(count=%d, automute=%d, autoban=%d) = %q, want %q",
+					tc.count, tc.automute, tc.autoban, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestService_ThresholdKindFor_NilSettings: settings nil → "" (defensa).
+func TestService_ThresholdKindFor_NilSettings(t *testing.T) {
+	if got := thresholdKindFor(nil, 2); got != "" {
+		t.Errorf("thresholdKindFor(nil, 2) = %q, want \"\"", got)
 	}
 }
