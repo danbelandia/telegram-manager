@@ -219,6 +219,47 @@ El panel muestra los controles **Anterior / Siguiente** debajo del
 listado (Prev deshabilitado en `offset=0`; Next deshabilitado cuando
 la página retornada tiene menos filas que `limit`).
 
+### Publicación en lote (publications-batch)
+
+`POST /api/publications/batch` permite enviar hasta **10 publicaciones
+independientes** en una sola request. Cada item puede tener su propio
+`scheduled_at`, foto, botones y multi-grupo. La respuesta es
+`{created[], failed[]}` con failure-isolation per-item: un item
+inválido **no aborta** el resto.
+
+```bash
+curl -X POST http://localhost:8080/api/publications/batch \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "publications": [
+      {"text":"Bienvenidos","group_ids":[-100123]},
+      {"text":"Recordatorio","group_ids":[-100456],"scheduled_at":"2027-01-01T10:00:00Z"},
+      {"text":"Promo","group_ids":[-100123],"buttons":[[{"text":"Ver","url":"https://ejemplo.com"}]]}
+    ]
+  }'
+```
+
+- **Cap**: `len(publications)` entre 1 y 10. Fuera de rango o JSON
+  malformado → 400 `VALIDATION_ERROR` (la envelope NUNCA se procesa).
+- **Status**: 200 OK si la envelope es válida (incluso si TODOS los
+  items fallaron; los resultados viven en `failed[]`). 401 sin auth.
+- **`created[]`**: cada entry trae `index` (posición original del
+  item) + `publication` (fila completa con `status=sent|scheduled`).
+- **`failed[]`**: cada entry trae `{index, code, message}` con code
+  ∈ `{VALIDATION_ERROR, PERMISSION_DENIED, NOT_FOUND, TELEGRAM_ERROR,
+  INTERNAL_ERROR}`. Los items programados con `scheduled_at` en el
+  pasado van a `failed[]` sin tocar el service.
+
+**Importante**:
+- El batch NO se reintenta automáticamente. Si un item falla con
+  `PERMISSION_DENIED` o `TELEGRAM_ERROR`, el admin puede usar el
+  botón **"Reintentar fallidas"** del modal del panel — re-envía solo
+  los slots fallidos preservando sus datos.
+- Las publicaciones programadas del batch las recoge el worker
+  in-process existente (cada 30s, `FOR UPDATE SKIP LOCKED`); cero
+  código nuevo en el worker.
+
 ## Moderación automática (Fase 3)
 
 El bot puede aplicar reglas automáticas sobre los mensajes entrantes y
