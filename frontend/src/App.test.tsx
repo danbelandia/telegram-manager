@@ -34,11 +34,42 @@ describe('App', () => {
     }))
   })
 
-  it('la ruta raiz redirige a /login sin sesion', async () => {
+  it('la ruta raiz muestra la landing sin sesion', async () => {
     renderApp(['/'])
 
-    // RequireAuth redirige / -> /dashboard -> /login
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'Iniciar sesión' })).toBeInTheDocument())
+    // `/` es publica (spec frontend-routing): sin redirigir a /login.
+    expect(await screen.findByRole('link', { name: 'Crear cuenta' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Iniciar sesión' })).toBeInTheDocument()
+  })
+
+  it('la ruta raiz redirige a /dashboard con sesion', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/auth/me')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ data: { id: '1', username: 'admin', tenant_id: 7 }, error: null }),
+        })
+      }
+      // /api/groups: lista vacia -> Dashboard muestra estado vacio
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ data: [], error: null }),
+      })
+    }))
+
+    renderApp(['/'])
+
+    // PublicOnly redirige / -> /dashboard con sesion valida.
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeInTheDocument())
+  })
+
+  it('/signup es publica sin sesion', async () => {
+    renderApp(['/signup'])
+
+    expect(await screen.findByRole('heading', { name: 'Crear cuenta' })).toBeInTheDocument()
   })
 
   it('renderiza el dashboard con sesion', async () => {

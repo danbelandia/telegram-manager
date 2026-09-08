@@ -6,9 +6,12 @@
 // para el editor de settings + listas.
 // Slice 3 (Fase 3): ruta /groups/:id/moderation para el dashboard de
 // observacion (stats + advertencias activas + reset manual).
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Route, Routes } from 'react-router-dom'
 import RequireAuth from './components/RequireAuth'
+import PublicOnly from './components/PublicOnly'
 import Layout from './components/Layout'
+import LandingPage from './pages/LandingPage'
+import SignupPage from './pages/SignupPage'
 import LoginPage from './pages/LoginPage'
 import DashboardPage from './pages/DashboardPage'
 import GroupsPage from './pages/GroupsPage'
@@ -24,7 +27,32 @@ import NotFoundPage from './pages/NotFoundPage'
 export default function App() {
   return (
     <Routes>
-      <Route path="/login" element={<LoginPage />} />
+      {/* Rutas publicas (spec frontend-routing): fuera de RequireAuth;
+          PublicOnly manda a /dashboard cuando ya hay sesion. */}
+      <Route
+        path="/"
+        element={
+          <PublicOnly>
+            <LandingPage />
+          </PublicOnly>
+        }
+      />
+      <Route
+        path="/signup"
+        element={
+          <PublicOnly>
+            <SignupPage />
+          </PublicOnly>
+        }
+      />
+      <Route
+        path="/login"
+        element={
+          <PublicOnly>
+            <LoginPage />
+          </PublicOnly>
+        }
+      />
 
       <Route
         element={
@@ -33,7 +61,6 @@ export default function App() {
           </RequireAuth>
         }
       >
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/groups" element={<GroupsPage />} />
         <Route path="/groups/:id" element={<GroupDetailPage />} />
