@@ -81,4 +81,16 @@ describe('LoginPage', () => {
     // Tras login exitoso ya no esta el boton de login (se navego fuera).
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Ingresar' })).not.toBeInTheDocument())
   })
+
+  it('pre-rellena el usuario y avisa con ?username=&created=1 (degradacion del signup)', async () => {
+    mockFetchRoutes({
+      '/api/auth/me': () => errorJson(401, 'UNAUTHORIZED', 'no autenticado'),
+      '/api/auth/refresh': () => errorJson(401, 'UNAUTHORIZED', 'refresh invalido'),
+    })
+
+    renderLogin(['/login?username=juan&created=1'])
+
+    expect(await screen.findByDisplayValue('juan')).toBeInTheDocument()
+    expect(await screen.findByText('Cuenta creada, iniciá sesión')).toBeInTheDocument()
+  })
 })
