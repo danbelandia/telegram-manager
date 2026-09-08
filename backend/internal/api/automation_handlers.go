@@ -10,11 +10,17 @@
 //	POST   /api/groups/{id}/automation/link-allowlist        body {domain}
 //	DELETE /api/groups/{id}/automation/link-allowlist/{domain}
 //
+// Slice 3 (Warnings Dashboard) agrega:
+//
+//	GET    /api/groups/{id}/automation/warnings
+//	POST   /api/groups/{id}/automation/warnings/{user_id}/reset
+//	GET    /api/groups/{id}/automation/stats?period=24h|7d
+//
 // Cada cambio de settings o listas emite un log con ActorID del admin
 // del panel (distinto del patron slice 1 donde ActorID=nil marcaba
 // auto-actions). Las constantes viven en internal/logs (ActionUpdate…,
-// ActionAdd…, ActionRemove…). Ver logs/model.go para la distincion
-// manual (slice 2) vs auto (slice 1).
+// ActionAdd…, ActionRemove…, ActionResetWarnings). Ver logs/model.go
+// para la distincion manual (slices 2/2.1/3) vs auto (slice 1).
 package api
 
 import (
@@ -23,6 +29,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/telegram-manager/backend/internal/automation"
 	"github.com/telegram-manager/backend/internal/groups"
@@ -36,6 +43,13 @@ import (
 // Decisión D8: el handler NO habla SQL directamente; toda operacion
 // pasa por el Service para mantener la logica de defaults, errores y
 // logging en un solo lugar.
+//
+// Slice 3: los endpoints del dashboard (/warnings, /warnings/:id/reset)
+// NO pasan por el Service para mantener la arquitectura de slices 1+2+2.1
+// intacta (bugfix invariante #172 — service.go no se toca). El handler
+// consume `automationDashboardRepo` directamente (inyectado via
+// WithAutomation). Esto evita modificar Service/Service.go y el
+// pipeline de evaluation.
 type automationService interface {
 	// Settings.
 	GetSettings(ctx context.Context, groupID int64) (*automation.Settings, error)
@@ -49,10 +63,22 @@ type automationService interface {
 	RemoveLinkAllowlist(ctx context.Context, groupID int64, domain string) error
 }
 
+// automationDashboardRepo es la vista minima del repositorio que los
+// handlers del dashboard de slice 3 necesitan. NO pasa por Service
+// (intencional: service.go intacto, pipeline de slices 1+2+2.1
+// preservado). *automation.Repository lo satisface directamente.
+type automationDashboardRepo interface {
+	ListActiveWarningStatesByGroup(ctx context.Context, groupID int64, limit int) ([]automation.WarningStateRow, bool, error)
+	ResetWarningState(ctx context.Context, groupID, userID int64) (int64, error)
+}
+
 // automationLogWriter es la vista minima del logs.Repository que los
-// handlers necesitan para registrar cambios manuales (ActorID != nil).
+// handlers necesitan para registrar cambios manuales (ActorID != nil)
+// y para agregar stats de auto-actions en una ventana (slice 3). El
+// metodo extra CountByActionAndGroup cubre el handler GET .../stats.
 type automationLogWriter interface {
 	Create(ctx context.Context, e *logs.Entry) error
+	CountByActionAndGroup(ctx context.Context, groupID int64, actions []string, since time.Time) (map[string]int, error)
 }
 
 // automationGroupChecker permite al handler validar que el grupo existe
@@ -569,4 +595,253 @@ func respondAutomationError(w http.ResponseWriter, err error) {
 	default:
 		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "no se pudo completar la operacion")
 	}
+}
+
+// --- Handlers de slice 3: Warnings Dashboard ---
+
+// warningStateJSON es la vista JSON de WarningStateRow para el panel.
+// Incluye display_name ya calculado server-side via
+// WarningStateRow.DisplayName() (D14 del design) — el frontend recibe
+// un string listo y no replica la logica de fallback.
+type warningStateJSON struct {
+	UserID        int64   `json:"user_id"`
+	DisplayName   string  `json:"display_name"`
+	Username      *string `json:"username"`
+	WarningCount  int16   `json:"warning_count"`
+	LastWarningAt *string `json:"last_warning_at"`
+	LastActionAt  *string `json:"last_action_at"`
+	ExpiresAt     *string `json:"expires_at"`
+}
+
+func toWarningStateJSON(w automation.WarningStateRow) warningStateJSON {
+	formatTS := func(t *time.Time) *string {
+		if t == nil {
+			return nil
+		}
+		s := t.UTC().Format("2006-01-02T15:04:05.000Z")
+		return &s
+	}
+	return warningStateJSON{
+		UserID:        w.UserID,
+		DisplayName:   w.DisplayName(),
+		Username:      w.Username,
+		WarningCount:  w.WarningCount,
+		LastWarningAt: formatTS(w.LastWarningAt),
+		LastActionAt:  formatTS(w.LastActionAt),
+		ExpiresAt:     formatTS(w.ExpiresAt),
+	}
+}
+
+// defaultWarningsLimit es el cap defensivo del dashboard (top 100
+// advertencias activas). Si el admin tiene mas de 100 simultaneas hay
+// un problema mas grande (reglas mal calibradas) y el frontend muestra
+// un Alert amarillo en lugar de paginar.
+const defaultWarningsLimit = 100
+
+// handleListWarnings responde GET /api/groups/{id}/automation/warnings.
+// Devuelve la lista de advertencias activas del grupo con display
+// name (LEFT JOIN a users), cap top 100 y flag `truncated` indicando
+// si el resultset alcanzo el cap.
+func (s *Server) handleListWarnings(w http.ResponseWriter, r *http.Request) {
+	if s.automation == nil {
+		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de automation no habilitado")
+		return
+	}
+	groupID, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	if s.automationGroups != nil {
+		if _, err := s.automationGroups.GetByTelegramID(r.Context(), groupID); err != nil {
+			if errors.Is(err, groups.ErrNotFound) {
+				respondError(w, http.StatusNotFound, "NOT_FOUND", "grupo no encontrado")
+				return
+			}
+			respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "no se pudo obtener el grupo")
+			return
+		}
+	}
+
+	rows, truncated, err := s.automationDashboard.ListActiveWarningStatesByGroup(r.Context(), groupID, defaultWarningsLimit)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "no se pudieron listar las advertencias")
+		return
+	}
+	warnings := make([]warningStateJSON, 0, len(rows))
+	for _, row := range rows {
+		warnings = append(warnings, toWarningStateJSON(row))
+	}
+	respond(w, http.StatusOK, map[string]any{
+		"warnings":  warnings,
+		"truncated": truncated,
+	})
+}
+
+// resetWarningResponse es el body de POST .../warnings/{user_id}/reset.
+type resetWarningResponse struct {
+	UserID       int64 `json:"user_id"`
+	WarningCount int16 `json:"warning_count"`
+	Reset        bool  `json:"reset"`
+}
+
+// handleResetWarning responde POST /api/groups/{id}/automation/warnings/{user_id}/reset.
+// Resetea manualmente el counter de advertencias del (group, user).
+// Si la fila no existia, responde 404 NOT_FOUND sin emitir log (no hay
+// "estado" que resetear). Si existia, emite ActionResetWarnings con
+// ActorID del admin y metadata {user_id, warning_count_before_reset}
+// para auditoria (cuanto se perdono).
+//
+// Slice 3 intencional: NO desmutear al user en Telegram (D11 del
+// design). El admin usa POST /api/groups/{id}/users/{userId}/unmute
+// por separado si quiere desmutear. El reset solo limpia DB.
+func (s *Server) handleResetWarning(w http.ResponseWriter, r *http.Request) {
+	if s.automation == nil {
+		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de automation no habilitado")
+		return
+	}
+	groupID, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	userID, ok := pathID(w, r, "user_id")
+	if !ok {
+		return
+	}
+	if userID <= 0 {
+		respondError(w, http.StatusBadRequest, "VALIDATION_ERROR", "user_id debe ser positivo")
+		return
+	}
+	actorID, ok := actorIDFromClaims(w, r)
+	if !ok {
+		return
+	}
+	if s.automationGroups != nil {
+		if _, err := s.automationGroups.GetByTelegramID(r.Context(), groupID); err != nil {
+			if errors.Is(err, groups.ErrNotFound) {
+				respondError(w, http.StatusNotFound, "NOT_FOUND", "grupo no encontrado")
+				return
+			}
+			respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "no se pudo obtener el grupo")
+			return
+		}
+	}
+
+	previous, err := s.automationDashboard.ResetWarningState(r.Context(), groupID, userID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "no se pudo resetear el contador")
+		return
+	}
+	if previous == 0 {
+		// Fila no existia o ya estaba en 0 → 404 sin log (no hay accion
+		// que auditar).
+		respondError(w, http.StatusNotFound, "NOT_FOUND",
+			"no hay advertencias para este usuario en este grupo")
+		return
+	}
+
+	// Log RESET_WARNINGS con metadata de auditoria. ActorID = admin
+	// del panel (distinto del patron slice 1 donde ActorID=nil marcaba
+	// auto-actions). warning_count_before_reset = previous (leido
+	// antes del UPDATE en el repo).
+	if s.automationLogs != nil {
+		entry := &logs.Entry{
+			ActorID:      &actorID,
+			GroupID:      groupID,
+			Action:       logs.ActionResetWarnings,
+			TargetUserID: &userID,
+			Status:       logs.StatusSuccess,
+			Metadata: map[string]any{
+				"user_id":                    userID,
+				"warning_count_before_reset": previous,
+			},
+		}
+		_ = s.automationLogs.Create(r.Context(), entry) // best-effort
+	}
+
+	respond(w, http.StatusOK, resetWarningResponse{
+		UserID:       userID,
+		WarningCount: 0,
+		Reset:        true,
+	})
+}
+
+// statsResponse es el body de GET .../stats?period=24h|7d.
+type statsResponse struct {
+	RuleTriggered int    `json:"rule_triggered"`
+	Automute      int    `json:"automute"`
+	Autoban       int    `json:"autoban"`
+	Period        string `json:"period"`
+}
+
+// statsPeriods whitelistada para evitar injection o typos del admin.
+// Default "24h" si el query param falta o esta vacio. Cualquier otro
+// valor → 400 VALIDATION_ERROR (slice 3 REQ-34).
+var statsPeriods = map[string]time.Duration{
+	"24h": 24 * time.Hour,
+	"7d":  7 * 24 * time.Hour,
+}
+
+// handleGetStats responde GET /api/groups/{id}/automation/stats?period=24h|7d.
+// Devuelve conteos agregados de los 3 actions de auto-moderacion en la
+// ventana temporal indicada (1 roundtrip via ANY($2)). Si no hay logs
+// en la ventana, los contadores quedan en 0 (no error).
+func (s *Server) handleGetStats(w http.ResponseWriter, r *http.Request) {
+	if s.automation == nil {
+		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de automation no habilitado")
+		return
+	}
+	groupID, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	if s.automationGroups != nil {
+		if _, err := s.automationGroups.GetByTelegramID(r.Context(), groupID); err != nil {
+			if errors.Is(err, groups.ErrNotFound) {
+				respondError(w, http.StatusNotFound, "NOT_FOUND", "grupo no encontrado")
+				return
+			}
+			respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "no se pudo obtener el grupo")
+			return
+		}
+	}
+
+	period := r.URL.Query().Get("period")
+	if period == "" {
+		period = "24h"
+	}
+	duration, ok := statsPeriods[period]
+	if !ok {
+		respondError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"period invalido (use 24h o 7d)")
+		return
+	}
+	if s.automationLogs == nil {
+		// Si los logs no estan habilitados, devolvemos 0s (consistente
+		// con el resto de handlers que no fallan si automationLogs es
+		// nil; sirve para tests sin logs y para escenarios donde el
+		// modulo se carga sin logs).
+		respond(w, http.StatusOK, statsResponse{
+			RuleTriggered: 0,
+			Automute:      0,
+			Autoban:       0,
+			Period:        period,
+		})
+		return
+	}
+
+	since := time.Now().UTC().Add(-duration)
+	counts, err := s.automationLogs.CountByActionAndGroup(r.Context(), groupID,
+		[]string{logs.ActionRuleTriggered, logs.ActionAutomuteUser, logs.ActionAutobanUser},
+		since,
+	)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "no se pudieron obtener las estadisticas")
+		return
+	}
+	respond(w, http.StatusOK, statsResponse{
+		RuleTriggered: counts[logs.ActionRuleTriggered],
+		Automute:      counts[logs.ActionAutomuteUser],
+		Autoban:       counts[logs.ActionAutobanUser],
+		Period:        period,
+	})
 }

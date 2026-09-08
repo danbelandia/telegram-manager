@@ -149,9 +149,13 @@ func run() error {
 		automationService    *automation.Service
 		automationSubscriber *automation.Subscriber
 		automationWorkerErrs chan error
+		// Slice 3 — dashboard repo (warning_state + reset). nil si
+		// AutomationEnabled=false (los handlers devuelven 404 via
+		// s.automation == nil antes de tocar el dashboard).
+		automationRepo *automation.Repository
 	)
 	if cfg.AutomationEnabled {
-		automationRepo := automation.NewRepository(db)
+		automationRepo = automation.NewRepository(db)
 		autoActionCh := make(chan automation.AutoAction, cfg.AutoActionBufferSize)
 		registry := automation.NewRegistry()
 		// Orden cheap-first (design D4): in-mem → CPU → DB-pre-loaded.
@@ -235,6 +239,10 @@ func run() error {
 			return fmt.Errorf("startup: set webhook: %w", err)
 		}
 		slog.Info("webhook registered", "url", cfg.TelegramWebhookURL)
+		// El 4to argumento de WithAutomation (dashboard repo, slice 3)
+		// es nil si el modulo de automation esta deshabilitado (los
+		// handlers del dashboard devuelven 404 via s.automation == nil
+		// antes de tocar dashboard).
 		server = api.NewServer(db, bot,
 			api.WithWebhook(bus, cfg.TelegramWebhookSecret),
 			api.WithAuth(authService, tokenManager, cfg.CookieSecure),
@@ -243,7 +251,7 @@ func run() error {
 			api.WithJoinRequests(joinRequestsRepo, moderationService),
 			api.WithLogs(logsRepo),
 			api.WithPublications(pubsService),
-			api.WithAutomation(automationService, logsRepo, groupsRepo),
+			api.WithAutomation(automationService, logsRepo, groupsRepo, automationRepo),
 		)
 
 	case "polling":
@@ -254,7 +262,7 @@ func run() error {
 			api.WithJoinRequests(joinRequestsRepo, moderationService),
 			api.WithLogs(logsRepo),
 			api.WithPublications(pubsService),
-			api.WithAutomation(automationService, logsRepo, groupsRepo),
+			api.WithAutomation(automationService, logsRepo, groupsRepo, automationRepo),
 		)
 		poller := telegram.NewPoller(bot, telegram.WithPollerLogger(slog.Default()))
 		pollerErrCh = make(chan error, 1)

@@ -37,6 +37,11 @@ type Server struct {
 	automation       automationService
 	automationLogs   automationLogWriter
 	automationGroups automationGroupChecker
+	// Slice 3 — dashboard de moderacion. NO pasa por Service para
+	// mantener la arquitectura de slices 1+2+2.1 intacta: el handler
+	// consume el repo directamente. Ver automationDashboardRepo en
+	// automation_handlers.go.
+	automationDashboard automationDashboardRepo
 }
 
 // NewServer construye el handler HTTP del API.
@@ -152,19 +157,37 @@ func WithPublications(pubs publicationStore) Option {
 }
 
 // WithAutomation monta las rutas del modulo de moderacion automatica
-// (Fase 3, slice 2): 9 handlers bajo /api/groups/{id}/automation/...
-// El service expone settings + listas; el handler escribe en logs los
-// cambios manuales (ActorID != nil) — distinto del patron slice 1
-// donde los auto-actions del pipeline llevan ActorID=nil.
+// (Fase 3, slice 2 + slice 3): 12 handlers bajo
+// /api/groups/{id}/automation/... El service expone settings + listas;
+// el handler escribe en logs los cambios manuales (ActorID != nil) —
+// distinto del patron slice 1 donde los auto-actions del pipeline
+// llevan ActorID=nil.
 //
 // `groups` permite al handler validar que el grupo existe antes de
 // aceptar cambios (404 NOT_FOUND). Puede omitirse (nil) en tests que
 // solo verifican auth/validacion, pero el main.go siempre lo pasa.
-func WithAutomation(auto automationService, logs automationLogWriter, groups automationGroupChecker) Option {
+//
+// `dashboard` (slice 3) es la vista minima del repository que cubre
+// los 2 endpoints del dashboard de observacion (warnings + reset). NO
+// pasa por Service: el Service no se toca (slices 1+2+2.1 intactos).
+// Puede ser nil en tests que solo cubren settings + listas, pero
+// main.go siempre lo pasa.
+//
+// Slice 3 agrega los 3 endpoints del dashboard: GET /warnings,
+// POST /warnings/{user_id}/reset, GET /stats?period=24h|7d. Los
+// handlers usan `logs` (automationLogWriter) tambien para
+// CountByActionAndGroup (stats).
+func WithAutomation(
+	auto automationService,
+	logs automationLogWriter,
+	groups automationGroupChecker,
+	dashboard automationDashboardRepo,
+) Option {
 	return func(s *Server) {
 		s.automation = auto
 		s.automationLogs = logs
 		s.automationGroups = groups
+		s.automationDashboard = dashboard
 		s.mux.HandleFunc("GET /api/groups/{id}/automation/settings", s.requireAuth(s.handleGetAutomationSettings))
 		s.mux.HandleFunc("PUT /api/groups/{id}/automation/settings", s.requireAuth(s.handlePutAutomationSettings))
 		s.mux.HandleFunc("GET /api/groups/{id}/automation/banned-words", s.requireAuth(s.handleListBannedWords))
@@ -173,6 +196,10 @@ func WithAutomation(auto automationService, logs automationLogWriter, groups aut
 		s.mux.HandleFunc("GET /api/groups/{id}/automation/link-allowlist", s.requireAuth(s.handleListLinkAllowlist))
 		s.mux.HandleFunc("POST /api/groups/{id}/automation/link-allowlist", s.requireAuth(s.handleAddLinkAllowlist))
 		s.mux.HandleFunc("DELETE /api/groups/{id}/automation/link-allowlist/{domain}", s.requireAuth(s.handleRemoveLinkAllowlist))
+		// Slice 3 — Warnings Dashboard.
+		s.mux.HandleFunc("GET /api/groups/{id}/automation/warnings", s.requireAuth(s.handleListWarnings))
+		s.mux.HandleFunc("POST /api/groups/{id}/automation/warnings/{user_id}/reset", s.requireAuth(s.handleResetWarning))
+		s.mux.HandleFunc("GET /api/groups/{id}/automation/stats", s.requireAuth(s.handleGetStats))
 	}
 }
 
