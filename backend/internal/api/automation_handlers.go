@@ -80,25 +80,38 @@ type settingsUpdate struct {
 	AutomuteMinutes    *int16 `json:"automute_minutes"`
 	AutobanWarnings    *int16 `json:"autoban_warnings"`
 	WarningExpireDays  *int16 `json:"warning_expire_days"`
+	// Slice 2.1 (REQ-22, REQ-29): warning visual al usuario antes de
+	// mute/ban. WarnUserTemplate opcional (nil = default hardcoded).
+	// Si != nil, validamos len <= 1000 chars en el handler.
+	WarnUserEnabled  *bool   `json:"warn_user_enabled"`
+	WarnUserTemplate *string `json:"warn_user_template"`
 }
 
 // settingsResponse es la vista JSON de Settings para el panel.
 type settingsResponse struct {
-	GroupID            int64  `json:"group_id"`
-	Enabled            bool   `json:"enabled"`
-	AntiSpamEnabled    bool   `json:"anti_spam_enabled"`
-	AntiLinkEnabled    bool   `json:"anti_link_enabled"`
-	BannedWordsEnabled bool   `json:"banned_words_enabled"`
-	FloodEnabled       bool   `json:"flood_enabled"`
-	FloodMessages      int16  `json:"flood_messages"`
-	FloodSeconds       int16  `json:"flood_seconds"`
-	WarningLimit       int16  `json:"warning_limit"`
-	AutomuteWarnings   int16  `json:"automute_warnings"`
-	AutomuteMinutes    int16  `json:"automute_minutes"`
-	AutobanWarnings    int16  `json:"autoban_warnings"`
-	WarningExpireDays  int16  `json:"warning_expire_days"`
-	UpdatedAt          string `json:"updated_at"`
+	GroupID            int64   `json:"group_id"`
+	Enabled            bool    `json:"enabled"`
+	AntiSpamEnabled    bool    `json:"anti_spam_enabled"`
+	AntiLinkEnabled    bool    `json:"anti_link_enabled"`
+	BannedWordsEnabled bool    `json:"banned_words_enabled"`
+	FloodEnabled       bool    `json:"flood_enabled"`
+	FloodMessages      int16   `json:"flood_messages"`
+	FloodSeconds       int16   `json:"flood_seconds"`
+	WarningLimit       int16   `json:"warning_limit"`
+	AutomuteWarnings   int16   `json:"automute_warnings"`
+	AutomuteMinutes    int16   `json:"automute_minutes"`
+	AutobanWarnings    int16   `json:"autoban_warnings"`
+	WarningExpireDays  int16   `json:"warning_expire_days"`
+	WarnUserEnabled    bool    `json:"warn_user_enabled"`
+	WarnUserTemplate   *string `json:"warn_user_template"`
+	UpdatedAt          string  `json:"updated_at"`
 }
+
+// maxWarnUserTemplateLen es el maximo permitido para el template
+// custom del warning (1000 chars). Definido en AGENTS §23 / spec
+// REQ-29 mitigation #6. Validamos server-side porque el cliente puede
+// tener un maxLength buggy o ser bypaseado.
+const maxWarnUserTemplateLen = 1000
 
 func toSettingsResponse(s *automation.Settings) settingsResponse {
 	return settingsResponse{
@@ -115,6 +128,8 @@ func toSettingsResponse(s *automation.Settings) settingsResponse {
 		AutomuteMinutes:    s.AutomuteMinutes,
 		AutobanWarnings:    s.AutobanWarnings,
 		WarningExpireDays:  s.WarningExpireDays,
+		WarnUserEnabled:    s.WarnUserEnabled,
+		WarnUserTemplate:   s.WarnUserTemplate,
 		UpdatedAt:          s.UpdatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
 	}
 }
@@ -249,6 +264,19 @@ func (s *Server) handlePutAutomationSettings(w http.ResponseWriter, r *http.Requ
 	}
 	if req.WarningExpireDays != nil {
 		settings.WarningExpireDays = *req.WarningExpireDays
+	}
+	// Slice 2.1 (REQ-22, REQ-29): warning visual al usuario. Validamos
+	// template <= 1000 chars (mitigacion #6 del design).
+	if req.WarnUserEnabled != nil {
+		settings.WarnUserEnabled = *req.WarnUserEnabled
+	}
+	if req.WarnUserTemplate != nil {
+		if len(*req.WarnUserTemplate) > maxWarnUserTemplateLen {
+			respondError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+				"warn_user_template excede el maximo de 1000 caracteres")
+			return
+		}
+		settings.WarnUserTemplate = req.WarnUserTemplate
 	}
 
 	if err := s.automation.UpsertSettings(r.Context(), settings); err != nil {

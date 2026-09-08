@@ -293,6 +293,77 @@ func TestAutomationSettings_Put_BadJSON_400(t *testing.T) {
 	}
 }
 
+// TestAutomationSettings_Put_WarnUserFields (slice 2.1, REQ-22/29):
+// PUT acepta los 2 nuevos campos (warn_user_enabled + warn_user_template)
+// y los persiste en el fake service. Verifica round-trip via GET.
+func TestAutomationSettings_Put_WarnUserFields(t *testing.T) {
+	auto := newFakeAutomationService()
+	ag := &fakeAutomationGroups{groups: map[int64]*groups.Group{-1001: {TelegramID: -1001}}}
+	al := &fakeAutomationLogs{}
+	server := buildAutomationServer(t, auto, ag, al)
+
+	body := `{"warn_user_enabled":false,"warn_user_template":"⚠️ Custom para {nombre} ({count})."}`
+	rr := doRequest(server, "PUT", "/api/groups/-1001/automation/settings", body, validToken)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	// GET de vuelta para confirmar persistencia.
+	rr = doRequest(server, "GET", "/api/groups/-1001/automation/settings", "", validToken)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET code = %d, want 200", rr.Code)
+	}
+	body2 := rr.Body.String()
+	if !strings.Contains(body2, `"warn_user_enabled":false`) {
+		t.Errorf("GET sin warn_user_enabled=false: %s", body2)
+	}
+	if !strings.Contains(body2, `"warn_user_template":"⚠️ Custom para {nombre} ({count})."`) {
+		t.Errorf("GET sin warn_user_template custom: %s", body2)
+	}
+}
+
+// TestAutomationSettings_Put_WarnUserTemplateTooLong_400: template
+// custom > 1000 chars → 400 VALIDATION_ERROR, no persiste.
+func TestAutomationSettings_Put_WarnUserTemplateTooLong_400(t *testing.T) {
+	auto := newFakeAutomationService()
+	ag := &fakeAutomationGroups{groups: map[int64]*groups.Group{-1001: {TelegramID: -1001}}}
+	al := &fakeAutomationLogs{}
+	server := buildAutomationServer(t, auto, ag, al)
+
+	// Construir template de 1001 chars (excede el limite).
+	tooLong := strings.Repeat("a", 1001)
+	body := `{"warn_user_template":"` + tooLong + `"}`
+	rr := doRequest(server, "PUT", "/api/groups/-1001/automation/settings", body, validToken)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("code = %d, want 400 (body: %s)", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "VALIDATION_ERROR") {
+		t.Errorf("body sin VALIDATION_ERROR: %s", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "1000") {
+		t.Errorf("body sin mencion del limite 1000: %s", rr.Body.String())
+	}
+	if _, ok := auto.settings[-1001]; ok {
+		t.Errorf("settings persistida a pesar de 400 (template invalido)")
+	}
+}
+
+// TestAutomationSettings_Put_WarnUserTemplateExactLength_OK: template
+// de exactamente 1000 chars → 200 OK (limite inclusivo).
+func TestAutomationSettings_Put_WarnUserTemplateExactLength_OK(t *testing.T) {
+	auto := newFakeAutomationService()
+	ag := &fakeAutomationGroups{groups: map[int64]*groups.Group{-1001: {TelegramID: -1001}}}
+	al := &fakeAutomationLogs{}
+	server := buildAutomationServer(t, auto, ag, al)
+
+	exact := strings.Repeat("b", 1000)
+	body := `{"warn_user_template":"` + exact + `"}`
+	rr := doRequest(server, "PUT", "/api/groups/-1001/automation/settings", body, validToken)
+	if rr.Code != http.StatusOK {
+		t.Errorf("code = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+}
+
 // TestAutomationSettings_GroupNotFound_404: GET sobre grupo inexistente
 // → 404 NOT_FOUND.
 func TestAutomationSettings_GroupNotFound_404(t *testing.T) {

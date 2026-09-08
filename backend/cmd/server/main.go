@@ -163,9 +163,13 @@ func run() error {
 		registry.Register(automation.NewAntiLinkRule())
 		registry.Register(automation.NewBannedWordsRule())
 		actioner := automation.NewAutoActioner(bot, logsRepo, groupsRepo, slog.Default())
+		// Slice 2.1: warning sender (paso 7.5) envia un mensaje al
+		// usuario antes del mute/ban. Re-check de permissionOkAdmin
+		// + timeout 5s. nil-safe (Service skipea el paso si nil).
+		warningSender := automation.NewWarningSender(bot, logsRepo, automationRepo, groupsRepo, slog.Default())
 		automationService = automation.NewService(
 			automationRepo, automationRepo, automationRepo, registry,
-			logsRepo, groupsRepo, autoActionCh, slog.Default(),
+			logsRepo, groupsRepo, autoActionCh, warningSender, slog.Default(),
 		)
 		automationWorker := automation.NewWorker(autoActionCh, actioner, slog.Default())
 		automationSubscriber = automation.NewSubscriber(bus, automationService, slog.Default())
