@@ -10,4 +10,20 @@ export interface LoginResponse {
 export interface MeResponse {
   id: string
   username: string
+  tenant_id: number
+  tenant_slug?: string
+}
+
+/** Body de POST /api/auth/signup (alta publica de tenant bot-per-tenant). */
+export interface SignupRequest {
+  slug: string
+  username: string
+  password: string
+  bot_token: string
+}
+
+/** Respuesta 201 de POST /api/auth/signup. El token NUNCA vuelve. */
+export interface SignupResponse {
+  tenant: { id: number; slug: string }
+  admin: { id: string; username: string }
 }
