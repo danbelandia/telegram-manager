@@ -17,13 +17,13 @@ describe('AuthContext', () => {
 
   it('restaura la sesion con /me exitoso al montar', async () => {
     mockFetchRoutes({
-      '/api/auth/me': () => okJson({ id: '1', username: 'admin' }),
+      '/api/auth/me': () => okJson({ id: '1', username: 'admin', tenant_id: 7, tenant_slug: 'acme' }),
     })
 
     const { result } = renderHook(() => useAuth(), { wrapper })
 
     await waitFor(() => expect(result.current.loading).toBe(false))
-    expect(result.current.user).toEqual({ id: '1', username: 'admin' })
+    expect(result.current.user).toEqual({ id: '1', username: 'admin', tenantId: 7, tenantSlug: 'acme' })
   })
 
   it('queda sin sesion cuando /me falla', async () => {
@@ -42,7 +42,7 @@ describe('AuthContext', () => {
     mockFetchRoutes({
       // /me del primer montaje falla (sin sesion); el login luego re-valida
       '/api/auth/login': () => okJson({ access_token: 'jwt-nuevo' }),
-      '/api/auth/me': () => okJson({ id: '7', username: 'adm' }),
+      '/api/auth/me': () => okJson({ id: '7', username: 'adm', tenant_id: 7 }),
       '/api/auth/refresh': () => okJson({ access_token: 'jwt-refresh' }),
     })
 
@@ -53,7 +53,7 @@ describe('AuthContext', () => {
       await result.current.login('adm', 'secreto')
     })
 
-    expect(result.current.user).toEqual({ id: '7', username: 'adm' })
+    expect(result.current.user).toEqual({ id: '7', username: 'adm', tenantId: 7, tenantSlug: null })
   })
 
   it('rechaza login con credenciales invalidas y no expone usuario', async () => {
@@ -72,12 +72,12 @@ describe('AuthContext', () => {
 
   it('logout limpia la sesion', async () => {
     mockFetchRoutes({
-      '/api/auth/me': () => okJson({ id: '7', username: 'adm' }),
+      '/api/auth/me': () => okJson({ id: '7', username: 'adm', tenant_id: 7 }),
       '/api/auth/logout': noContent,
     })
 
     const { result } = renderHook(() => useAuth(), { wrapper })
-    await waitFor(() => expect(result.current.user).toEqual({ id: '7', username: 'adm' }))
+    await waitFor(() => expect(result.current.user).toEqual({ id: '7', username: 'adm', tenantId: 7, tenantSlug: null }))
 
     await act(async () => {
       await result.current.logout()

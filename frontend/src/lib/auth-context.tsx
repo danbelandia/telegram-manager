@@ -9,6 +9,8 @@ import { setAccessToken, setOnUnauthorized } from './api-client'
 export interface SessionUser {
   id: string
   username: string
+  tenantId: number | null
+  tenantSlug: string | null
 }
 
 interface AuthContextValue {
@@ -56,7 +58,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         const me = await authApi.me()
         if (!cancelled) {
-          setUser({ id: me.id, username: me.username })
+          setUser({
+            id: me.id,
+            username: me.username,
+            tenantId: me.tenant_id,
+            tenantSlug: me.tenant_slug ?? null,
+          })
         }
       } catch {
         // 401 u otro error: sin sesion restaurable
@@ -76,7 +83,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const res = await authApi.login(username, password)
     setAccessToken(res.access_token)
     const me = await authApi.me()
-    setUser({ id: me.id, username: me.username })
+    setUser({
+      id: me.id,
+      username: me.username,
+      tenantId: me.tenant_id,
+      tenantSlug: me.tenant_slug ?? null,
+    })
   }, [])
 
   const value = useMemo(
