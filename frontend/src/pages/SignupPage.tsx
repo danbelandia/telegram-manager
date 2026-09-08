@@ -134,8 +134,9 @@ export default function SignupPage() {
       mapSignupError(err)
     } finally {
       // Higiene: el campo del token queda vacio; el resto se conserva
-      // para corregir sin reescribir todo.
-      reset({ ...getValues(), bot_token: '' })
+      // para corregir sin reescribir todo. `keepErrors` porque reset
+      // limpia los errores que setError marco en el catch.
+      reset({ ...getValues(), bot_token: '' }, { keepErrors: true })
     }
   }
 
