@@ -254,15 +254,66 @@ El worker respeta el rate limit del adapter (§18.1: token bucket ~25 req/seg
 global + `retry_after` en 429). El check de admin antes de despachar es
 `g.BotStatus == StatusAdministrator` (bugfix #172, nunca claves `can_*`).
 
+### Warning al usuario (slice 2.1)
+
+Antes de ejecutar la auto-acción (mute o ban), el bot envía un mensaje
+visible al usuario en el chat avisándole lo que va a pasar. Esto es
+feedback educativo — el usuario sabe que está cerca del umbral y puede
+corregirse. El warning NO se envía en el counter 0 (primer hit) ni en
+el counter == threshold (la acción ocurre en simultáneo).
+
+**Cuándo se dispara**:
+
+- `warning_count == automute_warnings - 1` → warning **pre-mute**.
+- `warning_count == autoban_warnings - 1` → warning **pre-ban**.
+- Si `automute_warnings == autoban_warnings` (edge case), ambos
+  matchean el mismo counter pero solo se envía **un** warning pre-ban
+  (prioridad documentada en `automation.thresholdKindFor`).
+
+**Plantillas**: dos defaults hardcoded en español Rioplatense en
+`backend/internal/automation/templates.go`:
+
+- Pre-mute: `⚠️ {nombre}, llevás {count} advertencias. Si seguís, serás silenciado por {mute_minutes} min.`
+- Pre-ban: `⚠️ {nombre}, llevás {count} advertencias. Si seguís, serás expulsado del grupo.`
+
+Cada grupo puede customizar el texto vía `warn_user_template` (TEXT
+NULL en `group_moderation_settings`, máx 1000 chars). Variables
+disponibles:
+
+- `{nombre}` — `FirstName` del autor; fallback a `Username` sin `@`;
+  fallback final al literal "este usuario".
+- `{count}` — `warning_count` post-increment.
+- `{mute_minutes}` — `automute_minutes` del setting.
+
+**Toggle**: `warn_user_enabled` (BOOLEAN, default `true`). El admin lo
+apaga por grupo desde el panel si no quiere warnings en esa comunidad.
+
+**Envío**: síncrono con `context.WithTimeout(5s)` vía
+`automation.WarningSender`. Si el send falla (timeout, 403 por bot
+removido, etc.) el pipeline **continúa** — la auto-acción igual se
+encola. La fallida se loguea como `WARN_USER_SENT` con el status
+correspondiente (`TELEGRAM_ERROR` / `PERMISSION_DENIED` / `NOT_FOUND`)
+y `ActorID=nil`.
+
+**Panel**: la sección 5 "Warning al usuario" en
+`/groups/:id/automation` tiene el toggle + un `<Textarea>` con el
+default pre-mute como placeholder y la lista de variables disponibles.
+Guarda junto con el resto de los settings (single Save con
+`Promise.all`).
+
+Spec: REQ-22..31 del canónico `openspec/specs/moderation-automation/spec.md`.
+
 ### Editor de settings (panel)
 
-Ruta `/groups/:telegram_id/automation`. Layout con 4 secciones:
+Ruta `/groups/:telegram_id/automation`. Layout con 5 secciones:
 
 1. **General**: switch principal `Habilitar moderación automática`.
 2. **Reglas**: 4 sub-toggles (Flood / Anti-spam / Anti-link / Banned-words).
 3. **Umbrales**: 6 NumberInputs (flood messages/seconds, warning limit,
    auto-mute warnings/minutes, auto-ban warnings, warning expire days).
 4. **Listas**: 2 TagsInput (palabras prohibidas + allowlist de dominios).
+5. **Warning al usuario** (slice 2.1): toggle `warn_user_enabled` +
+   textarea para customizar `warn_user_template` (max 1000 chars).
 
 **Single Save button** al fondo dispara `Promise.all` en paralelo: PUT
 de settings + POST/DELETE por cada palabra/dominio cambiado. Las
