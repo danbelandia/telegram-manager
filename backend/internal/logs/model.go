@@ -69,6 +69,18 @@ const (
 // (evento de Telegram). GroupID es el telegram id del grupo.
 // TargetUserID es nil cuando la accion no recae sobre un usuario
 // (lock/unlock/delete/pin guardan el target en Metadata cuando aplica).
+//
+// Conveccion Metadata (publications-batch):
+//
+//	ActionPublishMessage emitidos por POST /api/publications/batch
+//	pueden incluir metadata.batch_index (int) con la posicion del item
+//	dentro del array req.publications del batch. Esto permite correlacionar
+//	auditoria entre filas del batch sin una tabla dedicada: los items del
+//	mismo batch comparten actor_id y tienen created_at cercano (~ms).
+//
+//	Ejemplo: {"publication_id": 142, "batch_index": 2}.
+//	NO es obligatorio: items single (POST /api/publications) no lo llevan.
+//	Cero migracion: metadata es JSONB.
 type Entry struct {
 	ID           int64
 	ActorID      *int64

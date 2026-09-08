@@ -146,10 +146,16 @@ func WithLogs(store logStore) Option {
 // Grupo→Permiso→Telegram→Log; el handler valida input, extrae actor y
 // mapea errores. Slice 3 agrega DELETE /api/publications/{id} para
 // cancelar publicaciones `scheduled`.
+//
+// publications-batch: agrega POST /api/publications/batch (cap 10,
+// failure isolation per-item, status 200 OK con envelope valida). El
+// handler vive en batch_handlers.go; comparte el store publicationStore
+// y reusa Service.PublishMany / Service.Schedule sin nuevos metodos.
 func WithPublications(pubs publicationStore) Option {
 	return func(s *Server) {
 		s.publications = pubs
 		s.mux.HandleFunc("POST /api/publications", s.requireAuth(s.handleCreatePublication))
+		s.mux.HandleFunc("POST /api/publications/batch", s.requireAuth(s.handleCreatePublicationBatch))
 		s.mux.HandleFunc("GET /api/publications", s.requireAuth(s.handleListPublications))
 		s.mux.HandleFunc("GET /api/publications/{id}", s.requireAuth(s.handleGetPublication))
 		s.mux.HandleFunc("DELETE /api/publications/{id}", s.requireAuth(s.handleDeletePublication))
