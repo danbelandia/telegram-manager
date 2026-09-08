@@ -214,7 +214,16 @@ export default function GroupDetailPage() {
               w={260}
               data-testid="automation-link"
             >
-              Configurar automatización
+              Configurar reglas de moderación
+            </Button>
+            <Button
+              component={Link}
+              to={`/groups/${groupId}/moderation`}
+              variant="light"
+              w={260}
+              data-testid="moderation-dashboard-link"
+            >
+              Ver dashboard de moderación
             </Button>
           </Stack>
         </Tabs.Panel>

@@ -74,9 +74,20 @@ describe('GroupDetailPage', () => {
       '/groups/123/users',
     )
     // Slice 2 (moderacion automatica): link al editor de settings + listas.
+    // Slice 3 (Fase 3): label renombrado + nuevo link al dashboard.
     expect(screen.getByTestId('automation-link')).toHaveAttribute(
       'href',
       '/groups/123/automation',
+    )
+    expect(screen.getByTestId('automation-link')).toHaveTextContent(
+      'Configurar reglas de moderación',
+    )
+    expect(screen.getByTestId('moderation-dashboard-link')).toHaveAttribute(
+      'href',
+      '/groups/123/moderation',
+    )
+    expect(screen.getByTestId('moderation-dashboard-link')).toHaveTextContent(
+      'Ver dashboard de moderación',
     )
   })
 
