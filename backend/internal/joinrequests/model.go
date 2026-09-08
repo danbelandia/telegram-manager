@@ -25,7 +25,10 @@ const (
 // con LEFT JOIN a users (identidad desde Telegram, D6) y son vacios si
 // el usuario todavia no se registro.
 type Request struct {
-	ID          int64
+	ID int64
+	// TenantID aisla la solicitud (slice 0, columna 00009; unicidad de
+	// pendientes por (tenant_id, group_id, user_id)).
+	TenantID    int64
 	GroupID     int64
 	UserID      int64
 	Status      Status

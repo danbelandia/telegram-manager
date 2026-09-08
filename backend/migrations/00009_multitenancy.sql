@@ -136,7 +136,45 @@ CREATE INDEX idx_user_warning_state_tenant ON user_warning_state (tenant_id);
 
 CREATE INDEX idx_publications_tenant ON publications (tenant_id);
 
+-- 8. PKs compuestas por tenant. Sin esto el aislamiento es ficticio en
+--    estas tablas: el mismo grupo de Telegram en dos tenants comparte
+--    PK global por id-Telegram y el segundo tenant pisaria la fila del
+--    primero (ON CONFLICT global) o fallaria por PK duplicada. Con PK
+--    compuesta cada tenant tiene settings/listas/state/pendientes
+--    independientes. Los ON CONFLICT del codigo apuntan a estas PKs.
+ALTER TABLE group_moderation_settings DROP CONSTRAINT group_moderation_settings_pkey;
+ALTER TABLE group_moderation_settings ADD PRIMARY KEY (tenant_id, group_id);
+
+ALTER TABLE banned_words DROP CONSTRAINT banned_words_pkey;
+ALTER TABLE banned_words ADD PRIMARY KEY (tenant_id, group_id, word);
+
+ALTER TABLE link_allowlist DROP CONSTRAINT link_allowlist_pkey;
+ALTER TABLE link_allowlist ADD PRIMARY KEY (tenant_id, group_id, domain);
+
+ALTER TABLE user_warning_state DROP CONSTRAINT user_warning_state_pkey;
+ALTER TABLE user_warning_state ADD PRIMARY KEY (tenant_id, group_id, user_id);
+
+DROP INDEX idx_join_requests_pending_unique;
+CREATE UNIQUE INDEX idx_join_requests_pending_unique
+    ON join_requests (tenant_id, group_id, user_id) WHERE status = 'pending';
+
 -- +goose Down
+DROP INDEX idx_join_requests_pending_unique;
+CREATE UNIQUE INDEX idx_join_requests_pending_unique
+    ON join_requests (group_id, user_id) WHERE status = 'pending';
+
+ALTER TABLE user_warning_state DROP CONSTRAINT user_warning_state_pkey;
+ALTER TABLE user_warning_state ADD PRIMARY KEY (group_id, user_id);
+
+ALTER TABLE link_allowlist DROP CONSTRAINT link_allowlist_pkey;
+ALTER TABLE link_allowlist ADD PRIMARY KEY (group_id, domain);
+
+ALTER TABLE banned_words DROP CONSTRAINT banned_words_pkey;
+ALTER TABLE banned_words ADD PRIMARY KEY (group_id, word);
+
+ALTER TABLE group_moderation_settings DROP CONSTRAINT group_moderation_settings_pkey;
+ALTER TABLE group_moderation_settings ADD PRIMARY KEY (group_id);
+
 DROP INDEX IF EXISTS idx_publications_tenant;
 DROP INDEX IF EXISTS idx_user_warning_state_tenant;
 ALTER TABLE user_warning_state DROP COLUMN tenant_id;

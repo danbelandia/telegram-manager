@@ -12,6 +12,11 @@ import (
 // Repository persiste grupos en PostgreSQL. Es la unica capa que habla
 // con la base de datos para el dominio groups; el scanner queda aca y
 // los consumidores reciben structs del dominio, nunca filas SQL.
+//
+// Slice 0 (multitenancy): tenant_id es el PRIMER predicado de cada
+// WHERE y tenantID el primer parametro. La unicidad es compuesta
+// (tenant_id, telegram_id): el mismo grupo de Telegram puede existir
+// en dos tenants sin colisionar.
 type Repository struct {
 	db *sql.DB
 }
@@ -21,18 +26,18 @@ func NewRepository(db *sql.DB) *Repository {
 	return &Repository{db: db}
 }
 
-// UpsertByTelegramID inserta el grupo o actualiza la fila existente
-// (misma telegram_id), renovando updated_at. Idempotente: nunca crea
-// duplicados.
+// UpsertByTelegramID inserta el grupo del tenant o actualiza la fila
+// existente (mismo tenant + misma telegram_id), renovando updated_at.
+// Idempotente: nunca crea duplicados dentro del tenant.
 //
 // bot_permissions se actualiza solo cuando el valor entrante no es
 // nil: si la deteccion de grupos no trae permisos (el bot no es admin),
 // se preserva el valor previo de la fila.
-func (r *Repository) UpsertByTelegramID(ctx context.Context, g *Group) error {
+func (r *Repository) UpsertByTelegramID(ctx context.Context, tenantID int64, g *Group) error {
 	const q = `
-INSERT INTO groups (telegram_id, title, username, type, member_count, bot_status, bot_permissions)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-ON CONFLICT (telegram_id) DO UPDATE SET
+INSERT INTO groups (tenant_id, telegram_id, title, username, type, member_count, bot_status, bot_permissions)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+ON CONFLICT (tenant_id, telegram_id) DO UPDATE SET
     title           = EXCLUDED.title,
     username        = EXCLUDED.username,
     type            = EXCLUDED.type,
@@ -49,7 +54,7 @@ ON CONFLICT (telegram_id) DO UPDATE SET
 	}
 
 	_, err = r.db.ExecContext(ctx, q,
-		g.TelegramID, g.Title, g.Username, g.Type, g.MemberCount,
+		tenantID, g.TelegramID, g.Title, g.Username, g.Type, g.MemberCount,
 		string(g.BotStatus), perms,
 	)
 	if err != nil {
@@ -58,15 +63,16 @@ ON CONFLICT (telegram_id) DO UPDATE SET
 	return nil
 }
 
-// List devuelve todos los grupos persistidos, ordenados por title
-// ascendentemente.
-func (r *Repository) List(ctx context.Context) ([]Group, error) {
+// ListByTenant devuelve los grupos del tenant, ordenados por title
+// ascendentemente. Un admin NUNCA ve filas de otro tenant.
+func (r *Repository) ListByTenant(ctx context.Context, tenantID int64) ([]Group, error) {
 	const q = `
-SELECT id, telegram_id, title, username, type, member_count, bot_status, bot_permissions, created_at, updated_at
+SELECT id, tenant_id, telegram_id, title, username, type, member_count, bot_status, bot_permissions, created_at, updated_at
 FROM groups
+WHERE tenant_id = $1
 ORDER BY title ASC`
 
-	rows, err := r.db.QueryContext(ctx, q)
+	rows, err := r.db.QueryContext(ctx, q, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("groups: list: %w", err)
 	}
@@ -86,15 +92,16 @@ ORDER BY title ASC`
 	return groups, nil
 }
 
-// GetByTelegramID devuelve el grupo con ese id de Telegram, o
-// ErrNotFound si no existe.
-func (r *Repository) GetByTelegramID(ctx context.Context, telegramID int64) (*Group, error) {
+// GetByTenant devuelve el grupo del tenant con ese id de Telegram, o
+// ErrNotFound si no existe O pertenece a otro tenant (indistinguible:
+// no revela existencia ajena, D9).
+func (r *Repository) GetByTenant(ctx context.Context, tenantID, telegramID int64) (*Group, error) {
 	const q = `
-SELECT id, telegram_id, title, username, type, member_count, bot_status, bot_permissions, created_at, updated_at
+SELECT id, tenant_id, telegram_id, title, username, type, member_count, bot_status, bot_permissions, created_at, updated_at
 FROM groups
-WHERE telegram_id = $1`
+WHERE tenant_id = $1 AND telegram_id = $2`
 
-	g, err := scanGroup(r.db.QueryRowContext(ctx, q, telegramID))
+	g, err := scanGroup(r.db.QueryRowContext(ctx, q, tenantID, telegramID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -121,7 +128,7 @@ func scanGroup(row rowScanner) (Group, error) {
 	)
 
 	err := row.Scan(
-		&g.ID, &g.TelegramID, &g.Title, &g.Username, &g.Type, &g.MemberCount,
+		&g.ID, &g.TenantID, &g.TelegramID, &g.Title, &g.Username, &g.Type, &g.MemberCount,
 		&g.BotStatus, &permsJSON, &createdAt, &updatedAt,
 	)
 	if err != nil {

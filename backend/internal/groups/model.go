@@ -31,7 +31,11 @@ const (
 // eventos my_chat_member en el paso 8); cuando hay datos es un mapa
 // de la familia can_* a booleano.
 type Group struct {
-	ID             int64
+	ID int64
+	// TenantID aisla el grupo (slice 0, columna 00009). Es parte de la
+	// unicidad (tenant_id, telegram_id): el mismo grupo de Telegram
+	// puede existir en dos tenants.
+	TenantID       int64
 	TelegramID     int64
 	Title          string
 	Username       *string

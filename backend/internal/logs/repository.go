@@ -19,10 +19,12 @@ func NewRepository(db *sql.DB) *Repository {
 }
 
 // Create inserta un log. Metadata nil se guarda como JSONB NULL.
+// El caller setea Entry.TenantID (el servicio lo toma del tenant en
+// contexto/claims; 0 solo en paths legacy que migran).
 func (r *Repository) Create(ctx context.Context, e *Entry) error {
 	const q = `
-INSERT INTO logs (actor_id, group_id, action, target_user_id, metadata, status, error_message)
-VALUES ($1, $2, $3, $4, $5, $6, $7)`
+INSERT INTO logs (tenant_id, actor_id, group_id, action, target_user_id, metadata, status, error_message)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 
 	meta, err := marshalMetadata(e.Metadata)
 	if err != nil {
@@ -30,7 +32,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7)`
 	}
 
 	_, err = r.db.ExecContext(ctx, q,
-		e.ActorID, e.GroupID, e.Action, e.TargetUserID, meta, string(e.Status), e.ErrorMessage,
+		e.TenantID, e.ActorID, e.GroupID, e.Action, e.TargetUserID, meta, string(e.Status), e.ErrorMessage,
 	)
 	if err != nil {
 		return fmt.Errorf("logs: create %s: %w", e.Action, err)
@@ -38,16 +40,16 @@ VALUES ($1, $2, $3, $4, $5, $6, $7)`
 	return nil
 }
 
-// ListByGroup devuelve los logs de un grupo, del mas reciente al mas
-// antiguo (vista /groups/:id/logs del panel).
-func (r *Repository) ListByGroup(ctx context.Context, groupID int64) ([]Entry, error) {
+// ListByGroup devuelve los logs del tenant para un grupo, del mas
+// reciente al mas antiguo (vista /groups/:id/logs del panel).
+func (r *Repository) ListByGroup(ctx context.Context, tenantID, groupID int64) ([]Entry, error) {
 	const q = `
-SELECT id, actor_id, group_id, action, target_user_id, metadata, status, error_message, created_at
+SELECT id, tenant_id, actor_id, group_id, action, target_user_id, metadata, status, error_message, created_at
 FROM logs
-WHERE group_id = $1
+WHERE tenant_id = $1 AND group_id = $2
 ORDER BY created_at DESC`
 
-	rows, err := r.db.QueryContext(ctx, q, groupID)
+	rows, err := r.db.QueryContext(ctx, q, tenantID, groupID)
 	if err != nil {
 		return nil, fmt.Errorf("logs: list %d: %w", groupID, err)
 	}
@@ -60,7 +62,7 @@ ORDER BY created_at DESC`
 			metaJSON []byte
 		)
 		if err := rows.Scan(
-			&e.ID, &e.ActorID, &e.GroupID, &e.Action, &e.TargetUserID,
+			&e.ID, &e.TenantID, &e.ActorID, &e.GroupID, &e.Action, &e.TargetUserID,
 			&metaJSON, &e.Status, &e.ErrorMessage, &e.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("logs: list %d: %w", groupID, err)
@@ -101,14 +103,14 @@ func marshalMetadata(m map[string]any) (any, error) {
 // en la ventana (los actions sin ocurrencias NO aparecen en el map).
 // El caller rellena los contadores faltantes con 0 antes de responder
 // al panel (ej. `{rule_triggered: 0, automute: 0, autoban: 0}`).
-func (r *Repository) CountByActionAndGroup(ctx context.Context, groupID int64, actions []string, since time.Time) (map[string]int, error) {
+func (r *Repository) CountByActionAndGroup(ctx context.Context, tenantID, groupID int64, actions []string, since time.Time) (map[string]int, error) {
 	const q = `
 SELECT action, COUNT(*)
 FROM logs
-WHERE group_id = $1 AND action = ANY($2) AND created_at >= $3
+WHERE tenant_id = $1 AND group_id = $2 AND action = ANY($3) AND created_at >= $4
 GROUP BY action`
 
-	rows, err := r.db.QueryContext(ctx, q, groupID, actions, since.UTC())
+	rows, err := r.db.QueryContext(ctx, q, tenantID, groupID, actions, since.UTC())
 	if err != nil {
 		return nil, fmt.Errorf("logs: count actions %d: %w", groupID, err)
 	}

@@ -89,6 +89,10 @@ func DefaultSettings(groupID int64) *Settings {
 // (REQ-22..28). nil en WarnUserTemplate = usar default hardcoded en
 // automation/templates.go.
 type Settings struct {
+	// TenantID aisla los settings (slice 0, columna 00009; PK
+	// compuesta (tenant_id, group_id): cada tenant configura el mismo
+	// grupo de Telegram por separado).
+	TenantID           int64
 	GroupID            int64
 	Enabled            bool
 	AntiSpamEnabled    bool
@@ -108,10 +112,12 @@ type Settings struct {
 }
 
 // WarningState es la fila de user_warning_state. PK compuesta
-// (GroupID, UserID). WarningCount puede llegar a SMALLINT.MAX y nunca
-// baja sola: el reset vive en Service.HandleMessage cuando el estado
-// expira (WarningExpireDays).
+// (TenantID, GroupID, UserID) desde la 00009. WarningCount puede llegar
+// a SMALLINT.MAX y nunca baja sola: el reset vive en
+// Service.HandleMessage cuando el estado expira (WarningExpireDays).
 type WarningState struct {
+	// TenantID aisla el contador (slice 0, columna 00009).
+	TenantID      int64
 	GroupID       int64
 	UserID        int64
 	WarningCount  int16

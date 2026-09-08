@@ -54,7 +54,11 @@ const (
 // raw — la conversion a `[][]telegram.InlineKeyboardButton` ocurre en
 // la capa service (helper UnmarshalButtons).
 type Publication struct {
-	ID           int64
+	ID int64
+	// TenantID aisla la publicacion (slice 0, columna 00009). La FK
+	// compuesta (tenant_id, telegram_id) → groups garantiza que el
+	// grupo pertenece al tenant.
+	TenantID     int64
 	TelegramID   int64
 	Text         string
 	Status       Status

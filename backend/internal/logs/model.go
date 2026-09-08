@@ -82,8 +82,11 @@ const (
 //	NO es obligatorio: items single (POST /api/publications) no lo llevan.
 //	Cero migracion: metadata es JSONB.
 type Entry struct {
-	ID           int64
-	ActorID      *int64
+	ID      int64
+	ActorID *int64
+	// TenantID aisla la auditoria (slice 0, columna 00009): cada
+	// listado filtra por el tenant de los claims JWT.
+	TenantID     int64
 	GroupID      int64
 	Action       string
 	TargetUserID *int64

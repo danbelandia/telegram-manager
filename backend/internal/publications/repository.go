@@ -13,6 +13,11 @@ import (
 type paginationResult = []Publication
 
 // Repository persiste publicaciones en PostgreSQL.
+//
+// Slice 0 (multitenancy): tenant_id es el PRIMER predicado de cada
+// WHERE y tenantID el primer parametro. La FK compuesta
+// (tenant_id, telegram_id) → groups garantiza que la publicacion
+// cuelga de un grupo del propio tenant.
 type Repository struct {
 	db *sql.DB
 }
@@ -23,8 +28,9 @@ func NewRepository(db *sql.DB) *Repository {
 }
 
 // Create inserta una publicacion (status inicial: sending) y setea el
-// ID generado. No toca texto: la validacion de longitud vive en el
-// servicio (D5). Slice 2: persiste `photo_url` y `buttons` (JSONB
+// ID generado. El tenant viaja en p.TenantID (lo pone el servicio
+// desde los claims). No toca texto: la validacion de longitud vive en
+// el servicio (D5). Slice 2: persiste `photo_url` y `buttons` (JSONB
 // NULL-able). Si `Buttons` viene vacio se envia NULL a la DB.
 // Slice 3: persiste `scheduled_at` (TIMESTAMPTZ nullable) — bugfix
 // 2026-09-07: el INSERT original omitia la columna, por lo que filas
@@ -32,8 +38,8 @@ func NewRepository(db *sql.DB) *Repository {
 // nunca las tomaba.
 func (r *Repository) Create(ctx context.Context, p *Publication) error {
 	const q = `
-INSERT INTO publications (telegram_id, text, status, actor_id, photo_url, buttons, scheduled_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO publications (tenant_id, telegram_id, text, status, actor_id, photo_url, buttons, scheduled_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING id, created_at, updated_at`
 
 	var scheduledAtParam sql.NullTime
@@ -42,7 +48,7 @@ RETURNING id, created_at, updated_at`
 	}
 
 	err := r.db.QueryRowContext(ctx, q,
-		p.TelegramID, p.Text, string(p.Status), p.ActorID, p.PhotoURL, []byte(p.Buttons), scheduledAtParam,
+		p.TenantID, p.TelegramID, p.Text, string(p.Status), p.ActorID, p.PhotoURL, []byte(p.Buttons), scheduledAtParam,
 	).Scan(&p.ID, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("publications: create: %w", err)
@@ -50,14 +56,15 @@ RETURNING id, created_at, updated_at`
 	return nil
 }
 
-// GetByID devuelve la publicacion por su ID interno, o ErrNotFound.
-func (r *Repository) GetByID(ctx context.Context, id int64) (*Publication, error) {
+// GetByID devuelve la publicacion del tenant por su ID interno, o
+// ErrNotFound si no existe O es de otro tenant.
+func (r *Repository) GetByID(ctx context.Context, tenantID, id int64) (*Publication, error) {
 	const q = `
-SELECT id, telegram_id, text, status, message_id, scheduled_at, error_message, actor_id, photo_url, buttons, created_at, updated_at
+SELECT id, tenant_id, telegram_id, text, status, message_id, scheduled_at, error_message, actor_id, photo_url, buttons, created_at, updated_at
 FROM publications
-WHERE id = $1`
+WHERE tenant_id = $1 AND id = $2`
 
-	p, err := scanPublication(r.db.QueryRowContext(ctx, q, id))
+	p, err := scanPublication(r.db.QueryRowContext(ctx, q, tenantID, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -67,17 +74,19 @@ WHERE id = $1`
 	return &p, nil
 }
 
-// List devuelve las publicaciones mas recientes paginadas (created_at
-// DESC, LIMIT $1 OFFSET $2). Slice 3: paginacion obligatoria; el
-// handler aplica validatePagination/normalizePagination antes.
-func (r *Repository) List(ctx context.Context, limit, offset int) ([]Publication, error) {
+// List devuelve las publicaciones del tenant mas recientes paginadas
+// (created_at DESC, LIMIT $2 OFFSET $3). Slice 3: paginacion
+// obligatoria; el handler aplica validatePagination/normalizePagination
+// antes.
+func (r *Repository) List(ctx context.Context, tenantID int64, limit, offset int) ([]Publication, error) {
 	const q = `
-SELECT id, telegram_id, text, status, message_id, scheduled_at, error_message, actor_id, photo_url, buttons, created_at, updated_at
+SELECT id, tenant_id, telegram_id, text, status, message_id, scheduled_at, error_message, actor_id, photo_url, buttons, created_at, updated_at
 FROM publications
+WHERE tenant_id = $1
 ORDER BY created_at DESC
-LIMIT $1 OFFSET $2`
+LIMIT $2 OFFSET $3`
 
-	rows, err := r.db.QueryContext(ctx, q, limit, offset)
+	rows, err := r.db.QueryContext(ctx, q, tenantID, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("publications: list: %w", err)
 	}
@@ -97,18 +106,19 @@ LIMIT $1 OFFSET $2`
 	return pubs, nil
 }
 
-// ListByTelegramID devuelve las publicaciones paginadas de un grupo
-// especifico (created_at DESC, idx_publications_telegram_id). Retorna
-// slice vacio si el grupo no tiene publicaciones (no es error).
-func (r *Repository) ListByTelegramID(ctx context.Context, telegramID int64, limit, offset int) ([]Publication, error) {
+// ListByTelegramID devuelve las publicaciones paginadas del tenant
+// para un grupo especifico (created_at DESC,
+// idx_publications_telegram_id). Retorna slice vacio si el grupo no
+// tiene publicaciones (no es error).
+func (r *Repository) ListByTelegramID(ctx context.Context, tenantID, telegramID int64, limit, offset int) ([]Publication, error) {
 	const q = `
-SELECT id, telegram_id, text, status, message_id, scheduled_at, error_message, actor_id, photo_url, buttons, created_at, updated_at
+SELECT id, tenant_id, telegram_id, text, status, message_id, scheduled_at, error_message, actor_id, photo_url, buttons, created_at, updated_at
 FROM publications
-WHERE telegram_id = $1
+WHERE tenant_id = $1 AND telegram_id = $2
 ORDER BY created_at DESC
-LIMIT $2 OFFSET $3`
+LIMIT $3 OFFSET $4`
 
-	rows, err := r.db.QueryContext(ctx, q, telegramID, limit, offset)
+	rows, err := r.db.QueryContext(ctx, q, tenantID, telegramID, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("publications: list by group %d: %w", telegramID, err)
 	}
@@ -129,17 +139,20 @@ LIMIT $2 OFFSET $3`
 }
 
 // ClaimScheduledDue (slice 3) ejecuta en una sola transaccion:
-//  1. SELECT ... FOR UPDATE SKIP LOCKED de las filas `scheduled` con
-//     scheduled_at <= now(), ordenadas por scheduled_at ASC, hasta `limit`.
+//  1. SELECT ... FOR UPDATE SKIP LOCKED de las filas `scheduled` del
+//     tenant con scheduled_at <= now(), ordenadas por scheduled_at
+//     ASC, hasta `limit`.
 //  2. UPDATE de esas filas a `sending` + updated_at=now().
 //
 // Devuelve las filas reservadas (con `status` actualizado a 'sending').
 // SKIP LOCKED es Postgres >= 9.5; permite que varias instancias del
-// backend reclamen distintos subconjuntos de filas sin pisarse.
+// backend reclamen distintos subconjuntos de filas sin pisarse. Cada
+// tenant tiene su propio scheduler (slice 0): el claim filtra por
+// tenant y dos schedulers nunca reclaman las mismas filas.
 //
 // Las llamadas al adapter de Telegram ocurren DESPUES del COMMIT, en
 // el worker (slice 3 spec REQ-3).
-func (r *Repository) ClaimScheduledDue(ctx context.Context, limit int) ([]Publication, error) {
+func (r *Repository) ClaimScheduledDue(ctx context.Context, tenantID int64, limit int) ([]Publication, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("publications: claim begin: %w", err)
@@ -147,14 +160,14 @@ func (r *Repository) ClaimScheduledDue(ctx context.Context, limit int) ([]Public
 	defer func() { _ = tx.Rollback() }() // noop si Commit OK
 
 	const selectQ = `
-SELECT id, telegram_id, text, status, message_id, scheduled_at, error_message, actor_id, photo_url, buttons, created_at, updated_at
+SELECT id, tenant_id, telegram_id, text, status, message_id, scheduled_at, error_message, actor_id, photo_url, buttons, created_at, updated_at
 FROM publications
-WHERE status = 'scheduled' AND scheduled_at <= now()
+WHERE tenant_id = $1 AND status = 'scheduled' AND scheduled_at <= now()
 ORDER BY scheduled_at ASC
-LIMIT $1
+LIMIT $2
 FOR UPDATE SKIP LOCKED`
 
-	rows, err := tx.QueryContext(ctx, selectQ, limit)
+	rows, err := tx.QueryContext(ctx, selectQ, tenantID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("publications: claim select: %w", err)
 	}
@@ -188,8 +201,8 @@ FOR UPDATE SKIP LOCKED`
 	const updateQ = `
 UPDATE publications
 SET status = 'sending', updated_at = now()
-WHERE id = ANY($1)`
-	if _, err := tx.ExecContext(ctx, updateQ, int64ArrayParam(ids)); err != nil {
+WHERE tenant_id = $1 AND id = ANY($2)`
+	if _, err := tx.ExecContext(ctx, updateQ, tenantID, int64ArrayParam(ids)); err != nil {
 		return nil, fmt.Errorf("publications: claim update: %w", err)
 	}
 
@@ -206,14 +219,15 @@ WHERE id = ANY($1)`
 	return pubs, nil
 }
 
-// Cancel (slice 3) hard-deletea una fila SOLO si status='scheduled'.
-// La lectura previa del status detecta la race con un tick del worker
-// (que ya marco `sending`): en ese caso retorna ErrCancelNotAllowed.
+// Cancel (slice 3) hard-deletea una fila del tenant SOLO si
+// status='scheduled'. La lectura previa del status detecta la race con
+// un tick del worker (que ya marco `sending`): en ese caso retorna
+// ErrCancelNotAllowed.
 //
-//   - id inexistente -> ErrNotFound
+//   - id inexistente o de otro tenant -> ErrNotFound
 //   - status != 'scheduled' -> ErrCancelNotAllowed
 //   - status == 'scheduled' -> DELETE; 1 fila afectada; nil error
-func (r *Repository) Cancel(ctx context.Context, id int64) error {
+func (r *Repository) Cancel(ctx context.Context, tenantID, id int64) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("publications: cancel begin: %w", err)
@@ -221,7 +235,7 @@ func (r *Repository) Cancel(ctx context.Context, id int64) error {
 	defer func() { _ = tx.Rollback() }()
 
 	var status string
-	err = tx.QueryRowContext(ctx, `SELECT status FROM publications WHERE id = $1 FOR UPDATE`, id).Scan(&status)
+	err = tx.QueryRowContext(ctx, `SELECT status FROM publications WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, tenantID, id).Scan(&status)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
@@ -231,7 +245,7 @@ func (r *Repository) Cancel(ctx context.Context, id int64) error {
 	if status != string(StatusScheduled) {
 		return ErrCancelNotAllowed
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM publications WHERE id = $1`, id); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM publications WHERE tenant_id = $1 AND id = $2`, tenantID, id); err != nil {
 		return fmt.Errorf("publications: cancel delete: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -247,15 +261,16 @@ func int64ArrayParam(ids []int64) any {
 	return ids
 }
 
-// UpdateStatus actualiza el estado de la publicacion tras la llamada a
-// Telegram: messageID/errMsg son punteros nullable (nil = no cambiar).
-func (r *Repository) UpdateStatus(ctx context.Context, id int64, status Status, messageID *int64, errMsg *string) error {
+// UpdateStatus actualiza el estado de la publicacion del tenant tras la
+// llamada a Telegram: messageID/errMsg son punteros nullable (nil = no
+// cambiar). El tenant del claim/creacion se re-verifica en el WHERE.
+func (r *Repository) UpdateStatus(ctx context.Context, tenantID, id int64, status Status, messageID *int64, errMsg *string) error {
 	const q = `
 UPDATE publications
-SET status = $2, message_id = $3, error_message = $4, updated_at = now()
-WHERE id = $1`
+SET status = $3, message_id = $4, error_message = $5, updated_at = now()
+WHERE tenant_id = $1 AND id = $2`
 
-	res, err := r.db.ExecContext(ctx, q, id, string(status), messageID, errMsg)
+	res, err := r.db.ExecContext(ctx, q, tenantID, id, string(status), messageID, errMsg)
 	if err != nil {
 		return fmt.Errorf("publications: update status %d: %w", id, err)
 	}
@@ -287,7 +302,7 @@ func scanPublication(row rowScanner) (Publication, error) {
 		buttons  []byte
 	)
 	err := row.Scan(
-		&p.ID, &p.TelegramID, &p.Text, &status, &p.MessageID,
+		&p.ID, &p.TenantID, &p.TelegramID, &p.Text, &status, &p.MessageID,
 		&p.ScheduledAt, &p.ErrorMessage, &p.ActorID,
 		&p.PhotoURL, &buttons,
 		&createAt, &updateAt,

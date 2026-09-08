@@ -10,6 +10,11 @@ import (
 
 // Repository persiste settings y warning_state en PostgreSQL. Es la
 // unica capa que habla SQL para el dominio automation.
+//
+// Slice 0 (multitenancy): tenant_id es el PRIMER predicado de cada
+// WHERE y tenantID el primer parametro. Las PKs son compuestas por
+// tenant (00009 §8): cada tenant configura el mismo grupo de Telegram
+// por separado, sin pisar filas ajenas.
 type Repository struct {
 	db *sql.DB
 }
@@ -19,12 +24,13 @@ func NewRepository(db *sql.DB) *Repository {
 	return &Repository{db: db}
 }
 
-// GetSettings devuelve los settings del grupo. Si no existe fila,
-// retorna ErrNotFound — el caller decide si crear defaults (la policy
-// vive en Service.LoadOrCreateSettings para que sea testable).
-func (r *Repository) GetSettings(ctx context.Context, groupID int64) (*Settings, error) {
+// GetSettings devuelve los settings del tenant para el grupo. Si no
+// existe fila, retorna ErrNotFound — el caller decide si crear
+// defaults (la policy vive en Service.LoadOrCreateSettings para que
+// sea testable).
+func (r *Repository) GetSettings(ctx context.Context, tenantID, groupID int64) (*Settings, error) {
 	const q = `
-SELECT group_id, enabled, anti_spam_enabled, anti_link_enabled,
+SELECT tenant_id, group_id, enabled, anti_spam_enabled, anti_link_enabled,
        banned_words_enabled, flood_enabled,
        flood_messages, flood_seconds, warning_limit,
        automute_warnings, automute_minutes, autoban_warnings,
@@ -32,9 +38,9 @@ SELECT group_id, enabled, anti_spam_enabled, anti_link_enabled,
        warn_user_enabled, warn_user_template,
        updated_at
 FROM group_moderation_settings
-WHERE group_id = $1`
+WHERE tenant_id = $1 AND group_id = $2`
 
-	s, err := scanSettings(r.db.QueryRowContext(ctx, q, groupID))
+	s, err := scanSettings(r.db.QueryRowContext(ctx, q, tenantID, groupID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -44,22 +50,23 @@ WHERE group_id = $1`
 	return &s, nil
 }
 
-// UpsertSettings crea o reemplaza la fila de settings. ON CONFLICT
-// (group_id) DO UPDATE toca todas las columnas (excepto updated_at que
-// la DB setea via now()). El caller es responsable de los defaults
-// antes de llamar (Service.LoadOrCreateSettings lo garantiza).
+// UpsertSettings crea o reemplaza la fila de settings del tenant. ON
+// CONFLICT (tenant_id, group_id) DO UPDATE toca todas las columnas
+// (excepto updated_at que la DB setea via now()). El caller es
+// responsable de los defaults antes de llamar
+// (Service.LoadOrCreateSettings lo garantiza) y de setear s.TenantID.
 func (r *Repository) UpsertSettings(ctx context.Context, s *Settings) error {
 	const q = `
 INSERT INTO group_moderation_settings (
-    group_id, enabled,
+    tenant_id, group_id, enabled,
     anti_spam_enabled, anti_link_enabled, banned_words_enabled,
     flood_enabled,
     flood_messages, flood_seconds, warning_limit,
     automute_warnings, automute_minutes, autoban_warnings,
     warning_expire_days,
     warn_user_enabled, warn_user_template
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-ON CONFLICT (group_id) DO UPDATE SET
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+ON CONFLICT (tenant_id, group_id) DO UPDATE SET
     enabled               = EXCLUDED.enabled,
     anti_spam_enabled     = EXCLUDED.anti_spam_enabled,
     anti_link_enabled     = EXCLUDED.anti_link_enabled,
@@ -77,7 +84,7 @@ ON CONFLICT (group_id) DO UPDATE SET
     updated_at            = now()`
 
 	_, err := r.db.ExecContext(ctx, q,
-		s.GroupID, s.Enabled,
+		s.TenantID, s.GroupID, s.Enabled,
 		s.AntiSpamEnabled, s.AntiLinkEnabled, s.BannedWordsEnabled,
 		s.FloodEnabled,
 		s.FloodMessages, s.FloodSeconds, s.WarningLimit,
@@ -91,15 +98,15 @@ ON CONFLICT (group_id) DO UPDATE SET
 	return nil
 }
 
-// GetWarningState devuelve el warning_state de un (group, user). Si no
-// existe fila, retorna ErrNotFound.
-func (r *Repository) GetWarningState(ctx context.Context, groupID, userID int64) (*WarningState, error) {
+// GetWarningState devuelve el warning_state del tenant para un
+// (group, user). Si no existe fila, retorna ErrNotFound.
+func (r *Repository) GetWarningState(ctx context.Context, tenantID, groupID, userID int64) (*WarningState, error) {
 	const q = `
-SELECT group_id, user_id, warning_count, last_warning_at, last_action_at, expires_at
+SELECT tenant_id, group_id, user_id, warning_count, last_warning_at, last_action_at, expires_at
 FROM user_warning_state
-WHERE group_id = $1 AND user_id = $2`
+WHERE tenant_id = $1 AND group_id = $2 AND user_id = $3`
 
-	ws, err := scanWarningState(r.db.QueryRowContext(ctx, q, groupID, userID))
+	ws, err := scanWarningState(r.db.QueryRowContext(ctx, q, tenantID, groupID, userID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -109,25 +116,26 @@ WHERE group_id = $1 AND user_id = $2`
 	return &ws, nil
 }
 
-// UpsertWarningState crea o reemplaza la fila de warning_state con los
-// valores exactos que el caller pasa (incluido WarningCount). El
-// caller ya incremento el counter en memoria (despues del rule hit).
+// UpsertWarningState crea o reemplaza la fila de warning_state del
+// tenant con los valores exactos que el caller pasa (incluido
+// WarningCount, TenantID). El caller ya incremento el counter en
+// memoria (despues del rule hit).
 //
 // Para el path de "primera vez" (counter en 0), el caller debe haber
 // invocado LoadOrCreateWarningState (en service.go) que ya inserto la
 // fila; aqui solo actualizamos.
 func (r *Repository) UpsertWarningState(ctx context.Context, ws *WarningState) error {
 	const q = `
-INSERT INTO user_warning_state (group_id, user_id, warning_count, last_warning_at, last_action_at, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6)
-ON CONFLICT (group_id, user_id) DO UPDATE SET
+INSERT INTO user_warning_state (tenant_id, group_id, user_id, warning_count, last_warning_at, last_action_at, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+ON CONFLICT (tenant_id, group_id, user_id) DO UPDATE SET
     warning_count    = EXCLUDED.warning_count,
     last_warning_at  = EXCLUDED.last_warning_at,
     last_action_at   = EXCLUDED.last_action_at,
     expires_at       = EXCLUDED.expires_at`
 
 	_, err := r.db.ExecContext(ctx, q,
-		ws.GroupID, ws.UserID, ws.WarningCount,
+		ws.TenantID, ws.GroupID, ws.UserID, ws.WarningCount,
 		ws.LastWarningAt, ws.LastActionAt, ws.ExpiresAt,
 	)
 	if err != nil {
@@ -136,33 +144,35 @@ ON CONFLICT (group_id, user_id) DO UPDATE SET
 	return nil
 }
 
-// CreateWarningStateIfMissing inserta la fila con warning_count=0 si
-// no existe. Es idempotente: si ya existe, no hace nada (no pisa el
-// counter). Usado por Service.LoadOrCreateWarningState para arrancar
-// el contador de un usuario nuevo.
-func (r *Repository) CreateWarningStateIfMissing(ctx context.Context, groupID, userID int64) error {
+// CreateWarningStateIfMissing inserta la fila del tenant con
+// warning_count=0 si no existe. Es idempotente: si ya existe, no hace
+// nada (no pisa el counter). Usado por
+// Service.LoadOrCreateWarningState para arrancar el contador de un
+// usuario nuevo.
+func (r *Repository) CreateWarningStateIfMissing(ctx context.Context, tenantID, groupID, userID int64) error {
 	const q = `
-INSERT INTO user_warning_state (group_id, user_id)
-VALUES ($1, $2)
-ON CONFLICT (group_id, user_id) DO NOTHING`
+INSERT INTO user_warning_state (tenant_id, group_id, user_id)
+VALUES ($1, $2, $3)
+ON CONFLICT (tenant_id, group_id, user_id) DO NOTHING`
 
-	_, err := r.db.ExecContext(ctx, q, groupID, userID)
+	_, err := r.db.ExecContext(ctx, q, tenantID, groupID, userID)
 	if err != nil {
 		return fmt.Errorf("automation: create warning state (%d,%d): %w", groupID, userID, err)
 	}
 	return nil
 }
 
-// ListWarningStates devuelve todos los warning_state de un grupo (para
-// dashboard de slice 3; slice 1 lo expone pero no lo usa en runtime).
-func (r *Repository) ListWarningStates(ctx context.Context, groupID int64) ([]WarningState, error) {
+// ListWarningStates devuelve todos los warning_state del tenant para
+// un grupo (para dashboard de slice 3; slice 1 lo expone pero no lo
+// usa en runtime).
+func (r *Repository) ListWarningStates(ctx context.Context, tenantID, groupID int64) ([]WarningState, error) {
 	const q = `
-SELECT group_id, user_id, warning_count, last_warning_at, last_action_at, expires_at
+SELECT tenant_id, group_id, user_id, warning_count, last_warning_at, last_action_at, expires_at
 FROM user_warning_state
-WHERE group_id = $1
+WHERE tenant_id = $1 AND group_id = $2
 ORDER BY warning_count DESC, user_id ASC`
 
-	rows, err := r.db.QueryContext(ctx, q, groupID)
+	rows, err := r.db.QueryContext(ctx, q, tenantID, groupID)
 	if err != nil {
 		return nil, fmt.Errorf("automation: list warning states %d: %w", groupID, err)
 	}
@@ -183,20 +193,20 @@ ORDER BY warning_count DESC, user_id ASC`
 }
 
 // ResetExpiredWarnings pone warning_count=0 y limpia timestamps para
-// todas las filas cuya expires_at <= now(). Pensado para correr en
-// background (futuro cron). No se invoca desde slice 1 — vive aca
-// porque Service.HandleMessage lo necesita para validar el reset
-// individual antes de incrementar el counter.
-func (r *Repository) ResetExpiredWarnings(ctx context.Context, groupID int64, now time.Time) (int64, error) {
+// todas las filas del tenant cuya expires_at <= now(). Pensado para
+// correr en background (futuro cron). No se invoca desde slice 1 —
+// vive aca porque Service.HandleMessage lo necesita para validar el
+// reset individual antes de incrementar el counter.
+func (r *Repository) ResetExpiredWarnings(ctx context.Context, tenantID, groupID int64, now time.Time) (int64, error) {
 	const q = `
 UPDATE user_warning_state
 SET warning_count    = 0,
     last_warning_at  = NULL,
     last_action_at   = NULL,
     expires_at       = NULL
-WHERE group_id = $1 AND expires_at IS NOT NULL AND expires_at <= $2`
+WHERE tenant_id = $1 AND group_id = $2 AND expires_at IS NOT NULL AND expires_at <= $3`
 
-	res, err := r.db.ExecContext(ctx, q, groupID, now.UTC())
+	res, err := r.db.ExecContext(ctx, q, tenantID, groupID, now.UTC())
 	if err != nil {
 		return 0, fmt.Errorf("automation: reset expired %d: %w", groupID, err)
 	}
@@ -208,33 +218,33 @@ WHERE group_id = $1 AND expires_at IS NOT NULL AND expires_at <= $2`
 }
 
 // ListActiveWarningStatesByGroup devuelve las warning_state activas
-// (warning_count > 0) del grupo con display name via LEFT JOIN a users
-// (best-effort: si el user no tiene fila en users, FirstName="" y
-// Username=nil; el helper WarningStateRow.DisplayName aplica el
-// fallback). Slice 3 (Fase 3) usa este metodo para el handler GET
-// .../automation/warnings del dashboard.
+// (warning_count > 0) del tenant para el grupo con display name via
+// LEFT JOIN a users (best-effort: si el user no tiene fila en users,
+// FirstName="" y Username=nil; el helper WarningStateRow.DisplayName
+// aplica el fallback). Slice 3 (Fase 3) usa este metodo para el
+// handler GET .../automation/warnings del dashboard.
 //
 // `limit` es un cap defensivo (default 100 desde el handler): si hay
 // mas de `limit` advertencias activas, devuelve las primeras `limit`
 // ordenadas por warning_count DESC, last_warning_at DESC NULLS LAST y
 // `truncated=true`. Si el caller quiere saber si hay mas sin paginar,
 // consulta ademas el `truncated` retornado.
-func (r *Repository) ListActiveWarningStatesByGroup(ctx context.Context, groupID int64, limit int) ([]WarningStateRow, bool, error) {
+func (r *Repository) ListActiveWarningStatesByGroup(ctx context.Context, tenantID, groupID int64, limit int) ([]WarningStateRow, bool, error) {
 	if limit <= 0 {
 		limit = 100
 	}
 	const q = `
-SELECT uws.group_id, uws.user_id, uws.warning_count,
+SELECT uws.tenant_id, uws.group_id, uws.user_id, uws.warning_count,
        uws.last_warning_at, uws.last_action_at, uws.expires_at,
        COALESCE(u.first_name, '') AS first_name,
        u.username
 FROM user_warning_state uws
 LEFT JOIN users u ON u.telegram_id = uws.user_id
-WHERE uws.group_id = $1 AND uws.warning_count > 0
+WHERE uws.tenant_id = $1 AND uws.group_id = $2 AND uws.warning_count > 0
 ORDER BY uws.warning_count DESC, uws.last_warning_at DESC NULLS LAST
-LIMIT $2`
+LIMIT $3`
 
-	rows, err := r.db.QueryContext(ctx, q, groupID, limit)
+	rows, err := r.db.QueryContext(ctx, q, tenantID, groupID, limit)
 	if err != nil {
 		return nil, false, fmt.Errorf("automation: list active warning states %d: %w", groupID, err)
 	}
@@ -256,21 +266,22 @@ LIMIT $2`
 	return out, truncated, nil
 }
 
-// ResetWarningState resetea manualmente el counter de un (group, user)
-// para el dashboard de slice 3. Retorna el warning_count previo (0 si
-// la fila no existia) y deja la fila con warning_count=0 + timestamps
-// NULL. D12 del design: best-effort via SELECT prev + UPDATE; race con
-// HandleMessage es tolerable (admin puede reintentar).
+// ResetWarningState resetea manualmente el counter del tenant para un
+// (group, user) para el dashboard de slice 3. Retorna el
+// warning_count previo (0 si la fila no existia) y deja la fila con
+// warning_count=0 + timestamps NULL. D12 del design: best-effort via
+// SELECT prev + UPDATE; race con HandleMessage es tolerable (admin
+// puede reintentar).
 //
 // Retorna (0, nil) si la fila no existia; el handler distingue "no
 // habia estado para resetear" (404 NOT_FOUND) vs "reseteado OK".
-func (r *Repository) ResetWarningState(ctx context.Context, groupID, userID int64) (int64, error) {
+func (r *Repository) ResetWarningState(ctx context.Context, tenantID, groupID, userID int64) (int64, error) {
 	// 1) SELECT previo para auditoria (warning_count_before_reset en
 	//    metadata del log). Si la fila no existe → 404 desde el handler.
 	var previousCount int64
 	row := r.db.QueryRowContext(ctx,
-		`SELECT warning_count FROM user_warning_state WHERE group_id = $1 AND user_id = $2`,
-		groupID, userID,
+		`SELECT warning_count FROM user_warning_state WHERE tenant_id = $1 AND group_id = $2 AND user_id = $3`,
+		tenantID, groupID, userID,
 	)
 	if err := row.Scan(&previousCount); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -285,8 +296,8 @@ func (r *Repository) ResetWarningState(ctx context.Context, groupID, userID int6
              last_warning_at  = NULL,
              last_action_at   = NULL,
              expires_at       = NULL
-         WHERE group_id = $1 AND user_id = $2`,
-		groupID, userID,
+         WHERE tenant_id = $1 AND group_id = $2 AND user_id = $3`,
+		tenantID, groupID, userID,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("automation: reset warning state (%d,%d): %w", groupID, userID, err)
@@ -305,14 +316,14 @@ func (r *Repository) ResetWarningState(ctx context.Context, groupID, userID int6
 
 // --- banned_words (slice 2) ---
 
-// ListBannedWords devuelve la lista ordenada alfabeticamente (lower-case,
-// normalizada por el INSERT). Se usa desde el Service.HandleMessage
-// para pre-cargar la lista por mensaje (1 query por mensaje cuando
-// BannedWordsEnabled esta on). El matcher de la regla lowercases el
-// texto para que coincida.
-func (r *Repository) ListBannedWords(ctx context.Context, groupID int64) ([]string, error) {
-	const q = `SELECT word FROM banned_words WHERE group_id = $1 ORDER BY word ASC`
-	rows, err := r.db.QueryContext(ctx, q, groupID)
+// ListBannedWords devuelve la lista del tenant ordenada
+// alfabeticamente (lower-case, normalizada por el INSERT). Se usa
+// desde el Service.HandleMessage para pre-cargar la lista por mensaje
+// (1 query por mensaje cuando BannedWordsEnabled esta on). El matcher
+// de la regla lowercases el texto para que coincida.
+func (r *Repository) ListBannedWords(ctx context.Context, tenantID, groupID int64) ([]string, error) {
+	const q = `SELECT word FROM banned_words WHERE tenant_id = $1 AND group_id = $2 ORDER BY word ASC`
+	rows, err := r.db.QueryContext(ctx, q, tenantID, groupID)
 	if err != nil {
 		return nil, fmt.Errorf("automation: list banned words %d: %w", groupID, err)
 	}
@@ -331,25 +342,26 @@ func (r *Repository) ListBannedWords(ctx context.Context, groupID int64) ([]stri
 	return out, nil
 }
 
-// AddBannedWord inserta (idempotente via ON CONFLICT DO NOTHING). El
-// handler normaliza `word` con LOWER() antes de llamar; aca solo
-// persistimos. Devuelve nil si la fila ya existia (POST idempotente:
-// spec REQ-8).
-func (r *Repository) AddBannedWord(ctx context.Context, groupID int64, word string) error {
+// AddBannedWord inserta en el tenant (idempotente via ON CONFLICT DO
+// NOTHING). El handler normaliza `word` con LOWER() antes de llamar;
+// aca solo persistimos. Devuelve nil si la fila ya existia (POST
+// idempotente: spec REQ-8).
+func (r *Repository) AddBannedWord(ctx context.Context, tenantID, groupID int64, word string) error {
 	const q = `
-INSERT INTO banned_words (group_id, word) VALUES ($1, $2)
-ON CONFLICT (group_id, word) DO NOTHING`
-	if _, err := r.db.ExecContext(ctx, q, groupID, word); err != nil {
+INSERT INTO banned_words (tenant_id, group_id, word) VALUES ($1, $2, $3)
+ON CONFLICT (tenant_id, group_id, word) DO NOTHING`
+	if _, err := r.db.ExecContext(ctx, q, tenantID, groupID, word); err != nil {
 		return fmt.Errorf("automation: add banned word: %w", err)
 	}
 	return nil
 }
 
-// RemoveBannedWord borra la fila. Devuelve nil si no existia (DELETE
-// idempotente: spec REQ-8). El handler normaliza `word` con LOWER().
-func (r *Repository) RemoveBannedWord(ctx context.Context, groupID int64, word string) error {
-	const q = `DELETE FROM banned_words WHERE group_id = $1 AND word = $2`
-	if _, err := r.db.ExecContext(ctx, q, groupID, word); err != nil {
+// RemoveBannedWord borra la fila del tenant. Devuelve nil si no
+// existia (DELETE idempotente: spec REQ-8). El handler normaliza
+// `word` con LOWER().
+func (r *Repository) RemoveBannedWord(ctx context.Context, tenantID, groupID int64, word string) error {
+	const q = `DELETE FROM banned_words WHERE tenant_id = $1 AND group_id = $2 AND word = $3`
+	if _, err := r.db.ExecContext(ctx, q, tenantID, groupID, word); err != nil {
 		return fmt.Errorf("automation: remove banned word: %w", err)
 	}
 	return nil
@@ -357,11 +369,12 @@ func (r *Repository) RemoveBannedWord(ctx context.Context, groupID int64, word s
 
 // --- link_allowlist (slice 2) ---
 
-// ListLinkAllowlist devuelve la lista ordenada alfabeticamente (case
-// preserved: el matcher lowercases en evaluacion, no en storage).
-func (r *Repository) ListLinkAllowlist(ctx context.Context, groupID int64) ([]string, error) {
-	const q = `SELECT domain FROM link_allowlist WHERE group_id = $1 ORDER BY domain ASC`
-	rows, err := r.db.QueryContext(ctx, q, groupID)
+// ListLinkAllowlist devuelve la lista del tenant ordenada
+// alfabeticamente (case preserved: el matcher lowercases en
+// evaluacion, no en storage).
+func (r *Repository) ListLinkAllowlist(ctx context.Context, tenantID, groupID int64) ([]string, error) {
+	const q = `SELECT domain FROM link_allowlist WHERE tenant_id = $1 AND group_id = $2 ORDER BY domain ASC`
+	rows, err := r.db.QueryContext(ctx, q, tenantID, groupID)
 	if err != nil {
 		return nil, fmt.Errorf("automation: list link allowlist %d: %w", groupID, err)
 	}
@@ -380,25 +393,25 @@ func (r *Repository) ListLinkAllowlist(ctx context.Context, groupID int64) ([]st
 	return out, nil
 }
 
-// AddLinkAllowlist inserta (idempotente via ON CONFLICT DO NOTHING).
-// Case preserved: no normalizamos el dominio (los hosts son
-// case-insensitive en la practica pero el matcher lowercases en
+// AddLinkAllowlist inserta en el tenant (idempotente via ON CONFLICT
+// DO NOTHING). Case preserved: no normalizamos el dominio (los hosts
+// son case-insensitive en la practica pero el matcher lowercases en
 // evaluacion).
-func (r *Repository) AddLinkAllowlist(ctx context.Context, groupID int64, domain string) error {
+func (r *Repository) AddLinkAllowlist(ctx context.Context, tenantID, groupID int64, domain string) error {
 	const q = `
-INSERT INTO link_allowlist (group_id, domain) VALUES ($1, $2)
-ON CONFLICT (group_id, domain) DO NOTHING`
-	if _, err := r.db.ExecContext(ctx, q, groupID, domain); err != nil {
+INSERT INTO link_allowlist (tenant_id, group_id, domain) VALUES ($1, $2, $3)
+ON CONFLICT (tenant_id, group_id, domain) DO NOTHING`
+	if _, err := r.db.ExecContext(ctx, q, tenantID, groupID, domain); err != nil {
 		return fmt.Errorf("automation: add link allowlist: %w", err)
 	}
 	return nil
 }
 
-// RemoveLinkAllowlist borra la fila. Devuelve nil si no existia
-// (DELETE idempotente).
-func (r *Repository) RemoveLinkAllowlist(ctx context.Context, groupID int64, domain string) error {
-	const q = `DELETE FROM link_allowlist WHERE group_id = $1 AND domain = $2`
-	if _, err := r.db.ExecContext(ctx, q, groupID, domain); err != nil {
+// RemoveLinkAllowlist borra la fila del tenant. Devuelve nil si no
+// existia (DELETE idempotente).
+func (r *Repository) RemoveLinkAllowlist(ctx context.Context, tenantID, groupID int64, domain string) error {
+	const q = `DELETE FROM link_allowlist WHERE tenant_id = $1 AND group_id = $2 AND domain = $3`
+	if _, err := r.db.ExecContext(ctx, q, tenantID, groupID, domain); err != nil {
 		return fmt.Errorf("automation: remove link allowlist: %w", err)
 	}
 	return nil
@@ -412,7 +425,7 @@ type rowScanner interface {
 func scanSettings(row rowScanner) (Settings, error) {
 	var s Settings
 	err := row.Scan(
-		&s.GroupID, &s.Enabled,
+		&s.TenantID, &s.GroupID, &s.Enabled,
 		&s.AntiSpamEnabled, &s.AntiLinkEnabled, &s.BannedWordsEnabled,
 		&s.FloodEnabled,
 		&s.FloodMessages, &s.FloodSeconds, &s.WarningLimit,
@@ -430,7 +443,7 @@ func scanSettings(row rowScanner) (Settings, error) {
 func scanWarningState(row rowScanner) (WarningState, error) {
 	var ws WarningState
 	err := row.Scan(
-		&ws.GroupID, &ws.UserID, &ws.WarningCount,
+		&ws.TenantID, &ws.GroupID, &ws.UserID, &ws.WarningCount,
 		&ws.LastWarningAt, &ws.LastActionAt, &ws.ExpiresAt,
 	)
 	if err != nil {
@@ -446,7 +459,7 @@ func scanWarningState(row rowScanner) (WarningState, error) {
 func scanWarningStateRow(row rowScanner) (WarningStateRow, error) {
 	var w WarningStateRow
 	if err := row.Scan(
-		&w.GroupID, &w.UserID, &w.WarningCount,
+		&w.TenantID, &w.GroupID, &w.UserID, &w.WarningCount,
 		&w.LastWarningAt, &w.LastActionAt, &w.ExpiresAt,
 		&w.FirstName, &w.Username,
 	); err != nil {
