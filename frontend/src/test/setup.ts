@@ -18,3 +18,12 @@ class ResizeObserverStub {
 afterEach(() => {
   cleanup()
 })
+
+// Mantine v7 Combobox invoca `scrollIntoView` al abrir el dropdown de
+// Select (combobox). jsdom no implementa scrollIntoView — stub no-op
+// para que los tests con Select no fallen (slice 3 dashboard).
+if (typeof Element !== 'undefined' && !Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = function () {
+    /* no-op para jsdom */
+  }
+}

@@ -98,3 +98,45 @@ export interface BannedWordsResponse {
 export interface LinkAllowlistResponse {
   domains: string[]
 }
+
+// ── Slice 3: Warnings Dashboard ──────────────────────────────────────
+
+/** Periodo del selector de estadisticas (24h default si falta). */
+export type StatsPeriod = '24h' | '7d'
+
+/** Conteos agregados de auto-moderacion en la ventana seleccionada. */
+export interface AutomationStats {
+  rule_triggered: number
+  automute: number
+  autoban: number
+  period: StatsPeriod
+}
+
+/** Una fila del dashboard de advertencias activas. display_name
+ * viene computado server-side (backend WarningStateRow.DisplayName):
+ * FirstName → @username → "user {user_id}". last_warning_at /
+ * last_action_at / expires_at son ISO8601 con milisegundos o null. */
+export interface WarningStateRow {
+  user_id: number
+  display_name: string
+  username: string | null
+  warning_count: number
+  last_warning_at: string | null
+  last_action_at: string | null
+  expires_at: string | null
+}
+
+/** Respuesta de GET /automation/warnings. `truncated` indica si el
+ * resultset alcanzo el cap defensivo (top 100) y hay mas filas que
+ * el frontend no esta viendo. */
+export interface WarningsResponse {
+  warnings: WarningStateRow[]
+  truncated: boolean
+}
+
+/** Body de POST /automation/warnings/{user_id}/reset (200 OK). */
+export interface ResetWarningResponse {
+  user_id: number
+  warning_count: 0
+  reset: true
+}

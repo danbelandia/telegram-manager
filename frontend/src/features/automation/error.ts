@@ -1,8 +1,10 @@
 // Mensajes legibles de error y validación cliente para el dominio
-// moderacion automatica (Fase 3, slice 2). El backend ya devuelve
-// textos comprensibles en envelope.error (ej. "palabra invalida"); este
-// helper solo cubre el caso en que el mensaje no llegue y centraliza
-// las validaciones cliente que cortan el roundtrip antes del POST.
+// moderacion automatica (AGENTS §23, slice 2 + slice 3). El backend
+// ya devuelve textos comprensibles en envelope.error (ej. "palabra
+// invalida", "no hay advertencias para este usuario en este grupo");
+// este helper solo cubre el caso en que el mensaje no llegue y
+// centraliza las validaciones cliente que cortan el roundtrip antes
+// del POST.
 
 /** Si el error no trae mensaje, devuelve uno generico en español. */
 export function formatAutomationError(error: unknown): string {
@@ -10,6 +12,19 @@ export function formatAutomationError(error: unknown): string {
     return error.message
   }
   return 'No se pudo guardar la configuración de moderación.'
+}
+
+/** Errores especificos del dashboard de slice 3. Devuelve un mensaje
+ * legible cuando el envelope del backend trae code conocido. Si no
+ * matchea, cae al fallback generico de formatAutomationError. */
+export function formatDashboardError(error: unknown): string {
+  if (error instanceof Error && /no hay advertencias/i.test(error.message)) {
+    return 'No hay advertencias activas para mostrar.'
+  }
+  if (error instanceof Error && /period invalido/i.test(error.message)) {
+    return error.message
+  }
+  return formatAutomationError(error)
 }
 
 // Validacion cliente de una palabra prohibida: 1-100 chars, letras /
