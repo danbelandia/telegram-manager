@@ -21,7 +21,7 @@ import {
   TextInput,
   Title,
 } from '@mantine/core'
-import { IconCalendar, IconSend, IconTrash } from '@tabler/icons-react'
+import { IconCalendar, IconSend, IconStack3, IconTrash } from '@tabler/icons-react'
 import {
   formatPublicationsError,
   validateButtonsClient,
@@ -43,6 +43,7 @@ import type {
 } from '../features/publications/types'
 import { useGroups } from '../features/groups/hooks'
 import ButtonsEditor from '../features/publications/ButtonsEditor'
+import BatchWizard from '../features/publications-batch/BatchWizard'
 
 const STATUS_LABEL: Record<PublicationStatus, string> = {
   draft: 'Borrador',
@@ -103,6 +104,7 @@ export default function PublicationsPage() {
   const [selectedGroupIds, setSelectedGroupIds] = useState<number[]>([])
   const [scheduledLocal, setScheduledLocal] = useState('')
   const [clientError, setClientError] = useState<string | null>(null)
+  const [batchOpen, setBatchOpen] = useState(false)
 
   const hasPhoto = photoUrl.trim().length > 0
   const textMax = hasPhoto ? MAX_TEXT_WITH_PHOTO : MAX_TEXT_NO_PHOTO
@@ -219,6 +221,17 @@ export default function PublicationsPage() {
           </Alert>
         ) : null}
       </Stack>
+
+      <Group justify="flex-end">
+        <Button
+          variant="default"
+          leftSection={<IconStack3 size={16} />}
+          onClick={() => setBatchOpen(true)}
+          data-testid="open-batch-wizard"
+        >
+          Programar en lote
+        </Button>
+      </Group>
 
       <Paper withBorder p="lg" radius="md">
         <form onSubmit={handleSubmit}>
@@ -422,6 +435,8 @@ export default function PublicationsPage() {
           </Group>
         </Stack>
       </Paper>
+
+      <BatchWizard opened={batchOpen} onClose={() => setBatchOpen(false)} />
     </Stack>
   )
 }
