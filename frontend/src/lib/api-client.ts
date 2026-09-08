@@ -13,6 +13,7 @@ export type ApiErrorCode =
   | 'PERMISSION_DENIED'
   | 'TELEGRAM_ERROR'
   | 'VALIDATION_ERROR'
+  | 'CONFLICT'
   | 'NOT_FOUND'
   | 'INTERNAL_ERROR'
   | 'UNAUTHORIZED'
