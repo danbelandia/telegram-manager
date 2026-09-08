@@ -207,6 +207,15 @@ export default function GroupDetailPage() {
             >
               Membresía y moderación
             </Button>
+            <Button
+              component={Link}
+              to={`/groups/${groupId}/automation`}
+              variant="light"
+              w={260}
+              data-testid="automation-link"
+            >
+              Configurar automatización
+            </Button>
           </Stack>
         </Tabs.Panel>
 

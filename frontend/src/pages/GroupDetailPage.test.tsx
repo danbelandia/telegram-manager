@@ -73,6 +73,11 @@ describe('GroupDetailPage', () => {
       'href',
       '/groups/123/users',
     )
+    // Slice 2 (moderacion automatica): link al editor de settings + listas.
+    expect(screen.getByTestId('automation-link')).toHaveAttribute(
+      'href',
+      '/groups/123/automation',
+    )
   })
 
   it('muestra grupo inexistente cuando el backend responde NOT_FOUND', async () => {
