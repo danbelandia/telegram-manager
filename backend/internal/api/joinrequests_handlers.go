@@ -6,14 +6,16 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/telegram-manager/backend/internal/groups"
 	"github.com/telegram-manager/backend/internal/joinrequests"
 	"github.com/telegram-manager/backend/internal/moderation"
 )
 
 // joinRequestStore es la vista minima del repositorio de solicitudes de
-// ingreso que los handlers necesitan (lado consumidor).
+// ingreso que los handlers necesitan (lado consumidor). Scopeado por
+// tenant (slice 0).
 type joinRequestStore interface {
-	ListByGroup(ctx context.Context, groupID int64) ([]joinrequests.Request, error)
+	ListByGroup(ctx context.Context, tenantID, groupID int64) ([]joinrequests.Request, error)
 }
 
 // joinRequestResponse es la vista JSON de una solicitud de ingreso.
@@ -45,18 +47,45 @@ func toJoinRequestResponse(r *joinrequests.Request) joinRequestResponse {
 	return out
 }
 
+// checkGroupOwnership verifica que el grupo pertenece al tenant (D9):
+// ajeno → NOT_FOUND sin llamar a Telegram. Si el modulo de grupos no
+// esta montado (solo tests selectivos), se omite — en produccion main
+// siempre monta todos los modulos juntos.
+func checkGroupOwnership(s *Server, w http.ResponseWriter, r *http.Request, tenantID, groupID int64) bool {
+	if s.groups == nil {
+		return true
+	}
+	if _, err := s.groups.GetByTenant(r.Context(), tenantID, groupID); err != nil {
+		if errors.Is(err, groups.ErrNotFound) {
+			respondError(w, http.StatusNotFound, "NOT_FOUND", "grupo no encontrado")
+			return false
+		}
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "no se pudo obtener el grupo")
+		return false
+	}
+	return true
+}
+
 // handleListJoinRequests GET /api/groups/{id}/join-requests (decision
-// P2: pendientes y decididas, mas recientes primero).
+// P2: pendientes y decididas, mas recientes primero). Solo filas del
+// tenant (iso-listados).
 func (s *Server) handleListJoinRequests(w http.ResponseWriter, r *http.Request) {
 	if s.joinRequests == nil {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de solicitudes no habilitado")
+		return
+	}
+	tenantID, ok := tenantIDFromClaims(w, r)
+	if !ok {
 		return
 	}
 	groupID, ok := pathID(w, r, "id")
 	if !ok {
 		return
 	}
-	list, err := s.joinRequests.ListByGroup(r.Context(), groupID)
+	if !checkGroupOwnership(s, w, r, tenantID, groupID) {
+		return
+	}
+	list, err := s.joinRequests.ListByGroup(r.Context(), tenantID, groupID)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "no se pudieron listar las solicitudes")
 		return
@@ -70,10 +99,6 @@ func (s *Server) handleListJoinRequests(w http.ResponseWriter, r *http.Request) 
 
 // handleApproveJoinRequest POST /api/groups/{id}/join-requests/{requestId}/approve.
 func (s *Server) handleApproveJoinRequest(w http.ResponseWriter, r *http.Request) {
-	if s.moderation == nil {
-		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de moderacion no habilitado")
-		return
-	}
 	groupID, ok := pathID(w, r, "id")
 	if !ok {
 		return
@@ -86,8 +111,20 @@ func (s *Server) handleApproveJoinRequest(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
+	tenantID, ok := tenantIDFromClaims(w, r)
+	if !ok {
+		return
+	}
+	mod, ok := s.resolveModeration(tenantID)
+	if !ok {
+		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de moderacion no habilitado")
+		return
+	}
+	if !checkGroupOwnership(s, w, r, tenantID, groupID) {
+		return
+	}
 
-	err := s.moderation.Approve(r.Context(), actorID, groupID, requestID)
+	err := mod.Approve(r.Context(), actorID, groupID, requestID)
 	if !respondJoinRequestError(w, err) {
 		respond(w, http.StatusOK, map[string]string{"status": "approved"})
 	}
@@ -95,10 +132,6 @@ func (s *Server) handleApproveJoinRequest(w http.ResponseWriter, r *http.Request
 
 // handleRejectJoinRequest POST /api/groups/{id}/join-requests/{requestId}/reject.
 func (s *Server) handleRejectJoinRequest(w http.ResponseWriter, r *http.Request) {
-	if s.moderation == nil {
-		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de moderacion no habilitado")
-		return
-	}
 	groupID, ok := pathID(w, r, "id")
 	if !ok {
 		return
@@ -111,8 +144,20 @@ func (s *Server) handleRejectJoinRequest(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
+	tenantID, ok := tenantIDFromClaims(w, r)
+	if !ok {
+		return
+	}
+	mod, ok := s.resolveModeration(tenantID)
+	if !ok {
+		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de moderacion no habilitado")
+		return
+	}
+	if !checkGroupOwnership(s, w, r, tenantID, groupID) {
+		return
+	}
 
-	err := s.moderation.Reject(r.Context(), actorID, groupID, requestID)
+	err := mod.Reject(r.Context(), actorID, groupID, requestID)
 	if !respondJoinRequestError(w, err) {
 		respond(w, http.StatusOK, map[string]string{"status": "rejected"})
 	}

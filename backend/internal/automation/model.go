@@ -61,8 +61,9 @@ type Lists struct {
 // Consistente con Service.LoadOrCreateSettings (model.go de
 // service.go); cualquier cambio en defaults debe replicarse en
 // ambos lugares.
-func DefaultSettings(groupID int64) *Settings {
+func DefaultSettings(tenantID, groupID int64) *Settings {
 	return &Settings{
+		TenantID:          tenantID,
 		GroupID:           groupID,
 		Enabled:           false,
 		FloodEnabled:      false,
@@ -177,11 +178,13 @@ const (
 
 // AutoAction es el payload que el Service encola y el worker despacha.
 // RuleName y WarningCount se persisten en metadata del log de
-// auditoria; UserID y GroupID son los ids de Telegram. Para mute,
-// MinutesUntil es el offset en minutos desde "ahora" que se traduce a
-// unix-time en el dispatch (UntilDate).
+// auditoria; UserID y GroupID son los ids de Telegram; TenantID aisla
+// el log y el re-check del grupo (slice 0, lo pone el Service al
+// encolar). Para mute, MinutesUntil es el offset en minutos desde
+// "ahora" que se traduce a unix-time en el dispatch (UntilDate).
 type AutoAction struct {
 	Kind         AutoActionKind
+	TenantID     int64
 	GroupID      int64
 	UserID       int64
 	MinutesUntil int16 // solo mute

@@ -12,12 +12,17 @@ import (
 	"github.com/telegram-manager/backend/internal/telegram"
 )
 
+// testTenantID es el tenant de las instancias bajo test (slice 0: el
+// Service es por tenant; los fakes en memoria ignoran el tenant porque
+// el aislamiento real se prueba en los repository_test con Postgres).
+const testTenantID = 1
+
 // fakeGroups implementa GroupPermissionReader con un mapa en memoria.
 type fakeGroups struct {
 	groups map[int64]*groups.Group
 }
 
-func (f *fakeGroups) GetByTelegramID(ctx context.Context, id int64) (*groups.Group, error) {
+func (f *fakeGroups) GetByTenant(_ context.Context, _ int64, id int64) (*groups.Group, error) {
 	g, ok := f.groups[id]
 	if !ok {
 		return nil, groups.ErrNotFound
@@ -114,7 +119,7 @@ func (f *fakeRequests) add(groupID, userID int64) *joinrequests.Request {
 	return r
 }
 
-func (f *fakeRequests) GetByID(ctx context.Context, id int64) (*joinrequests.Request, error) {
+func (f *fakeRequests) GetByID(_ context.Context, _ int64, id int64) (*joinrequests.Request, error) {
 	r, ok := f.requests[id]
 	if !ok {
 		return nil, joinrequests.ErrNotFound
@@ -138,24 +143,37 @@ func (f *fakeRequests) Resolve(ctx context.Context, id int64, status joinrequest
 func newService(t *testing.T, tg *fakeTelegram, reqs *fakeRequests, groupsMap map[int64]*groups.Group) (*Service, *fakeLogs) {
 	t.Helper()
 	logsFake := &fakeLogs{}
-	svc := NewService(&fakeGroups{groups: groupsMap}, tg, reqs, logsFake)
+	svc := NewService(testTenantID, &fakeGroups{groups: groupsMap}, tg, reqs, logsFake)
 	return svc, logsFake
 }
 
-func groupWithPerms(permissions map[string]bool) *groups.Group {
+// adminGroup es un grupo donde el bot es administrador: con el
+// invariante #172 (bot_status manda) TODA accion esta permitida, sin
+// importar el mapa de permisos (nil o parcial).
+func adminGroup() *groups.Group {
 	return &groups.Group{
-		TelegramID:     -1001,
-		Title:          "MU Online Comunidad",
-		Type:           "supergroup",
-		BotStatus:      groups.StatusAdministrator,
-		BotPermissions: permissions,
+		TelegramID: -1001,
+		Title:      "MU Online Comunidad",
+		Type:       "supergroup",
+		BotStatus:  groups.StatusAdministrator,
+	}
+}
+
+// memberGroup es un grupo donde el bot NO es admin: toda accion se
+// deniega sin llamar a Telegram.
+func memberGroup() *groups.Group {
+	return &groups.Group{
+		TelegramID: -1001,
+		Title:      "MU Online Comunidad",
+		Type:       "supergroup",
+		BotStatus:  groups.StatusMember,
 	}
 }
 
 func TestService_BanSuccess(t *testing.T) {
 	tg := &fakeTelegram{}
 	svc, logFake := newService(t, tg, nil, map[int64]*groups.Group{
-		-1001: groupWithPerms(map[string]bool{"can_restrict_members": true}),
+		-1001: adminGroup(),
 	})
 
 	err := svc.Ban(context.Background(), 7, -1001, 456, 0, true)
@@ -178,13 +196,16 @@ func TestService_BanSuccess(t *testing.T) {
 	if e.TargetUserID == nil || *e.TargetUserID != 456 {
 		t.Errorf("target_user_id = %v, want 456", e.TargetUserID)
 	}
+	if e.TenantID != testTenantID {
+		t.Errorf("tenant_id = %d, want %d (slice 0)", e.TenantID, testTenantID)
+	}
 }
 
 func TestService_PermissionDeniedDoesNotCallTelegram(t *testing.T) {
-	// Bot sin can_restrict_members.
+	// Bot no-admin (invariante #172: bot_status manda, sin mapa).
 	tg := &fakeTelegram{}
 	svc, logFake := newService(t, tg, nil, map[int64]*groups.Group{
-		-1001: groupWithPerms(map[string]bool{"can_delete_messages": true}),
+		-1001: memberGroup(),
 	})
 
 	err := svc.Ban(context.Background(), 7, -1001, 456, 0, true)
@@ -209,7 +230,7 @@ func TestService_PermissionDeniedDoesNotCallTelegram(t *testing.T) {
 func TestService_TelegramErrorLogged(t *testing.T) {
 	tg := &fakeTelegram{err: telegram.ErrPermissionDenied}
 	svc, logFake := newService(t, tg, nil, map[int64]*groups.Group{
-		-1001: groupWithPerms(map[string]bool{"can_restrict_members": true}),
+		-1001: adminGroup(),
 	})
 
 	err := svc.Mute(context.Background(), 7, -1001, 456, 3600)
@@ -231,7 +252,7 @@ func TestService_TelegramErrorLogged(t *testing.T) {
 func TestService_TelegramNotFoundLogged(t *testing.T) {
 	tg := &fakeTelegram{err: telegram.ErrTelegramNotFound}
 	svc, logFake := newService(t, tg, nil, map[int64]*groups.Group{
-		-1001: groupWithPerms(map[string]bool{"can_delete_messages": true}),
+		-1001: adminGroup(),
 	})
 
 	err := svc.DeleteMessage(context.Background(), 7, -1001, 999)
@@ -259,20 +280,23 @@ func TestService_GroupNotFoundNoLog(t *testing.T) {
 	}
 }
 
-func TestService_SinPermisosConocidosRechaza(t *testing.T) {
-	// BotPermissions nil (estado desconocido): la accion se rechaza
-	// (principio de seguridad: mas seguro no habilitar).
+func TestService_AdminSinMapaPermisosPermite(t *testing.T) {
+	// Invariante #172: bot_status=administrator ALCANZA aunque el mapa
+	// de permisos sea nil (la deteccion no lo puebla completo y la Bot
+	// API no lo exige siendo admin). El viejo "deny on unknown" queda
+	// superseded: el estado admin ES el conocimiento.
 	tg := &fakeTelegram{}
+	g := adminGroup()
+	g.BotPermissions = nil
 	svc, _ := newService(t, tg, nil, map[int64]*groups.Group{
-		-1001: groupWithPerms(nil),
+		-1001: g,
 	})
 
-	err := svc.Lock(context.Background(), 7, -1001)
-	if !errors.Is(err, ErrBotPermission) {
-		t.Fatalf("Lock() error = %v, want ErrBotPermission", err)
+	if err := svc.Lock(context.Background(), 7, -1001); err != nil {
+		t.Fatalf("Lock() error = %v, want nil (admin sin mapa permite)", err)
 	}
-	if len(tg.locked) != 0 {
-		t.Errorf("se llamo a Telegram con permisos desconocidos: %v", tg.locked)
+	if len(tg.locked) != 1 {
+		t.Errorf("locked = %v, want 1 llamada a Telegram", tg.locked)
 	}
 }
 
@@ -281,7 +305,7 @@ func TestService_ApproveSuccess(t *testing.T) {
 	req := reqs.add(-1001, 456)
 	tg := &fakeTelegram{}
 	svc, logFake := newService(t, tg, reqs, map[int64]*groups.Group{
-		-1001: groupWithPerms(map[string]bool{"can_invite_users": true}),
+		-1001: adminGroup(),
 	})
 
 	err := svc.Approve(context.Background(), 7, -1001, req.ID)
@@ -302,21 +326,22 @@ func TestService_ApproveSuccess(t *testing.T) {
 	}
 }
 
-func TestService_RejectRequiresCanInviteUsers(t *testing.T) {
-	// Nota tasks 2.6: reject usa can_invite_users, no can_restrict.
+func TestService_RejectSinAdminDenegado(t *testing.T) {
+	// Invariante #172: approve/reject requieren bot admin; el mapa de
+	// permisos ya no decide.
 	reqs := newFakeRequests()
 	req := reqs.add(-1001, 456)
 	tg := &fakeTelegram{}
 	svc, _ := newService(t, tg, reqs, map[int64]*groups.Group{
-		-1001: groupWithPerms(map[string]bool{"can_restrict_members": true}),
+		-1001: memberGroup(),
 	})
 
 	err := svc.Reject(context.Background(), 7, -1001, req.ID)
 	if !errors.Is(err, ErrBotPermission) {
-		t.Fatalf("Reject() error = %v, want ErrBotPermission (reject requiere can_invite_users)", err)
+		t.Fatalf("Reject() error = %v, want ErrBotPermission (bot no admin)", err)
 	}
 	if len(tg.rejected) != 0 {
-		t.Errorf("se rechazo sin permiso: %v", tg.rejected)
+		t.Errorf("se rechazo sin ser admin: %v", tg.rejected)
 	}
 }
 
@@ -326,7 +351,7 @@ func TestService_ApproveAlreadyDecidedNoTelegram(t *testing.T) {
 	req.Status = joinrequests.StatusApproved
 	tg := &fakeTelegram{}
 	svc, _ := newService(t, tg, reqs, map[int64]*groups.Group{
-		-1001: groupWithPerms(map[string]bool{"can_invite_users": true}),
+		-1001: adminGroup(),
 	})
 
 	err := svc.Approve(context.Background(), 7, -1001, req.ID)
@@ -343,7 +368,7 @@ func TestService_ApproveWrongGroup(t *testing.T) {
 	req := reqs.add(-2002, 456) // solicitud de OTRO grupo
 	tg := &fakeTelegram{}
 	svc, _ := newService(t, tg, reqs, map[int64]*groups.Group{
-		-1001: groupWithPerms(map[string]bool{"can_invite_users": true}),
+		-1001: adminGroup(),
 	})
 
 	err := svc.Approve(context.Background(), 7, -1001, req.ID)
@@ -359,7 +384,7 @@ func TestService_ApproveNotFound(t *testing.T) {
 	reqs := newFakeRequests()
 	tg := &fakeTelegram{}
 	svc, _ := newService(t, tg, reqs, map[int64]*groups.Group{
-		-1001: groupWithPerms(map[string]bool{"can_invite_users": true}),
+		-1001: adminGroup(),
 	})
 
 	err := svc.Approve(context.Background(), 7, -1001, 999)
@@ -373,7 +398,7 @@ func TestService_ApproveTelegramErrorKeepsPending(t *testing.T) {
 	req := reqs.add(-1001, 456)
 	tg := &fakeTelegram{err: telegram.ErrPermissionDenied}
 	svc, logFake := newService(t, tg, reqs, map[int64]*groups.Group{
-		-1001: groupWithPerms(map[string]bool{"can_invite_users": true}),
+		-1001: adminGroup(),
 	})
 
 	err := svc.Approve(context.Background(), 7, -1001, req.ID)

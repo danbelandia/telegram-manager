@@ -53,11 +53,14 @@ type Scheduler struct {
 	log      LogWriter
 	interval time.Duration
 	logger   *slog.Logger
+	// tenantID aisla el scheduler (slice 0): un scheduler por tenant,
+	// cada uno con el adapter de su bot. El claim filtra por tenant.
+	tenantID int64
 }
 
 // NewScheduler construye el scheduler con sus dependencias e intervalo.
 // Si logger es nil se usa slog.Default() (json handler del main).
-func NewScheduler(store PubStore, groups GroupReader, tg MessageSender, logs LogWriter, interval time.Duration, logger *slog.Logger) *Scheduler {
+func NewScheduler(store PubStore, groups GroupReader, tg MessageSender, logs LogWriter, interval time.Duration, logger *slog.Logger, tenantID int64) *Scheduler {
 	if interval <= 0 {
 		interval = DefaultSchedulerInterval
 	}
@@ -71,6 +74,7 @@ func NewScheduler(store PubStore, groups GroupReader, tg MessageSender, logs Log
 		log:      logs,
 		interval: interval,
 		logger:   logger,
+		tenantID: tenantID,
 	}
 }
 
@@ -96,7 +100,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 // tick ejecuta un ciclo: claim + dispatch por cada fila. Es el metodo
 // que los tests invocan directamente para evitar esperar al ticker.
 func (s *Scheduler) tick(ctx context.Context) {
-	rows, err := s.store.ClaimScheduledDue(ctx, claimBatchSize)
+	rows, err := s.store.ClaimScheduledDue(ctx, s.tenantID, claimBatchSize)
 	if err != nil {
 		// Errores no-recuperables del SQL: log + siguiente tick reintenta.
 		// NO abortamos Run: el bug seria permanente, no transitorio.
@@ -126,6 +130,7 @@ func (s *Scheduler) processClaimed(ctx context.Context, row *Publication) {
 		actorID = *row.ActorID
 	}
 	entry := &logs.Entry{
+		TenantID: s.tenantID,
 		ActorID:  &actorID,
 		GroupID:  row.TelegramID,
 		Action:   logs.ActionPublishMessage,
@@ -134,11 +139,11 @@ func (s *Scheduler) processClaimed(ctx context.Context, row *Publication) {
 
 	// Re-check del estado del grupo: si el bot dejo de ser admin
 	// entre el POST y el tick, la fila debe quedar failed (no retry).
-	group, err := s.groups.GetByTelegramID(ctx, row.TelegramID)
+	group, err := s.groups.GetByTenant(ctx, s.tenantID, row.TelegramID)
 	if err != nil {
 		if errors.Is(err, groups.ErrNotFound) {
 			msg := ErrGroupNotFound.Error()
-			_ = s.store.UpdateStatus(ctx, row.ID, StatusFailed, nil, &msg)
+			_ = s.store.UpdateStatus(ctx, s.tenantID, row.ID, StatusFailed, nil, &msg)
 			row.Status = StatusFailed
 			row.ErrorMessage = &msg
 			entry.Status = logs.StatusNotFound
@@ -147,7 +152,7 @@ func (s *Scheduler) processClaimed(ctx context.Context, row *Publication) {
 			return
 		}
 		msg := fmt.Sprintf("error leyendo grupo: %v", err)
-		_ = s.store.UpdateStatus(ctx, row.ID, StatusFailed, nil, &msg)
+		_ = s.store.UpdateStatus(ctx, s.tenantID, row.ID, StatusFailed, nil, &msg)
 		row.Status = StatusFailed
 		row.ErrorMessage = &msg
 		entry.Status = logs.StatusInternalError
@@ -157,7 +162,7 @@ func (s *Scheduler) processClaimed(ctx context.Context, row *Publication) {
 	}
 	if !s.permissionOk(group) {
 		msg := ErrBotPermission.Error()
-		_ = s.store.UpdateStatus(ctx, row.ID, StatusFailed, nil, &msg)
+		_ = s.store.UpdateStatus(ctx, s.tenantID, row.ID, StatusFailed, nil, &msg)
 		row.Status = StatusFailed
 		row.ErrorMessage = &msg
 		entry.Status = logs.StatusPermissionDenied
@@ -169,7 +174,7 @@ func (s *Scheduler) processClaimed(ctx context.Context, row *Publication) {
 	buttons, err := UnmarshalButtons(row.Buttons)
 	if err != nil {
 		msg := fmt.Sprintf("buttons invalidos: %v", err)
-		_ = s.store.UpdateStatus(ctx, row.ID, StatusFailed, nil, &msg)
+		_ = s.store.UpdateStatus(ctx, s.tenantID, row.ID, StatusFailed, nil, &msg)
 		row.Status = StatusFailed
 		row.ErrorMessage = &msg
 		entry.Status = logs.StatusInternalError

@@ -9,9 +9,9 @@ import (
 )
 
 // logStore es la vista minima del repositorio de logs que el handler
-// necesita (lado consumidor).
+// necesita (lado consumidor). Scopeado por tenant (slice 0).
 type logStore interface {
-	ListByGroup(ctx context.Context, groupID int64) ([]logs.Entry, error)
+	ListByGroup(ctx context.Context, tenantID, groupID int64) ([]logs.Entry, error)
 }
 
 // logEntryResponse es la vista JSON de una entrada de auditoria.
@@ -41,17 +41,25 @@ func toLogEntryResponse(e *logs.Entry) logEntryResponse {
 	}
 }
 
-// handleListGroupLogs GET /api/groups/{id}/logs.
+// handleListGroupLogs GET /api/groups/{id}/logs. Solo filas del tenant
+// (iso-listados) tras ownership del grupo (D9).
 func (s *Server) handleListGroupLogs(w http.ResponseWriter, r *http.Request) {
 	if s.logStore == nil {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de logs no habilitado")
+		return
+	}
+	tenantID, ok := tenantIDFromClaims(w, r)
+	if !ok {
 		return
 	}
 	groupID, ok := pathID(w, r, "id")
 	if !ok {
 		return
 	}
-	list, err := s.logStore.ListByGroup(r.Context(), groupID)
+	if !checkGroupOwnership(s, w, r, tenantID, groupID) {
+		return
+	}
+	list, err := s.logStore.ListByGroup(r.Context(), tenantID, groupID)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "no se pudieron listar los logs")
 		return

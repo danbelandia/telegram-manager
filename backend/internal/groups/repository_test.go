@@ -34,11 +34,41 @@ func testDB(t *testing.T) *sql.DB {
 	}
 	// Los tests comparten la base: cada test arranca con la tabla
 	// vacia para no depender del estado que dejo el anterior. CASCADE
-	// porque publications (00004) tiene FK a groups.telegram_id.
+	// porque publications (00004) tiene FK a groups.
 	if _, err := db.ExecContext(context.Background(), "TRUNCATE groups CASCADE"); err != nil {
 		t.Fatalf("truncate groups: %v", err)
 	}
 	return db
+}
+
+// testTenant devuelve el id del tenant `default` (idempotente, slice
+// 0): todos los upserts del paquete requieren tenant.
+func testTenant(t *testing.T, db *sql.DB) int64 {
+	t.Helper()
+	var id int64
+	const q = `
+INSERT INTO tenants (slug) VALUES ('default')
+ON CONFLICT (slug) DO UPDATE SET slug = EXCLUDED.slug
+RETURNING id`
+	if err := db.QueryRowContext(context.Background(), q).Scan(&id); err != nil {
+		t.Fatalf("ensure default tenant: %v", err)
+	}
+	return id
+}
+
+// testTenantSlug crea un tenant con el slug dado (para tests de
+// aislamiento entre dos tenants).
+func testTenantSlug(t *testing.T, db *sql.DB, slug string) int64 {
+	t.Helper()
+	var id int64
+	const q = `
+INSERT INTO tenants (slug) VALUES ($1)
+ON CONFLICT (slug) DO UPDATE SET slug = EXCLUDED.slug
+RETURNING id`
+	if err := db.QueryRowContext(context.Background(), q, slug).Scan(&id); err != nil {
+		t.Fatalf("ensure tenant %q: %v", slug, err)
+	}
+	return id
 }
 
 func sampleGroup(telegramID int64, title string) *Group {
@@ -53,30 +83,31 @@ func sampleGroup(telegramID int64, title string) *Group {
 func TestRepository_UpsertIdempotent(t *testing.T) {
 	db := testDB(t)
 	repo := NewRepository(db)
+	tid := testTenant(t, db)
 
 	ctx := context.Background()
 	g := sampleGroup(1000000001, "Beta")
 
-	if err := repo.UpsertByTelegramID(ctx, g); err != nil {
+	if err := repo.UpsertByTelegramID(ctx, tid, g); err != nil {
 		t.Fatalf("first upsert: %v", err)
 	}
 	g.Title = "Beta Renombrado"
 	g.BotStatus = StatusAdministrator
-	if err := repo.UpsertByTelegramID(ctx, g); err != nil {
+	if err := repo.UpsertByTelegramID(ctx, tid, g); err != nil {
 		t.Fatalf("second upsert: %v", err)
 	}
 
 	// Unicidad: segunda escritura sobre el mismo telegram_id no duplica.
-	const countQ = `SELECT count(*) FROM groups WHERE telegram_id = $1`
+	const countQ = `SELECT count(*) FROM groups WHERE tenant_id = $1 AND telegram_id = $2`
 	var n int
-	if err := db.QueryRowContext(ctx, countQ, g.TelegramID).Scan(&n); err != nil {
+	if err := db.QueryRowContext(ctx, countQ, tid, g.TelegramID).Scan(&n); err != nil {
 		t.Fatalf("count: %v", err)
 	}
 	if n != 1 {
 		t.Errorf("rows for telegram_id %d = %d, want 1", g.TelegramID, n)
 	}
 
-	got, err := repo.GetByTelegramID(ctx, g.TelegramID)
+	got, err := repo.GetByTenant(ctx, tid, g.TelegramID)
 	if err != nil {
 		t.Fatalf("get after upsert: %v", err)
 	}
@@ -86,29 +117,33 @@ func TestRepository_UpsertIdempotent(t *testing.T) {
 	if got.BotStatus != StatusAdministrator {
 		t.Errorf("bot_status = %q, want %q", got.BotStatus, StatusAdministrator)
 	}
+	if got.TenantID != tid {
+		t.Errorf("tenant_id = %d, want %d", got.TenantID, tid)
+	}
 }
 
 func TestRepository_UpsertUpdatesUpdatedAt(t *testing.T) {
 	db := testDB(t)
 	repo := NewRepository(db)
+	tid := testTenant(t, db)
 
 	ctx := context.Background()
 	g := sampleGroup(1000000002, "Gamma")
-	if err := repo.UpsertByTelegramID(ctx, g); err != nil {
+	if err := repo.UpsertByTelegramID(ctx, tid, g); err != nil {
 		t.Fatalf("first upsert: %v", err)
 	}
 
-	before, err := repo.GetByTelegramID(ctx, g.TelegramID)
+	before, err := repo.GetByTenant(ctx, tid, g.TelegramID)
 	if err != nil {
 		t.Fatalf("get before: %v", err)
 	}
 	// updated_at cambia por funcion now(): esperar para que el reloj avance.
 	time.Sleep(1100 * time.Millisecond)
 
-	if err := repo.UpsertByTelegramID(ctx, g); err != nil {
+	if err := repo.UpsertByTelegramID(ctx, tid, g); err != nil {
 		t.Fatalf("second upsert: %v", err)
 	}
-	after, err := repo.GetByTelegramID(ctx, g.TelegramID)
+	after, err := repo.GetByTenant(ctx, tid, g.TelegramID)
 	if err != nil {
 		t.Fatalf("get after: %v", err)
 	}
@@ -124,6 +159,7 @@ func TestRepository_UpsertUpdatesUpdatedAt(t *testing.T) {
 func TestRepository_ListOrderedByTitle(t *testing.T) {
 	db := testDB(t)
 	repo := NewRepository(db)
+	tid := testTenant(t, db)
 
 	ctx := context.Background()
 	for _, g := range []*Group{
@@ -131,12 +167,12 @@ func TestRepository_ListOrderedByTitle(t *testing.T) {
 		sampleGroup(1000000102, "Alpha"),
 		sampleGroup(1000000103, "Milo"),
 	} {
-		if err := repo.UpsertByTelegramID(ctx, g); err != nil {
+		if err := repo.UpsertByTelegramID(ctx, tid, g); err != nil {
 			t.Fatalf("upsert %s: %v", g.Title, err)
 		}
 	}
 
-	got, err := repo.List(ctx)
+	got, err := repo.ListByTenant(ctx, tid)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -155,8 +191,9 @@ func TestRepository_ListOrderedByTitle(t *testing.T) {
 func TestRepository_GetNotFound(t *testing.T) {
 	db := testDB(t)
 	repo := NewRepository(db)
+	tid := testTenant(t, db)
 
-	_, err := repo.GetByTelegramID(context.Background(), 999999999999)
+	_, err := repo.GetByTenant(context.Background(), tid, 999999999999)
 	if err == nil {
 		t.Fatal("get inexistente returned nil error, want ErrNotFound")
 	}
@@ -168,6 +205,7 @@ func TestRepository_GetNotFound(t *testing.T) {
 func TestRepository_UpsertPermissionsJSONB(t *testing.T) {
 	db := testDB(t)
 	repo := NewRepository(db)
+	tid := testTenant(t, db)
 
 	ctx := context.Background()
 	g := sampleGroup(1000000201, "Permisos")
@@ -179,11 +217,11 @@ func TestRepository_UpsertPermissionsJSONB(t *testing.T) {
 	}
 	g.Username = ptr("grupo-permisos")
 	g.MemberCount = ptrInt64(42)
-	if err := repo.UpsertByTelegramID(ctx, g); err != nil {
+	if err := repo.UpsertByTelegramID(ctx, tid, g); err != nil {
 		t.Fatalf("upsert with permissions: %v", err)
 	}
 
-	got, err := repo.GetByTelegramID(ctx, g.TelegramID)
+	got, err := repo.GetByTenant(ctx, tid, g.TelegramID)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -204,23 +242,24 @@ func TestRepository_UpsertPermissionsJSONB(t *testing.T) {
 func TestRepository_UpsertPreservesPermissionsWhenNil(t *testing.T) {
 	db := testDB(t)
 	repo := NewRepository(db)
+	tid := testTenant(t, db)
 
 	ctx := context.Background()
 	g := sampleGroup(1000000301, "Preserva")
 	g.BotStatus = StatusAdministrator
 	g.BotPermissions = map[string]bool{"can_restrict_members": true, "can_delete_messages": true}
-	if err := repo.UpsertByTelegramID(ctx, g); err != nil {
+	if err := repo.UpsertByTelegramID(ctx, tid, g); err != nil {
 		t.Fatalf("upsert with permissions: %v", err)
 	}
 
 	// Segundo upsert sin permisos (nil): el valor previo debe quedar.
 	g2 := sampleGroup(1000000301, "Preserva Renombrado")
 	g2.BotStatus = StatusMember
-	if err := repo.UpsertByTelegramID(ctx, g2); err != nil {
+	if err := repo.UpsertByTelegramID(ctx, tid, g2); err != nil {
 		t.Fatalf("upsert with nil permissions: %v", err)
 	}
 
-	got, err := repo.GetByTelegramID(ctx, g.TelegramID)
+	got, err := repo.GetByTenant(ctx, tid, g.TelegramID)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -233,6 +272,92 @@ func TestRepository_UpsertPreservesPermissionsWhenNil(t *testing.T) {
 	}
 	if got.BotStatus != StatusMember {
 		t.Errorf("bot_status = %q, want member", got.BotStatus)
+	}
+}
+
+// --- Aislamiento por tenant (slice 0) ---
+
+func TestRepository_SameTelegramIDTwoTenants(t *testing.T) {
+	db := testDB(t)
+	repo := NewRepository(db)
+	ctx := context.Background()
+	tidA := testTenantSlug(t, db, "tenant-a")
+	tidB := testTenantSlug(t, db, "tenant-b")
+
+	// Mismo telegram_id en dos tenants: dos filas, sin violar unicidad.
+	if err := repo.UpsertByTelegramID(ctx, tidA, sampleGroup(555001, "Grupo A")); err != nil {
+		t.Fatalf("upsert tenant A: %v", err)
+	}
+	if err := repo.UpsertByTelegramID(ctx, tidB, sampleGroup(555001, "Grupo B")); err != nil {
+		t.Fatalf("upsert tenant B: %v", err)
+	}
+
+	gotA, err := repo.GetByTenant(ctx, tidA, 555001)
+	if err != nil {
+		t.Fatalf("get A: %v", err)
+	}
+	gotB, err := repo.GetByTenant(ctx, tidB, 555001)
+	if err != nil {
+		t.Fatalf("get B: %v", err)
+	}
+	if gotA.Title != "Grupo A" || gotB.Title != "Grupo B" {
+		t.Errorf("titles = %q/%q, want Grupo A/Grupo B", gotA.Title, gotB.Title)
+	}
+	if gotA.ID == gotB.ID {
+		t.Error("misma fila para dos tenants: la unicidad compuesta no aisla")
+	}
+}
+
+func TestRepository_CrossTenantGetNotFound(t *testing.T) {
+	db := testDB(t)
+	repo := NewRepository(db)
+	ctx := context.Background()
+	tidA := testTenantSlug(t, db, "tenant-a")
+	tidB := testTenantSlug(t, db, "tenant-b")
+
+	if err := repo.UpsertByTelegramID(ctx, tidA, sampleGroup(555002, "Solo A")); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	// Grupo de A visto desde B: indistinguible de inexistente.
+	if _, err := repo.GetByTenant(ctx, tidB, 555002); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestRepository_ListByTenantNoLeak(t *testing.T) {
+	db := testDB(t)
+	repo := NewRepository(db)
+	ctx := context.Background()
+	tidA := testTenantSlug(t, db, "tenant-a")
+	tidB := testTenantSlug(t, db, "tenant-b")
+
+	if err := repo.UpsertByTelegramID(ctx, tidA, sampleGroup(555003, "De A")); err != nil {
+		t.Fatalf("upsert A: %v", err)
+	}
+	if err := repo.UpsertByTelegramID(ctx, tidB, sampleGroup(555004, "De B")); err != nil {
+		t.Fatalf("upsert B: %v", err)
+	}
+
+	listA, err := repo.ListByTenant(ctx, tidA)
+	if err != nil {
+		t.Fatalf("list A: %v", err)
+	}
+	for _, g := range listA {
+		if g.TenantID != tidA {
+			t.Errorf("list A incluye fila de otro tenant: %#v", g)
+		}
+	}
+	found := false
+	for _, g := range listA {
+		if g.TelegramID == 555003 {
+			found = true
+		}
+		if g.TelegramID == 555004 {
+			t.Error("list A fuga fila del tenant B")
+		}
+	}
+	if !found {
+		t.Error("list A no incluye su propia fila")
 	}
 }
 

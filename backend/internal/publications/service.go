@@ -45,9 +45,10 @@ var (
 )
 
 // GroupReader es la vista minima del repositorio de grupos (lado
-// consumidor; *groups.Repository la satisface).
+// consumidor; *groups.Repository la satisface). Scopeado por tenant
+// (slice 0): grupo ajeno → groups.ErrNotFound → ErrGroupNotFound.
 type GroupReader interface {
-	GetByTelegramID(ctx context.Context, id int64) (*groups.Group, error)
+	GetByTenant(ctx context.Context, tenantID, id int64) (*groups.Group, error)
 }
 
 // MessageSender es la vista minima del Service de Telegram para
@@ -72,12 +73,12 @@ type LogWriter interface {
 // para el worker in-process y Cancel para `DELETE /api/publications/:id`.
 type PubStore interface {
 	Create(ctx context.Context, p *Publication) error
-	GetByID(ctx context.Context, id int64) (*Publication, error)
-	List(ctx context.Context, limit, offset int) ([]Publication, error)
-	ListByTelegramID(ctx context.Context, telegramID int64, limit, offset int) ([]Publication, error)
-	UpdateStatus(ctx context.Context, id int64, status Status, messageID *int64, errMsg *string) error
-	ClaimScheduledDue(ctx context.Context, limit int) ([]Publication, error)
-	Cancel(ctx context.Context, id int64) error
+	GetByID(ctx context.Context, tenantID, id int64) (*Publication, error)
+	List(ctx context.Context, tenantID int64, limit, offset int) ([]Publication, error)
+	ListByTelegramID(ctx context.Context, tenantID, telegramID int64, limit, offset int) ([]Publication, error)
+	UpdateStatus(ctx context.Context, tenantID, id int64, status Status, messageID *int64, errMsg *string) error
+	ClaimScheduledDue(ctx context.Context, tenantID int64, limit int) ([]Publication, error)
+	Cancel(ctx context.Context, tenantID, id int64) error
 }
 
 // PublishPayload es el body que el handler entrega al servicio.
@@ -120,7 +121,7 @@ func keyboardOrNil(rows [][]telegram.InlineKeyboardButton) *telegram.InlineKeybo
 // create(sending) → sendMessage | sendPhoto → update(sent/failed) → log.
 // Convivencia con slice 2: Publish delega en `publishOne` para mantener
 // un unico path de envio (PublishMany reutiliza la misma funcion).
-func (s *Service) Publish(ctx context.Context, actorID, groupID int64, text string, photoURL *string, buttons [][]telegram.InlineKeyboardButton) (*Publication, error) {
+func (s *Service) Publish(ctx context.Context, tenantID, actorID, groupID int64, text string, photoURL *string, buttons [][]telegram.InlineKeyboardButton) (*Publication, error) {
 	if strings.TrimSpace(text) == "" {
 		return nil, ErrTextEmpty
 	}
@@ -132,7 +133,7 @@ func (s *Service) Publish(ctx context.Context, actorID, groupID int64, text stri
 		return nil, err
 	}
 
-	group, err := s.groups.GetByTelegramID(ctx, groupID)
+	group, err := s.groups.GetByTenant(ctx, tenantID, groupID)
 	if err != nil {
 		if errors.Is(err, groups.ErrNotFound) {
 			return nil, ErrGroupNotFound
@@ -141,15 +142,16 @@ func (s *Service) Publish(ctx context.Context, actorID, groupID int64, text stri
 	}
 
 	entry := &logs.Entry{
-		ActorID: &actorID,
-		GroupID: groupID,
-		Action:  logs.ActionPublishMessage,
+		TenantID: tenantID,
+		ActorID:  &actorID,
+		GroupID:  groupID,
+		Action:   logs.ActionPublishMessage,
 	}
 	if !permissionOk(group) {
 		return nil, s.logFailure(ctx, entry, logs.StatusPermissionDenied, ErrBotPermission)
 	}
 
-	pub, err := s.createSending(ctx, actorID, groupID, text, photoURL, buttons)
+	pub, err := s.createSending(ctx, tenantID, actorID, groupID, text, photoURL, buttons)
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +163,7 @@ func (s *Service) Publish(ctx context.Context, actorID, groupID int64, text stri
 		return nil, s.logFailure(ctx, entry, statusForTelError(err), err)
 	}
 
-	if err := s.store.UpdateStatus(ctx, pub.ID, StatusSent, &messageID, nil); err != nil {
+	if err := s.store.UpdateStatus(ctx, tenantID, pub.ID, StatusSent, &messageID, nil); err != nil {
 		return nil, fmt.Errorf("publications: publish: update sent: %w", err)
 	}
 	pub.Status = StatusSent
@@ -181,7 +183,7 @@ func (s *Service) Publish(ctx context.Context, actorID, groupID int64, text stri
 // (`sent` o `failed`) y su log independiente. Devuelve TODAS las filas
 // en el mismo orden que `payload.GroupIDs`, incluso si todas quedan
 // `failed` — el handler responde 201 con la lista.
-func (s *Service) PublishMany(ctx context.Context, actorID int64, payload PublishPayload) ([]Publication, error) {
+func (s *Service) PublishMany(ctx context.Context, tenantID, actorID int64, payload PublishPayload) ([]Publication, error) {
 	if err := validatePayload(payload); err != nil {
 		return nil, err
 	}
@@ -190,7 +192,7 @@ func (s *Service) PublishMany(ctx context.Context, actorID int64, payload Publis
 	hasPhoto := payload.PhotoURL != nil && *payload.PhotoURL != ""
 
 	for _, groupID := range payload.GroupIDs {
-		row, logEntry := s.publishOne(ctx, actorID, groupID, payload.Text, hasPhoto, payload.PhotoURL, payload.Buttons)
+		row, logEntry := s.publishOne(ctx, tenantID, actorID, groupID, payload.Text, hasPhoto, payload.PhotoURL, payload.Buttons)
 		results = append(results, row)
 		_ = logEntry // ya consumido por publishOne
 	}
@@ -205,20 +207,22 @@ func (s *Service) PublishMany(ctx context.Context, actorID int64, payload Publis
 // hasPhoto deriva de payload (pre-validado). photoURL es nil cuando no
 // hay foto; si hasPhoto=true y photoURL es nil, es un bug del caller
 // (PublishMany garantiza la condicion).
-func (s *Service) publishOne(ctx context.Context, actorID, groupID int64, text string, hasPhoto bool, photoURL *string, buttons [][]telegram.InlineKeyboardButton) (Publication, *logs.Entry) {
+func (s *Service) publishOne(ctx context.Context, tenantID, actorID, groupID int64, text string, hasPhoto bool, photoURL *string, buttons [][]telegram.InlineKeyboardButton) (Publication, *logs.Entry) {
 	row := Publication{
+		TenantID:   tenantID,
 		TelegramID: groupID,
 		Text:       text,
 		Status:     StatusFailed, // default hasta crear la fila
 		ActorID:    &actorID,
 	}
 	entry := &logs.Entry{
-		ActorID: &actorID,
-		GroupID: groupID,
-		Action:  logs.ActionPublishMessage,
+		TenantID: tenantID,
+		ActorID:  &actorID,
+		GroupID:  groupID,
+		Action:   logs.ActionPublishMessage,
 	}
 
-	group, err := s.groups.GetByTelegramID(ctx, groupID)
+	group, err := s.groups.GetByTenant(ctx, tenantID, groupID)
 	if err != nil {
 		if errors.Is(err, groups.ErrNotFound) {
 			msg := ErrGroupNotFound.Error()
@@ -242,6 +246,7 @@ func (s *Service) publishOne(ctx context.Context, actorID, groupID int64, text s
 
 	// Persistir como sending ANTES de llamar a Telegram.
 	pub := &Publication{
+		TenantID:   tenantID,
 		TelegramID: groupID,
 		Text:       text,
 		Status:     StatusSending,
@@ -293,7 +298,7 @@ func (s *Service) publishOneFinalize(ctx context.Context, pub *Publication, entr
 	messageID, err := s.dispatchWithPhoto(ctx, pub.TelegramID, pub.Text, hasPhoto, photoURL, buttons)
 	if err != nil {
 		msg := err.Error()
-		_ = s.store.UpdateStatus(ctx, pub.ID, StatusFailed, nil, &msg)
+		_ = s.store.UpdateStatus(ctx, pub.TenantID, pub.ID, StatusFailed, nil, &msg)
 		pub.Status = StatusFailed
 		pub.ErrorMessage = &msg
 		entry.Status = statusForTelError(err)
@@ -302,7 +307,7 @@ func (s *Service) publishOneFinalize(ctx context.Context, pub *Publication, entr
 		return
 	}
 
-	if err := s.store.UpdateStatus(ctx, pub.ID, StatusSent, &messageID, nil); err != nil {
+	if err := s.store.UpdateStatus(ctx, pub.TenantID, pub.ID, StatusSent, &messageID, nil); err != nil {
 		msg := "error actualizando estado"
 		pub.ErrorMessage = &msg
 		pub.Status = StatusFailed
@@ -344,8 +349,9 @@ func (s *Service) dispatchWithPhoto(ctx context.Context, groupID int64, text str
 
 // createSending persiste la fila en estado sending y devuelve el row
 // con ID, CreatedAt y UpdatedAt asignados.
-func (s *Service) createSending(ctx context.Context, actorID, groupID int64, text string, photoURL *string, buttons [][]telegram.InlineKeyboardButton) (*Publication, error) {
+func (s *Service) createSending(ctx context.Context, tenantID, actorID, groupID int64, text string, photoURL *string, buttons [][]telegram.InlineKeyboardButton) (*Publication, error) {
 	pub := &Publication{
+		TenantID:   tenantID,
 		TelegramID: groupID,
 		Text:       text,
 		Status:     StatusSending,
@@ -363,7 +369,7 @@ func (s *Service) createSending(ctx context.Context, actorID, groupID int64, tex
 
 // markFailed actualiza una fila a failed con error_message.
 func (s *Service) markFailed(ctx context.Context, pub *Publication, errMsg string) {
-	if uerr := s.store.UpdateStatus(ctx, pub.ID, StatusFailed, nil, &errMsg); uerr != nil {
+	if uerr := s.store.UpdateStatus(ctx, pub.TenantID, pub.ID, StatusFailed, nil, &errMsg); uerr != nil {
 		// No abortamos la respuesta: si no se puede actualizar, el
 		// caller ya tiene el error original.
 		_ = uerr
@@ -372,21 +378,23 @@ func (s *Service) markFailed(ctx context.Context, pub *Publication, errMsg strin
 	pub.ErrorMessage = &errMsg
 }
 
-// GetByID devuelve una publicacion por su ID interno.
-func (s *Service) GetByID(ctx context.Context, id int64) (*Publication, error) {
-	return s.store.GetByID(ctx, id)
+// GetByID devuelve una publicacion del tenant por su ID interno.
+func (s *Service) GetByID(ctx context.Context, tenantID, id int64) (*Publication, error) {
+	return s.store.GetByID(ctx, tenantID, id)
 }
 
-// List devuelve las publicaciones paginadas (created_at DESC). El handler
-// valida limit/offset antes de invocar (slice 3: paginacion).
-func (s *Service) List(ctx context.Context, limit, offset int) ([]Publication, error) {
-	return s.store.List(ctx, limit, offset)
+// List devuelve las publicaciones del tenant paginadas (created_at
+// DESC). El handler valida limit/offset antes de invocar (slice 3:
+// paginacion).
+func (s *Service) List(ctx context.Context, tenantID int64, limit, offset int) ([]Publication, error) {
+	return s.store.List(ctx, tenantID, limit, offset)
 }
 
-// ListByTelegramID devuelve las publicaciones paginadas de un grupo
-// especifico (created_at DESC, idx_publications_telegram_id).
-func (s *Service) ListByTelegramID(ctx context.Context, telegramID int64, limit, offset int) ([]Publication, error) {
-	return s.store.ListByTelegramID(ctx, telegramID, limit, offset)
+// ListByTelegramID devuelve las publicaciones del tenant paginadas de
+// un grupo especifico (created_at DESC,
+// idx_publications_telegram_id).
+func (s *Service) ListByTelegramID(ctx context.Context, tenantID, telegramID int64, limit, offset int) ([]Publication, error) {
+	return s.store.ListByTelegramID(ctx, tenantID, telegramID, limit, offset)
 }
 
 // Schedule inserta N filas con status='scheduled' sin tocar Telegram.
@@ -394,7 +402,7 @@ func (s *Service) ListByTelegramID(ctx context.Context, telegramID int64, limit,
 // (worker, via claim) se encarga luego de llamar a publishOne por cada
 // fila cuando llegue su `scheduled_at`. `nowFn` se inyecta para
 // determinismo en tests (default time.Now si nil).
-func (s *Service) Schedule(ctx context.Context, actorID int64, payload PublishPayload, scheduledAt time.Time, nowFn func() time.Time) ([]Publication, error) {
+func (s *Service) Schedule(ctx context.Context, tenantID, actorID int64, payload PublishPayload, scheduledAt time.Time, nowFn func() time.Time) ([]Publication, error) {
 	if err := validatePayload(payload); err != nil {
 		return nil, err
 	}
@@ -408,6 +416,7 @@ func (s *Service) Schedule(ctx context.Context, actorID int64, payload PublishPa
 	results := make([]Publication, 0, len(payload.GroupIDs))
 	for _, groupID := range payload.GroupIDs {
 		row := Publication{
+			TenantID:   tenantID,
 			TelegramID: groupID,
 			Text:       payload.Text,
 			Status:     StatusScheduled,
@@ -431,13 +440,13 @@ func (s *Service) Schedule(ctx context.Context, actorID int64, payload PublishPa
 //   - inexistente -> ErrNotFound (404).
 //   - status != 'scheduled' -> ErrCancelNotAllowed (409).
 //   - status == 'scheduled' -> hard delete; el siguiente tick la ignora.
-func (s *Service) CancelScheduled(ctx context.Context, id int64) error {
-	_, err := s.store.GetByID(ctx, id)
+func (s *Service) CancelScheduled(ctx context.Context, tenantID, id int64) error {
+	_, err := s.store.GetByID(ctx, tenantID, id)
 	if err != nil {
 		// Ya incluye ErrNotFound (404) o un error interno.
 		return err
 	}
-	return s.store.Cancel(ctx, id)
+	return s.store.Cancel(ctx, tenantID, id)
 }
 
 // validatePayload corre UNA sola vez al inicio de PublishMany (fail-fast

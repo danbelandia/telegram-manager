@@ -34,9 +34,10 @@ var (
 
 // GroupPermissionReader es la vista minima del repositorio de grupos
 // que el service necesita (lado consumidor; *groups.Repository la
-// satisface).
+// satisface). Scopeado por tenant (slice 0): grupo ajeno →
+// groups.ErrNotFound → ErrGroupNotFound (404, D9).
 type GroupPermissionReader interface {
-	GetByTelegramID(ctx context.Context, id int64) (*groups.Group, error)
+	GetByTenant(ctx context.Context, tenantID, id int64) (*groups.Group, error)
 }
 
 // TelegramActions es la vista minima del Service de Telegram para las
@@ -56,9 +57,10 @@ type TelegramActions interface {
 }
 
 // RequestStore es la vista minima del repositorio de solicitudes para
-// decidir (aprove/reject).
+// decidir (aprove/reject). GetByID verifica ownership del tenant
+// (slice 0): solicitud ajena → joinrequests.ErrNotFound.
 type RequestStore interface {
-	GetByID(ctx context.Context, id int64) (*joinrequests.Request, error)
+	GetByID(ctx context.Context, tenantID, id int64) (*joinrequests.Request, error)
 	Resolve(ctx context.Context, id int64, status joinrequests.Status, decidedBy *int64) error
 }
 
@@ -70,16 +72,20 @@ type LogWriter interface {
 
 // Service ejecuta el flujo por accion. ActorID es el id del admin
 // autenticado (claims); se registra como actor de auditoria en el log.
+//
+// Slice 0: la instancia es por tenant (main construye una por bot con
+// su adapter). tenantID aisla grupo, solicitud y log en cada llamada.
 type Service struct {
+	tenantID int64
 	groups   GroupPermissionReader
 	tg       TelegramActions
 	requests RequestStore
 	logs     LogWriter
 }
 
-// NewService construye el servicio de moderacion.
-func NewService(groups GroupPermissionReader, tg TelegramActions, requests RequestStore, logs LogWriter) *Service {
-	return &Service{groups: groups, tg: tg, requests: requests, logs: logs}
+// NewService construye el servicio de moderacion para un tenant.
+func NewService(tenantID int64, groups GroupPermissionReader, tg TelegramActions, requests RequestStore, logs LogWriter) *Service {
+	return &Service{tenantID: tenantID, groups: groups, tg: tg, requests: requests, logs: logs}
 }
 
 // Ban banea a un usuario del grupo (untilDate==0: indefinido).
@@ -161,7 +167,7 @@ func (s *Service) Reject(ctx context.Context, actorID, groupID, requestID int64)
 // decide es el flujo de approve/reject: grupo → solicitud → permiso →
 // telegram → resolver → log.
 func (s *Service) decide(ctx context.Context, actorID, groupID, requestID int64, action string, status joinrequests.Status, call func(ctx context.Context, chatID, userID int64) error) error {
-	group, err := s.groups.GetByTelegramID(ctx, groupID)
+	group, err := s.groups.GetByTenant(ctx, s.tenantID, groupID)
 	if err != nil {
 		if errors.Is(err, groups.ErrNotFound) {
 			return ErrGroupNotFound
@@ -169,7 +175,7 @@ func (s *Service) decide(ctx context.Context, actorID, groupID, requestID int64,
 		return fmt.Errorf("moderation: %s: get group: %w", action, err)
 	}
 
-	req, err := s.requests.GetByID(ctx, requestID)
+	req, err := s.requests.GetByID(ctx, s.tenantID, requestID)
 	if err != nil {
 		if errors.Is(err, joinrequests.ErrNotFound) {
 			return ErrRequestNotFound
@@ -185,8 +191,8 @@ func (s *Service) decide(ctx context.Context, actorID, groupID, requestID int64,
 		return ErrRequestAlreadyDecided
 	}
 
-	entry := &logs.Entry{ActorID: &actorID, GroupID: groupID, Action: action}
-	if !permissionOk(group, permissionFor(action)) {
+	entry := &logs.Entry{TenantID: s.tenantID, ActorID: &actorID, GroupID: groupID, Action: action}
+	if !permissionOk(group) {
 		return s.logFailure(ctx, entry, logs.StatusPermissionDenied, ErrBotPermission)
 	}
 
@@ -208,7 +214,7 @@ func (s *Service) decide(ctx context.Context, actorID, groupID, requestID int64,
 // runAction es el flujo generico de las acciones sobre un usuario o
 // mensaje: grupo existe → permiso bot → telegram → log.
 func (s *Service) runAction(ctx context.Context, actorID, groupID int64, action string, target *int64, call func() error) error {
-	group, err := s.groups.GetByTelegramID(ctx, groupID)
+	group, err := s.groups.GetByTenant(ctx, s.tenantID, groupID)
 	if err != nil {
 		if errors.Is(err, groups.ErrNotFound) {
 			return ErrGroupNotFound
@@ -217,12 +223,13 @@ func (s *Service) runAction(ctx context.Context, actorID, groupID int64, action 
 	}
 
 	entry := &logs.Entry{
+		TenantID:     s.tenantID,
 		ActorID:      &actorID,
 		GroupID:      groupID,
 		Action:       action,
 		TargetUserID: target,
 	}
-	if !permissionOk(group, permissionFor(action)) {
+	if !permissionOk(group) {
 		return s.logFailure(ctx, entry, logs.StatusPermissionDenied, ErrBotPermission)
 	}
 
@@ -248,13 +255,6 @@ func (s *Service) logFailure(ctx context.Context, entry *logs.Entry, status logs
 		return fmt.Errorf("moderation: %s: log failure: %w", entry.Action, err)
 	}
 	return fmt.Errorf("moderation: %s: %w", entry.Action, cause)
-}
-
-// permissionOk verifica en groups.bot_permissions la clave necesaria.
-// Sin permisos conocidos (nil) la accion NO se habilita: el estado del
-// bot es desconocido, mas seguro rechazar (principio 4 de AGENTS.md).
-func permissionOk(g *groups.Group, key string) bool {
-	return g != nil && g.BotPermissions[key]
 }
 
 // statusForTelError mapea un error del adapter al status de log.

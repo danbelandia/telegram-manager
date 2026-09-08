@@ -32,21 +32,38 @@ func testDB(t *testing.T) *sql.DB {
 	return db
 }
 
+// testTenant devuelve el id del tenant `default` (idempotente, slice
+// 0): todos los writes del paquete requieren tenant.
+func testTenant(t *testing.T, db *sql.DB) int64 {
+	t.Helper()
+	var id int64
+	const q = `
+INSERT INTO tenants (slug) VALUES ('default')
+ON CONFLICT (slug) DO UPDATE SET slug = EXCLUDED.slug
+RETURNING id`
+	if err := db.QueryRowContext(context.Background(), q).Scan(&id); err != nil {
+		t.Fatalf("ensure default tenant: %v", err)
+	}
+	return id
+}
+
 func TestRepository_UpsertPendingIdempotent(t *testing.T) {
 	db := testDB(t)
 	repo := NewRepository(db)
+	tid := testTenant(t, db)
 
 	ctx := context.Background()
-	// El indice parcial (group_id, user_id) WHERE status='pending'
-	// absorbe el segundo upsert: sigue habiendo una sola fila.
-	if err := repo.UpsertPending(ctx, -1001, 42); err != nil {
+	// El indice parcial (tenant_id, group_id, user_id) WHERE
+	// status='pending' absorbe el segundo upsert: sigue habiendo una
+	// sola fila.
+	if err := 	repo.UpsertPending(ctx, tid, -1001, 42); err != nil {
 		t.Fatalf("first upsert: %v", err)
 	}
-	if err := repo.UpsertPending(ctx, -1001, 42); err != nil {
+	if err := 	repo.UpsertPending(ctx, tid, -1001, 42); err != nil {
 		t.Fatalf("second upsert: %v", err)
 	}
 
-	got, err := repo.ListByGroup(ctx, -1001)
+	got, err := 	repo.ListByGroup(ctx, tid, -1001)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -61,14 +78,15 @@ func TestRepository_UpsertPendingIdempotent(t *testing.T) {
 func TestRepository_UpsertAfterResolveCreatesNewRow(t *testing.T) {
 	db := testDB(t)
 	repo := NewRepository(db)
+	tid := testTenant(t, db)
 
 	ctx := context.Background()
 	admin := int64(7)
 
-	if err := repo.UpsertPending(ctx, -1001, 42); err != nil {
+	if err := 	repo.UpsertPending(ctx, tid, -1001, 42); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	first, err := repo.ListByGroup(ctx, -1001)
+	first, err := 	repo.ListByGroup(ctx, tid, -1001)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -77,11 +95,11 @@ func TestRepository_UpsertAfterResolveCreatesNewRow(t *testing.T) {
 	}
 
 	// Nueva solicitud del mismo usuario: indice parcial no bloquea.
-	if err := repo.UpsertPending(ctx, -1001, 42); err != nil {
+	if err := 	repo.UpsertPending(ctx, tid, -1001, 42); err != nil {
 		t.Fatalf("upsert tras resolver: %v", err)
 	}
 
-	got, err := repo.ListByGroup(ctx, -1001)
+	got, err := 	repo.ListByGroup(ctx, tid, -1001)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -93,14 +111,15 @@ func TestRepository_UpsertAfterResolveCreatesNewRow(t *testing.T) {
 func TestRepository_Resolve(t *testing.T) {
 	db := testDB(t)
 	repo := NewRepository(db)
+	tid := testTenant(t, db)
 
 	ctx := context.Background()
 	admin := int64(3)
 
-	if err := repo.UpsertPending(ctx, -1001, 42); err != nil {
+	if err := 	repo.UpsertPending(ctx, tid, -1001, 42); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	req, err := repo.ListByGroup(ctx, -1001)
+	req, err := 	repo.ListByGroup(ctx, tid, -1001)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -109,7 +128,7 @@ func TestRepository_Resolve(t *testing.T) {
 		t.Fatalf("resolve: %v", err)
 	}
 
-	got, err := repo.GetByID(ctx, req[0].ID)
+	got, err := 	repo.GetByID(ctx, tid, req[0].ID)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -127,14 +146,15 @@ func TestRepository_Resolve(t *testing.T) {
 func TestRepository_ResolveNotPending(t *testing.T) {
 	db := testDB(t)
 	repo := NewRepository(db)
+	tid := testTenant(t, db)
 
 	ctx := context.Background()
 	admin := int64(3)
 
-	if err := repo.UpsertPending(ctx, -1001, 42); err != nil {
+	if err := 	repo.UpsertPending(ctx, tid, -1001, 42); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	req, _ := repo.ListByGroup(ctx, -1001)
+	req, _ := 	repo.ListByGroup(ctx, tid, -1001)
 	if err := repo.Resolve(ctx, req[0].ID, StatusApproved, &admin); err != nil {
 		t.Fatalf("first resolve: %v", err)
 	}
@@ -147,8 +167,9 @@ func TestRepository_ResolveNotPending(t *testing.T) {
 func TestRepository_GetNotFound(t *testing.T) {
 	db := testDB(t)
 	repo := NewRepository(db)
+	tid := testTenant(t, db)
 
-	_, err := repo.GetByID(context.Background(), 999999)
+	_, err := repo.GetByID(context.Background(), tid, 999999)
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("error = %v, want ErrNotFound", err)
 	}
@@ -157,20 +178,58 @@ func TestRepository_GetNotFound(t *testing.T) {
 func TestRepository_ListFiltersByGroup(t *testing.T) {
 	db := testDB(t)
 	repo := NewRepository(db)
+	tid := testTenant(t, db)
 
 	ctx := context.Background()
-	if err := repo.UpsertPending(ctx, -1001, 42); err != nil {
+	if err := 	repo.UpsertPending(ctx, tid, -1001, 42); err != nil {
 		t.Fatalf("upsert group 1: %v", err)
 	}
-	if err := repo.UpsertPending(ctx, -1002, 43); err != nil {
+	if err := 	repo.UpsertPending(ctx, tid, -1002, 43); err != nil {
 		t.Fatalf("upsert group 2: %v", err)
 	}
 
-	got, err := repo.ListByGroup(ctx, -1001)
+	got, err := repo.ListByGroup(ctx, tid, -1001)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
 	if len(got) != 1 || got[0].GroupID != -1001 {
 		t.Errorf("requests del grupo -1001 = %+v, want solo la de ese grupo", got)
+	}
+}
+
+func TestRepository_CrossTenantIsolation(t *testing.T) {
+	db := testDB(t)
+	repo := NewRepository(db)
+	ctx := context.Background()
+	tidA := testTenant(t, db)
+	var tidB int64
+	const q = `
+INSERT INTO tenants (slug) VALUES ('jr-other')
+ON CONFLICT (slug) DO UPDATE SET slug = EXCLUDED.slug
+RETURNING id`
+	if err := db.QueryRowContext(ctx, q).Scan(&tidB); err != nil {
+		t.Fatalf("ensure tenant: %v", err)
+	}
+
+	if err := repo.UpsertPending(ctx, tidA, -1001, 42); err != nil {
+		t.Fatalf("upsert A: %v", err)
+	}
+
+	// Listado de B no ve la fila de A.
+	gotB, err := repo.ListByGroup(ctx, tidB, -1001)
+	if err != nil {
+		t.Fatalf("list B: %v", err)
+	}
+	if len(gotB) != 0 {
+		t.Errorf("list B = %+v, want vacio (fuga del tenant A)", gotB)
+	}
+
+	// GetByID cruzado: indistinguible de inexistente.
+	gotA, err := repo.ListByGroup(ctx, tidA, -1001)
+	if err != nil || len(gotA) != 1 {
+		t.Fatalf("list A: %+v, %v", gotA, err)
+	}
+	if _, err := repo.GetByID(ctx, tidB, gotA[0].ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("cross-tenant get err = %v, want ErrNotFound", err)
 	}
 }

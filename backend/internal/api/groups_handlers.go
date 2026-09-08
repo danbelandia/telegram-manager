@@ -8,13 +8,16 @@ import (
 
 	"github.com/telegram-manager/backend/internal/groups"
 	"github.com/telegram-manager/backend/internal/telegram"
+	"github.com/telegram-manager/backend/internal/users"
 )
 
 // groupStore es la vista minima del repositorio de grupos que los
-// handlers necesitan (lado consumidor).
+// handlers necesitan (lado consumidor). Scopeado por tenant (slice 0):
+// grupo ajeno → groups.ErrNotFound → 404 NOT_FOUND (D9, no revela
+// existencia).
 type groupStore interface {
-	List(ctx context.Context) ([]groups.Group, error)
-	GetByTelegramID(ctx context.Context, telegramID int64) (*groups.Group, error)
+	ListByTenant(ctx context.Context, tenantID int64) ([]groups.Group, error)
+	GetByTenant(ctx context.Context, tenantID, telegramID int64) (*groups.Group, error)
 }
 
 // groupUsersLookup es la vista minima del Service de Telegram para
@@ -23,6 +26,13 @@ type groupStore interface {
 type groupUsersLookup interface {
 	GetChatMember(ctx context.Context, chatID, userID int64) (telegram.ChatMember, error)
 	GetChatAdministrators(ctx context.Context, chatID int64) ([]telegram.ChatMember, error)
+}
+
+// tenantUserLookup es la vista minima del repositorio de users para el
+// scope de tenant (slice 0, T9/Q3-a): users es global, el alcance se
+// resuelve via join con groups/join_requests del tenant.
+type tenantUserLookup interface {
+	GetByTenant(ctx context.Context, tenantID, userID int64) (*users.User, error)
 }
 
 // groupResponse es la vista JSON de un grupo para el panel.
@@ -50,14 +60,18 @@ func toGroupResponse(g *groups.Group) groupResponse {
 	}
 }
 
-// handleListGroups responde GET /api/groups: todos los grupos
-// administrables.
+// handleListGroups responde GET /api/groups: solo los grupos del
+// tenant de los claims (iso-listados).
 func (s *Server) handleListGroups(w http.ResponseWriter, r *http.Request) {
 	if s.groups == nil {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de grupos no habilitado")
 		return
 	}
-	list, err := s.groups.List(r.Context())
+	tenantID, ok := tenantIDFromClaims(w, r)
+	if !ok {
+		return
+	}
+	list, err := s.groups.ListByTenant(r.Context(), tenantID)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "no se pudieron listar los grupos")
 		return
@@ -69,17 +83,22 @@ func (s *Server) handleListGroups(w http.ResponseWriter, r *http.Request) {
 	respond(w, http.StatusOK, out)
 }
 
-// handleGetGroup responde GET /api/groups/:id.
+// handleGetGroup responde GET /api/groups/:id. Grupo ajeno →
+// NOT_FOUND (no 403, para no revelar existencia).
 func (s *Server) handleGetGroup(w http.ResponseWriter, r *http.Request) {
 	if s.groups == nil {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de grupos no habilitado")
+		return
+	}
+	tenantID, ok := tenantIDFromClaims(w, r)
+	if !ok {
 		return
 	}
 	id, ok := pathID(w, r, "id")
 	if !ok {
 		return
 	}
-	g, err := s.groups.GetByTelegramID(r.Context(), id)
+	g, err := s.groups.GetByTenant(r.Context(), tenantID, id)
 	if errors.Is(err, groups.ErrNotFound) {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "grupo no encontrado")
 		return
@@ -94,13 +113,35 @@ func (s *Server) handleGetGroup(w http.ResponseWriter, r *http.Request) {
 // handleListGroupUsers responde GET /api/groups/:id/users (decision P2):
 // admins del grupo; con ?userId= hace un lookup puntual
 // (getChatMember). La Bot API no expone la lista completa de miembros.
+//
+// Slice 0: ownership del grupo primero (ajeno → NOT_FOUND sin llamar a
+// Telegram); el lookup puntual ademas verifica presencia del usuario
+// en el tenant (users global via join, T9): usuario solo de otro
+// tenant → NOT_FOUND.
 func (s *Server) handleListGroupUsers(w http.ResponseWriter, r *http.Request) {
-	if s.groups == nil || s.groupUsers == nil {
+	if s.groups == nil {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de grupos no habilitado")
+		return
+	}
+	tenantID, ok := tenantIDFromClaims(w, r)
+	if !ok {
 		return
 	}
 	id, ok := pathID(w, r, "id")
 	if !ok {
+		return
+	}
+	if _, err := s.groups.GetByTenant(r.Context(), tenantID, id); err != nil {
+		if errors.Is(err, groups.ErrNotFound) {
+			respondError(w, http.StatusNotFound, "NOT_FOUND", "grupo no encontrado")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "no se pudo obtener el grupo")
+		return
+	}
+	lookup, ok := s.resolveGroupUsers(tenantID)
+	if !ok {
+		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de grupos no habilitado")
 		return
 	}
 
@@ -111,7 +152,17 @@ func (s *Server) handleListGroupUsers(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusBadRequest, "VALIDATION_ERROR", "userId debe ser un entero valido")
 			return
 		}
-		member, err := s.groupUsers.GetChatMember(r.Context(), id, userID)
+		if s.tenantUsers != nil {
+			if _, err := s.tenantUsers.GetByTenant(r.Context(), tenantID, userID); err != nil {
+				if errors.Is(err, users.ErrNotFound) {
+					respondError(w, http.StatusNotFound, "NOT_FOUND", "el usuario no es miembro del grupo")
+					return
+				}
+				respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "no se pudo consultar el miembro")
+				return
+			}
+		}
+		member, err := lookup.GetChatMember(r.Context(), id, userID)
 		if errors.Is(err, telegram.ErrTelegramNotFound) {
 			respondError(w, http.StatusNotFound, "NOT_FOUND", "el usuario no es miembro del grupo")
 			return
@@ -124,7 +175,7 @@ func (s *Server) handleListGroupUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	admins, err := s.groupUsers.GetChatAdministrators(r.Context(), id)
+	admins, err := lookup.GetChatAdministrators(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, telegram.ErrPermissionDenied) {
 			respondError(w, http.StatusForbidden, "PERMISSION_DENIED", "el bot no puede listar administradores del grupo")

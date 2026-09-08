@@ -26,13 +26,13 @@ import (
 //   - Schedule para la rama `scheduled_at` del POST.
 //   - CancelScheduled para DELETE /api/publications/:id.
 type publicationStore interface {
-	Publish(ctx context.Context, actorID, groupID int64, text string, photoURL *string, buttons [][]telegram.InlineKeyboardButton) (*publications.Publication, error)
-	PublishMany(ctx context.Context, actorID int64, payload publications.PublishPayload) ([]publications.Publication, error)
-	Schedule(ctx context.Context, actorID int64, payload publications.PublishPayload, scheduledAt time.Time, nowFn func() time.Time) ([]publications.Publication, error)
-	GetByID(ctx context.Context, id int64) (*publications.Publication, error)
-	List(ctx context.Context, limit, offset int) ([]publications.Publication, error)
-	ListByTelegramID(ctx context.Context, telegramID int64, limit, offset int) ([]publications.Publication, error)
-	CancelScheduled(ctx context.Context, id int64) error
+	Publish(ctx context.Context, tenantID, actorID, groupID int64, text string, photoURL *string, buttons [][]telegram.InlineKeyboardButton) (*publications.Publication, error)
+	PublishMany(ctx context.Context, tenantID, actorID int64, payload publications.PublishPayload) ([]publications.Publication, error)
+	Schedule(ctx context.Context, tenantID, actorID int64, payload publications.PublishPayload, scheduledAt time.Time, nowFn func() time.Time) ([]publications.Publication, error)
+	GetByID(ctx context.Context, tenantID, id int64) (*publications.Publication, error)
+	List(ctx context.Context, tenantID int64, limit, offset int) ([]publications.Publication, error)
+	ListByTelegramID(ctx context.Context, tenantID, telegramID int64, limit, offset int) ([]publications.Publication, error)
+	CancelScheduled(ctx context.Context, tenantID, id int64) error
 }
 
 // createPublicationRequest es el body de POST /api/publications:
@@ -93,7 +93,12 @@ func toPublicationResponse(p *publications.Publication) publicationResponse {
 // de tocar Telegram/DB; fallo parcial devuelve 201 con cada fila y su
 // status individual.
 func (s *Server) handleCreatePublication(w http.ResponseWriter, r *http.Request) {
-	if s.publications == nil {
+	tenantID, ok := tenantIDFromClaims(w, r)
+	if !ok {
+		return
+	}
+	pubs, ok := s.resolvePublications(tenantID)
+	if !ok {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de publicaciones no habilitado")
 		return
 	}
@@ -116,7 +121,7 @@ func (s *Server) handleCreatePublication(w http.ResponseWriter, r *http.Request)
 			respondError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
 			return
 		}
-		rows, err := s.publications.Schedule(r.Context(), actorID, publications.PublishPayload{
+		rows, err := pubs.Schedule(r.Context(), tenantID, actorID, publications.PublishPayload{
 			Text:     req.Text,
 			PhotoURL: req.PhotoURL,
 			Buttons:  req.Buttons,
@@ -134,7 +139,7 @@ func (s *Server) handleCreatePublication(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	rows, err := s.publications.PublishMany(r.Context(), actorID, publications.PublishPayload{
+	rows, err := pubs.PublishMany(r.Context(), tenantID, actorID, publications.PublishPayload{
 		Text:     req.Text,
 		PhotoURL: req.PhotoURL,
 		Buttons:  req.Buttons,
@@ -162,7 +167,12 @@ func (s *Server) handleCreatePublication(w http.ResponseWriter, r *http.Request)
 // 400 VALIDATION_ERROR si limit/offset fuera de rango o si group_id no
 // parsea como entero.
 func (s *Server) handleListPublications(w http.ResponseWriter, r *http.Request) {
-	if s.publications == nil {
+	tenantID, ok := tenantIDFromClaims(w, r)
+	if !ok {
+		return
+	}
+	pubs, ok := s.resolvePublications(tenantID)
+	if !ok {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de publicaciones no habilitado")
 		return
 	}
@@ -182,9 +192,9 @@ func (s *Server) handleListPublications(w http.ResponseWriter, r *http.Request) 
 			respondError(w, http.StatusBadRequest, "VALIDATION_ERROR", "group_id invalido")
 			return
 		}
-		list, err = s.publications.ListByTelegramID(r.Context(), gid, limit, offset)
+		list, err = pubs.ListByTelegramID(r.Context(), tenantID, gid, limit, offset)
 	} else {
-		list, err = s.publications.List(r.Context(), limit, offset)
+		list, err = pubs.List(r.Context(), tenantID, limit, offset)
 	}
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "no se pudieron listar las publicaciones")
@@ -237,7 +247,12 @@ func parsePaginationQuery(w http.ResponseWriter, r *http.Request) (int, int, boo
 
 // handleGetPublication GET /api/publications/:id.
 func (s *Server) handleGetPublication(w http.ResponseWriter, r *http.Request) {
-	if s.publications == nil {
+	tenantID, ok := tenantIDFromClaims(w, r)
+	if !ok {
+		return
+	}
+	pubs, ok := s.resolvePublications(tenantID)
+	if !ok {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de publicaciones no habilitado")
 		return
 	}
@@ -245,7 +260,7 @@ func (s *Server) handleGetPublication(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	pub, err := s.publications.GetByID(r.Context(), id)
+	pub, err := pubs.GetByID(r.Context(), tenantID, id)
 	if errors.Is(err, publications.ErrNotFound) {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "publicacion no encontrada")
 		return
@@ -262,7 +277,12 @@ func (s *Server) handleGetPublication(w http.ResponseWriter, r *http.Request) {
 // coincide; cualquier otro status devuelve 409 INVALID_STATUS para
 // preservar audit trail de sent/failed.
 func (s *Server) handleDeletePublication(w http.ResponseWriter, r *http.Request) {
-	if s.publications == nil {
+	tenantID, ok := tenantIDFromClaims(w, r)
+	if !ok {
+		return
+	}
+	pubs, ok := s.resolvePublications(tenantID)
+	if !ok {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de publicaciones no habilitado")
 		return
 	}
@@ -273,7 +293,7 @@ func (s *Server) handleDeletePublication(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	err := s.publications.CancelScheduled(r.Context(), id)
+	err := pubs.CancelScheduled(r.Context(), tenantID, id)
 	switch {
 	case err == nil:
 		w.WriteHeader(http.StatusNoContent)

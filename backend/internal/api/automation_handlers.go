@@ -67,25 +67,28 @@ type automationService interface {
 // handlers del dashboard de slice 3 necesitan. NO pasa por Service
 // (intencional: service.go intacto, pipeline de slices 1+2+2.1
 // preservado). *automation.Repository lo satisface directamente.
+// Scopeado por tenant (slice 0).
 type automationDashboardRepo interface {
-	ListActiveWarningStatesByGroup(ctx context.Context, groupID int64, limit int) ([]automation.WarningStateRow, bool, error)
-	ResetWarningState(ctx context.Context, groupID, userID int64) (int64, error)
+	ListActiveWarningStatesByGroup(ctx context.Context, tenantID, groupID int64, limit int) ([]automation.WarningStateRow, bool, error)
+	ResetWarningState(ctx context.Context, tenantID, groupID, userID int64) (int64, error)
 }
 
 // automationLogWriter es la vista minima del logs.Repository que los
 // handlers necesitan para registrar cambios manuales (ActorID != nil)
 // y para agregar stats de auto-actions en una ventana (slice 3). El
 // metodo extra CountByActionAndGroup cubre el handler GET .../stats.
+// Scopeado por tenant (slice 0).
 type automationLogWriter interface {
 	Create(ctx context.Context, e *logs.Entry) error
-	CountByActionAndGroup(ctx context.Context, groupID int64, actions []string, since time.Time) (map[string]int, error)
+	CountByActionAndGroup(ctx context.Context, tenantID, groupID int64, actions []string, since time.Time) (map[string]int, error)
 }
 
 // automationGroupChecker permite al handler validar que el grupo existe
-// antes de aceptar cambios (404 NOT_FOUND al admin si no esta en la
-// tabla groups). *groups.Repository lo satisface.
+// y pertenece al tenant antes de aceptar cambios (404 NOT_FOUND al
+// admin si no esta en la tabla groups o es de otro tenant, D9).
+// *groups.Repository lo satisface.
 type automationGroupChecker interface {
-	GetByTelegramID(ctx context.Context, id int64) (*groups.Group, error)
+	GetByTenant(ctx context.Context, tenantID, id int64) (*groups.Group, error)
 }
 
 // --- Tipos JSON ---
@@ -176,7 +179,12 @@ type allowlistRequest struct {
 // Si no existe fila, crea defaults via LoadOrCreateSettings (politica
 // consistente con slice 1). Devuelve 200 con la fila efectiva.
 func (s *Server) handleGetAutomationSettings(w http.ResponseWriter, r *http.Request) {
-	if s.automation == nil {
+	tenantID, ok := tenantIDFromClaims(w, r)
+	if !ok {
+		return
+	}
+	auto, ok := s.resolveAutomation(tenantID)
+	if !ok {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de automation no habilitado")
 		return
 	}
@@ -185,7 +193,7 @@ func (s *Server) handleGetAutomationSettings(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if s.automationGroups != nil {
-		if _, err := s.automationGroups.GetByTelegramID(r.Context(), groupID); err != nil {
+		if _, err := s.automationGroups.GetByTenant(r.Context(), tenantID, groupID); err != nil {
 			if errors.Is(err, groups.ErrNotFound) {
 				respondError(w, http.StatusNotFound, "NOT_FOUND", "grupo no encontrado")
 				return
@@ -195,7 +203,7 @@ func (s *Server) handleGetAutomationSettings(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	settings, err := s.automation.GetSettings(r.Context(), groupID)
+	settings, err := 	auto.GetSettings(r.Context(), groupID)
 	if err != nil && !errors.Is(err, automation.ErrNotFound) {
 		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "no se pudieron obtener los settings")
 		return
@@ -204,7 +212,7 @@ func (s *Server) handleGetAutomationSettings(w http.ResponseWriter, r *http.Requ
 	// en GET — solo PUT lo hace). El frontend vera toggles en false
 	// y thresholds en cero, pero al primer PUT se crea la fila.
 	if errors.Is(err, automation.ErrNotFound) {
-		settings = automation.DefaultSettings(groupID)
+		settings = automation.DefaultSettings(tenantID, groupID)
 	}
 	respond(w, http.StatusOK, toSettingsResponse(settings))
 }
@@ -214,7 +222,12 @@ func (s *Server) handleGetAutomationSettings(w http.ResponseWriter, r *http.Requ
 // mezcla con el settings existente y persiste via UPSERT. Loguea
 // UPDATE_AUTOMATION_SETTINGS con el actor del panel.
 func (s *Server) handlePutAutomationSettings(w http.ResponseWriter, r *http.Request) {
-	if s.automation == nil {
+	tenantID, ok := tenantIDFromClaims(w, r)
+	if !ok {
+		return
+	}
+	auto, ok := s.resolveAutomation(tenantID)
+	if !ok {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de automation no habilitado")
 		return
 	}
@@ -227,7 +240,7 @@ func (s *Server) handlePutAutomationSettings(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if s.automationGroups != nil {
-		if _, err := s.automationGroups.GetByTelegramID(r.Context(), groupID); err != nil {
+		if _, err := s.automationGroups.GetByTenant(r.Context(), tenantID, groupID); err != nil {
 			if errors.Is(err, groups.ErrNotFound) {
 				respondError(w, http.StatusNotFound, "NOT_FOUND", "grupo no encontrado")
 				return
@@ -246,8 +259,8 @@ func (s *Server) handlePutAutomationSettings(w http.ResponseWriter, r *http.Requ
 	// Mezclar con defaults/fila existente: arrancar de defaults si no
 	// hay fila, luego pisar con body. Si la fila existe, arrancar de
 	// ahi. Asi el body parcial funciona correctamente.
-	existing, err := s.automation.GetSettings(r.Context(), groupID)
-	settings := automation.DefaultSettings(groupID)
+	existing, err := 	auto.GetSettings(r.Context(), groupID)
+	settings := automation.DefaultSettings(tenantID, groupID)
 	if err == nil {
 		settings = existing
 	} else if !errors.Is(err, automation.ErrNotFound) {
@@ -305,7 +318,7 @@ func (s *Server) handlePutAutomationSettings(w http.ResponseWriter, r *http.Requ
 		settings.WarnUserTemplate = req.WarnUserTemplate
 	}
 
-	if err := s.automation.UpsertSettings(r.Context(), settings); err != nil {
+	if err := 	auto.UpsertSettings(r.Context(), settings); err != nil {
 		respondAutomationError(w, err)
 		return
 	}
@@ -313,6 +326,7 @@ func (s *Server) handlePutAutomationSettings(w http.ResponseWriter, r *http.Requ
 	// Log UPDATE_AUTOMATION_SETTINGS con ActorID del admin.
 	if s.automationLogs != nil {
 		entry := &logs.Entry{
+			TenantID: tenantID,
 			ActorID: &actorID,
 			GroupID: groupID,
 			Action:  logs.ActionUpdateAutomationSettings,
@@ -329,7 +343,7 @@ func (s *Server) handlePutAutomationSettings(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Releer para devolver la fila actualizada con updated_at fresco.
-	updated, _ := s.automation.GetSettings(r.Context(), groupID)
+	updated, _ := 	auto.GetSettings(r.Context(), groupID)
 	if updated == nil {
 		updated = settings
 	}
@@ -338,7 +352,12 @@ func (s *Server) handlePutAutomationSettings(w http.ResponseWriter, r *http.Requ
 
 // handleListBannedWords responde GET /api/groups/{id}/automation/banned-words.
 func (s *Server) handleListBannedWords(w http.ResponseWriter, r *http.Request) {
-	if s.automation == nil {
+	tenantID, ok := tenantIDFromClaims(w, r)
+	if !ok {
+		return
+	}
+	auto, ok := s.resolveAutomation(tenantID)
+	if !ok {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de automation no habilitado")
 		return
 	}
@@ -346,7 +365,7 @@ func (s *Server) handleListBannedWords(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	list, err := s.automation.ListBannedWords(r.Context(), groupID)
+	list, err := 	auto.ListBannedWords(r.Context(), groupID)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "no se pudieron listar las palabras prohibidas")
 		return
@@ -357,7 +376,12 @@ func (s *Server) handleListBannedWords(w http.ResponseWriter, r *http.Request) {
 // handleAddBannedWord responde POST /api/groups/{id}/automation/banned-words.
 // Body {word}. Loguea ADD_BANNED_WORD con ActorID del admin.
 func (s *Server) handleAddBannedWord(w http.ResponseWriter, r *http.Request) {
-	if s.automation == nil {
+	tenantID, ok := tenantIDFromClaims(w, r)
+	if !ok {
+		return
+	}
+	auto, ok := s.resolveAutomation(tenantID)
+	if !ok {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de automation no habilitado")
 		return
 	}
@@ -380,12 +404,13 @@ func (s *Server) handleAddBannedWord(w http.ResponseWriter, r *http.Request) {
 			"palabra invalida (1-100 caracteres, letras/digitos/espacios/guion/underscore)")
 		return
 	}
-	if err := s.automation.AddBannedWord(r.Context(), groupID, word); err != nil {
+	if err := 	auto.AddBannedWord(r.Context(), groupID, word); err != nil {
 		respondAutomationError(w, err)
 		return
 	}
 	if s.automationLogs != nil {
 		entry := &logs.Entry{
+			TenantID: tenantID,
 			ActorID: &actorID,
 			GroupID: groupID,
 			Action:  logs.ActionAddBannedWord,
@@ -396,13 +421,18 @@ func (s *Server) handleAddBannedWord(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = s.automationLogs.Create(r.Context(), entry)
 	}
-	list, _ := s.automation.ListBannedWords(r.Context(), groupID)
+	list, _ := 	auto.ListBannedWords(r.Context(), groupID)
 	respond(w, http.StatusOK, map[string]any{"words": list})
 }
 
 // handleRemoveBannedWord responde DELETE /api/groups/{id}/automation/banned-words/{word}.
 func (s *Server) handleRemoveBannedWord(w http.ResponseWriter, r *http.Request) {
-	if s.automation == nil {
+	tenantID, ok := tenantIDFromClaims(w, r)
+	if !ok {
+		return
+	}
+	auto, ok := s.resolveAutomation(tenantID)
+	if !ok {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de automation no habilitado")
 		return
 	}
@@ -420,12 +450,13 @@ func (s *Server) handleRemoveBannedWord(w http.ResponseWriter, r *http.Request) 
 		respondError(w, http.StatusBadRequest, "VALIDATION_ERROR", "word vacio")
 		return
 	}
-	if err := s.automation.RemoveBannedWord(r.Context(), groupID, word); err != nil {
+	if err := 	auto.RemoveBannedWord(r.Context(), groupID, word); err != nil {
 		respondAutomationError(w, err)
 		return
 	}
 	if s.automationLogs != nil {
 		entry := &logs.Entry{
+			TenantID: tenantID,
 			ActorID: &actorID,
 			GroupID: groupID,
 			Action:  logs.ActionRemoveBannedWord,
@@ -436,13 +467,18 @@ func (s *Server) handleRemoveBannedWord(w http.ResponseWriter, r *http.Request) 
 		}
 		_ = s.automationLogs.Create(r.Context(), entry)
 	}
-	list, _ := s.automation.ListBannedWords(r.Context(), groupID)
+	list, _ := 	auto.ListBannedWords(r.Context(), groupID)
 	respond(w, http.StatusOK, map[string]any{"words": list})
 }
 
 // handleListLinkAllowlist responde GET /api/groups/{id}/automation/link-allowlist.
 func (s *Server) handleListLinkAllowlist(w http.ResponseWriter, r *http.Request) {
-	if s.automation == nil {
+	tenantID, ok := tenantIDFromClaims(w, r)
+	if !ok {
+		return
+	}
+	auto, ok := s.resolveAutomation(tenantID)
+	if !ok {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de automation no habilitado")
 		return
 	}
@@ -450,7 +486,7 @@ func (s *Server) handleListLinkAllowlist(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	list, err := s.automation.ListLinkAllowlist(r.Context(), groupID)
+	list, err := 	auto.ListLinkAllowlist(r.Context(), groupID)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "no se pudieron listar los dominios permitidos")
 		return
@@ -460,7 +496,12 @@ func (s *Server) handleListLinkAllowlist(w http.ResponseWriter, r *http.Request)
 
 // handleAddLinkAllowlist responde POST /api/groups/{id}/automation/link-allowlist.
 func (s *Server) handleAddLinkAllowlist(w http.ResponseWriter, r *http.Request) {
-	if s.automation == nil {
+	tenantID, ok := tenantIDFromClaims(w, r)
+	if !ok {
+		return
+	}
+	auto, ok := s.resolveAutomation(tenantID)
+	if !ok {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de automation no habilitado")
 		return
 	}
@@ -483,12 +524,13 @@ func (s *Server) handleAddLinkAllowlist(w http.ResponseWriter, r *http.Request) 
 			"dominio invalido (1-253 caracteres, formato basico)")
 		return
 	}
-	if err := s.automation.AddLinkAllowlist(r.Context(), groupID, domain); err != nil {
+	if err := 	auto.AddLinkAllowlist(r.Context(), groupID, domain); err != nil {
 		respondAutomationError(w, err)
 		return
 	}
 	if s.automationLogs != nil {
 		entry := &logs.Entry{
+			TenantID: tenantID,
 			ActorID: &actorID,
 			GroupID: groupID,
 			Action:  logs.ActionAddLinkAllowlist,
@@ -499,13 +541,18 @@ func (s *Server) handleAddLinkAllowlist(w http.ResponseWriter, r *http.Request) 
 		}
 		_ = s.automationLogs.Create(r.Context(), entry)
 	}
-	list, _ := s.automation.ListLinkAllowlist(r.Context(), groupID)
+	list, _ := 	auto.ListLinkAllowlist(r.Context(), groupID)
 	respond(w, http.StatusOK, map[string]any{"domains": list})
 }
 
 // handleRemoveLinkAllowlist responde DELETE /api/groups/{id}/automation/link-allowlist/{domain}.
 func (s *Server) handleRemoveLinkAllowlist(w http.ResponseWriter, r *http.Request) {
-	if s.automation == nil {
+	tenantID, ok := tenantIDFromClaims(w, r)
+	if !ok {
+		return
+	}
+	auto, ok := s.resolveAutomation(tenantID)
+	if !ok {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de automation no habilitado")
 		return
 	}
@@ -523,12 +570,13 @@ func (s *Server) handleRemoveLinkAllowlist(w http.ResponseWriter, r *http.Reques
 		respondError(w, http.StatusBadRequest, "VALIDATION_ERROR", "domain vacio")
 		return
 	}
-	if err := s.automation.RemoveLinkAllowlist(r.Context(), groupID, domain); err != nil {
+	if err := 	auto.RemoveLinkAllowlist(r.Context(), groupID, domain); err != nil {
 		respondAutomationError(w, err)
 		return
 	}
 	if s.automationLogs != nil {
 		entry := &logs.Entry{
+			TenantID: tenantID,
 			ActorID: &actorID,
 			GroupID: groupID,
 			Action:  logs.ActionRemoveLinkAllowlist,
@@ -539,7 +587,7 @@ func (s *Server) handleRemoveLinkAllowlist(w http.ResponseWriter, r *http.Reques
 		}
 		_ = s.automationLogs.Create(r.Context(), entry)
 	}
-	list, _ := s.automation.ListLinkAllowlist(r.Context(), groupID)
+	list, _ := 	auto.ListLinkAllowlist(r.Context(), groupID)
 	respond(w, http.StatusOK, map[string]any{"domains": list})
 }
 
@@ -643,7 +691,11 @@ const defaultWarningsLimit = 100
 // name (LEFT JOIN a users), cap top 100 y flag `truncated` indicando
 // si el resultset alcanzo el cap.
 func (s *Server) handleListWarnings(w http.ResponseWriter, r *http.Request) {
-	if s.automation == nil {
+	tenantID, ok := tenantIDFromClaims(w, r)
+	if !ok {
+		return
+	}
+	if _, ok := s.resolveAutomation(tenantID); !ok {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de automation no habilitado")
 		return
 	}
@@ -652,7 +704,7 @@ func (s *Server) handleListWarnings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.automationGroups != nil {
-		if _, err := s.automationGroups.GetByTelegramID(r.Context(), groupID); err != nil {
+		if _, err := s.automationGroups.GetByTenant(r.Context(), tenantID, groupID); err != nil {
 			if errors.Is(err, groups.ErrNotFound) {
 				respondError(w, http.StatusNotFound, "NOT_FOUND", "grupo no encontrado")
 				return
@@ -662,7 +714,7 @@ func (s *Server) handleListWarnings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	rows, truncated, err := s.automationDashboard.ListActiveWarningStatesByGroup(r.Context(), groupID, defaultWarningsLimit)
+	rows, truncated, err := s.automationDashboard.ListActiveWarningStatesByGroup(r.Context(), tenantID, groupID, defaultWarningsLimit)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "no se pudieron listar las advertencias")
 		return
@@ -695,7 +747,11 @@ type resetWarningResponse struct {
 // design). El admin usa POST /api/groups/{id}/users/{userId}/unmute
 // por separado si quiere desmutear. El reset solo limpia DB.
 func (s *Server) handleResetWarning(w http.ResponseWriter, r *http.Request) {
-	if s.automation == nil {
+	tenantID, ok := tenantIDFromClaims(w, r)
+	if !ok {
+		return
+	}
+	if _, ok := s.resolveAutomation(tenantID); !ok {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de automation no habilitado")
 		return
 	}
@@ -716,7 +772,7 @@ func (s *Server) handleResetWarning(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.automationGroups != nil {
-		if _, err := s.automationGroups.GetByTelegramID(r.Context(), groupID); err != nil {
+		if _, err := s.automationGroups.GetByTenant(r.Context(), tenantID, groupID); err != nil {
 			if errors.Is(err, groups.ErrNotFound) {
 				respondError(w, http.StatusNotFound, "NOT_FOUND", "grupo no encontrado")
 				return
@@ -726,7 +782,7 @@ func (s *Server) handleResetWarning(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	previous, err := s.automationDashboard.ResetWarningState(r.Context(), groupID, userID)
+	previous, err := s.automationDashboard.ResetWarningState(r.Context(), tenantID, groupID, userID)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "no se pudo resetear el contador")
 		return
@@ -786,7 +842,11 @@ var statsPeriods = map[string]time.Duration{
 // ventana temporal indicada (1 roundtrip via ANY($2)). Si no hay logs
 // en la ventana, los contadores quedan en 0 (no error).
 func (s *Server) handleGetStats(w http.ResponseWriter, r *http.Request) {
-	if s.automation == nil {
+	tenantID, ok := tenantIDFromClaims(w, r)
+	if !ok {
+		return
+	}
+	if _, ok := s.resolveAutomation(tenantID); !ok {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de automation no habilitado")
 		return
 	}
@@ -795,7 +855,7 @@ func (s *Server) handleGetStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.automationGroups != nil {
-		if _, err := s.automationGroups.GetByTelegramID(r.Context(), groupID); err != nil {
+		if _, err := s.automationGroups.GetByTenant(r.Context(), tenantID, groupID); err != nil {
 			if errors.Is(err, groups.ErrNotFound) {
 				respondError(w, http.StatusNotFound, "NOT_FOUND", "grupo no encontrado")
 				return
@@ -830,7 +890,7 @@ func (s *Server) handleGetStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	since := time.Now().UTC().Add(-duration)
-	counts, err := s.automationLogs.CountByActionAndGroup(r.Context(), groupID,
+	counts, err := s.automationLogs.CountByActionAndGroup(r.Context(), tenantID, groupID,
 		[]string{logs.ActionRuleTriggered, logs.ActionAutomuteUser, logs.ActionAutobanUser},
 		since,
 	)

@@ -67,9 +67,9 @@ type TelegramMesseger interface {
 // tgWarningSender necesita para releer la plantilla custom antes del
 // send (por si el admin la cambio entre el upsert y el send).
 // *Repository la satisface. nil-safe en el caller (Service) pero
-// requerido por la implementacion concreta.
+// requerido por la implementacion concreta. Scopeado por tenant.
 type SettingsReader interface {
-	GetSettings(ctx context.Context, groupID int64) (*Settings, error)
+	GetSettings(ctx context.Context, tenantID, groupID int64) (*Settings, error)
 }
 
 // --- Implementacion concreta ---
@@ -94,11 +94,14 @@ type tgWarningSender struct {
 	groups   GroupReader
 	logger   *slog.Logger
 	now      func() time.Time
+	// tenantID aisla el sender (slice 0): un sender por tenant, con el
+	// adapter de su bot. Main lo inyecta; el Service ya es por tenant.
+	tenantID int64
 }
 
 // NewWarningSender construye el wrapper concreto. logger puede ser nil
 // (usa slog.Default()).
-func NewWarningSender(tg TelegramMesseger, logs LogWriter, settings SettingsReader, groups GroupReader, logger *slog.Logger) WarningSender {
+func NewWarningSender(tg TelegramMesseger, logs LogWriter, settings SettingsReader, groups GroupReader, logger *slog.Logger, tenantID int64) WarningSender {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -109,6 +112,7 @@ func NewWarningSender(tg TelegramMesseger, logs LogWriter, settings SettingsRead
 		groups:   groups,
 		logger:   logger,
 		now:      time.Now,
+		tenantID: tenantID,
 	}
 }
 
@@ -132,7 +136,7 @@ func (w *tgWarningSender) SendWarning(ctx context.Context, msg *telegram.Message
 	// Paso 1: re-check permissionOkAdmin. Re-leer el grupo: el bot
 	// pudo haber sido removido entre el hit del pipeline (paso 4 de
 	// HandleMessage) y este send.
-	g, err := w.groups.GetByTelegramID(ctx, groupID)
+	g, err := w.groups.GetByTenant(ctx, w.tenantID, groupID)
 	if err != nil {
 		return w.logNotFound(ctx, groupID, userID, count, kind)
 	}
@@ -142,11 +146,11 @@ func (w *tgWarningSender) SendWarning(ctx context.Context, msg *telegram.Message
 
 	// Paso 2: releer settings para el template custom. Best-effort:
 	// si falla, usamos defaults puros.
-	settings, err := w.settings.GetSettings(ctx, groupID)
+	settings, err := w.settings.GetSettings(ctx, w.tenantID, groupID)
 	if err != nil || settings == nil {
 		w.logger.Warn("automation: warning sender: get settings failed, using default template",
 			"group_id", groupID, "error", err)
-		settings = DefaultSettings(groupID)
+		settings = DefaultSettings(w.tenantID, groupID)
 	}
 
 	// Paso 3: renderizar el texto.
@@ -174,6 +178,7 @@ func (w *tgWarningSender) SendWarning(ctx context.Context, msg *telegram.Message
 func (w *tgWarningSender) logSuccess(ctx context.Context, groupID, userID int64, count int16, kind WarningKind, templateUsed string) error {
 	targetUserID := userID
 	e := &logs.Entry{
+		TenantID:     w.tenantID,
 		ActorID:      nil, // sistema (no admin del panel)
 		GroupID:      groupID,
 		Action:       logs.ActionWarnUserSent,
@@ -197,6 +202,7 @@ func (w *tgWarningSender) logSendFailure(ctx context.Context, groupID, userID in
 	status := mapWarningError(sendErr)
 	targetUserID := userID
 	e := &logs.Entry{
+		TenantID:     w.tenantID,
 		ActorID:      nil,
 		GroupID:      groupID,
 		Action:       logs.ActionWarnUserSent,
@@ -222,6 +228,7 @@ func (w *tgWarningSender) logSendFailure(ctx context.Context, groupID, userID in
 func (w *tgWarningSender) logPermissionDenied(ctx context.Context, groupID, userID int64, count int16, kind WarningKind) error {
 	targetUserID := userID
 	e := &logs.Entry{
+		TenantID:     w.tenantID,
 		ActorID:      nil,
 		GroupID:      groupID,
 		Action:       logs.ActionWarnUserSent,
@@ -245,6 +252,7 @@ func (w *tgWarningSender) logPermissionDenied(ctx context.Context, groupID, user
 func (w *tgWarningSender) logNotFound(ctx context.Context, groupID, userID int64, count int16, kind WarningKind) error {
 	targetUserID := userID
 	e := &logs.Entry{
+		TenantID:     w.tenantID,
 		ActorID:      nil,
 		GroupID:      groupID,
 		Action:       logs.ActionWarnUserSent,

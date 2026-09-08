@@ -37,6 +37,19 @@ type Server struct {
 	// Modulo de publicaciones (Fase 2, slice 1).
 	publications publicationStore
 
+	// Slice 0 (multitenancy): resolvers por tenant. Main los conecta al
+	// registry (una instancia por bot); nil = path legacy de un solo
+	// tenant (los singletons de arriba). Los handlers siempre prefieren
+	// el resolver y caen al singleton cuando no hay routing.
+	moderationFor   func(tenantID int64) (moderationActions, bool)
+	groupUsersFor   func(tenantID int64) (groupUsersLookup, bool)
+	publicationsFor func(tenantID int64) (publicationStore, bool)
+	automationFor   func(tenantID int64) (automationService, bool)
+
+	// Lookup de usuarios con scope de tenant (slice 0, Q3-a: users
+	// global, alcance via join). Lo usa el ?userId= de grupos.
+	tenantUsers tenantUserLookup
+
 	// Modulo de moderacion automatica (Fase 3, slice 2): settings +
 	// listas. Los handlers reciben el Service (que expone los metodos
 	// de settings + listas) y el logs.Repository para auditoria manual.
@@ -91,6 +104,34 @@ func WithSignup(svc signupService, onReady func(ctx context.Context, tenantID in
 		s.signup = svc
 		s.onTenantReady = onReady
 		s.mux.HandleFunc("POST /api/auth/signup", s.handleSignup)
+	}
+}
+
+// WithTenantResolvers conecta el routing por tenant (slice 0): cada
+// resolver devuelve la instancia del tenant (con SU adapter de
+// Telegram) o false si el tenant no tiene runtime. Main los construye
+// desde el registry; en modo webhook/legacy quedan nil y los handlers
+// usan los singletons. Cada resolver puede ser nil por separado.
+func WithTenantResolvers(
+	moderation func(tenantID int64) (moderationActions, bool),
+	groupUsers func(tenantID int64) (groupUsersLookup, bool),
+	publications func(tenantID int64) (publicationStore, bool),
+	automation func(tenantID int64) (automationService, bool),
+) Option {
+	return func(s *Server) {
+		s.moderationFor = moderation
+		s.groupUsersFor = groupUsers
+		s.publicationsFor = publications
+		s.automationFor = automation
+	}
+}
+
+// WithUsers monta el lookup de usuarios con scope de tenant (slice 0,
+// T9). Sin esto, el ?userId= responde con datos de Telegram sin
+// verificar presencia en el tenant.
+func WithUsers(users tenantUserLookup) Option {
+	return func(s *Server) {
+		s.tenantUsers = users
 	}
 }
 
@@ -232,4 +273,73 @@ func (s *Server) routes() {
 // ServeHTTP hace que *Server sea un http.Handler.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mux.ServeHTTP(w, r)
+}
+
+// tenantIDFromClaims extrae el tenant de los claims inyectados por
+// requireAuth. requireAuth ya rechaza claims legacy (TenantID==0) con
+// 401, asi que 0 aca es defensivo (identidad invalida).
+func tenantIDFromClaims(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	claims := claimsFromContext(r.Context())
+	if claims == nil || claims.TenantID == 0 {
+		respondError(w, http.StatusUnauthorized, "UNAUTHORIZED", "identidad invalida: volve a iniciar sesion")
+		return 0, false
+	}
+	return claims.TenantID, true
+}
+
+// resolveModeration devuelve el servicio de moderacion del tenant (con
+// su adapter). Fallback al singleton legacy cuando no hay routing
+// (tests, modo webhook, tenant default sin token propio).
+func (s *Server) resolveModeration(tenantID int64) (moderationActions, bool) {
+	if s.moderationFor != nil {
+		if mod, ok := s.moderationFor(tenantID); ok && mod != nil {
+			return mod, true
+		}
+	}
+	if s.moderation != nil {
+		return s.moderation, true
+	}
+	return nil, false
+}
+
+// resolveGroupUsers devuelve el lookup de usuarios de Telegram del
+// tenant (su adapter). Fallback al singleton legacy.
+func (s *Server) resolveGroupUsers(tenantID int64) (groupUsersLookup, bool) {
+	if s.groupUsersFor != nil {
+		if gu, ok := s.groupUsersFor(tenantID); ok && gu != nil {
+			return gu, true
+		}
+	}
+	if s.groupUsers != nil {
+		return s.groupUsers, true
+	}
+	return nil, false
+}
+
+// resolvePublications devuelve el servicio de publicaciones del tenant
+// (con su adapter). Fallback al singleton legacy.
+func (s *Server) resolvePublications(tenantID int64) (publicationStore, bool) {
+	if s.publicationsFor != nil {
+		if p, ok := s.publicationsFor(tenantID); ok && p != nil {
+			return p, true
+		}
+	}
+	if s.publications != nil {
+		return s.publications, true
+	}
+	return nil, false
+}
+
+// resolveAutomation devuelve el servicio de automation del tenant.
+// Fallback al singleton legacy.
+func (s *Server) resolveAutomation(tenantID int64) (automationService, bool) {
+	if s.automationFor != nil {
+		if a, ok := s.automationFor(tenantID); ok && a != nil {
+			return a, true
+		}
+	}
+	if s.automation != nil {
+		return s.automation, true
+	}
+	return nil, false
 }

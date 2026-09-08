@@ -14,18 +14,18 @@ import (
 
 // SettingsRepo es la vista minima del repositorio que el Service
 // necesita para settings. *Repository lo satisface; los tests usan un
-// fake in-memory.
+// fake in-memory. Scopeado por tenant (slice 0).
 type SettingsRepo interface {
-	GetSettings(ctx context.Context, groupID int64) (*Settings, error)
+	GetSettings(ctx context.Context, tenantID, groupID int64) (*Settings, error)
 	UpsertSettings(ctx context.Context, s *Settings) error
 }
 
 // WarnRepo es la vista minima del repositorio que el Service necesita
-// para warning_state.
+// para warning_state. Scopeado por tenant (slice 0).
 type WarnRepo interface {
-	GetWarningState(ctx context.Context, groupID, userID int64) (*WarningState, error)
+	GetWarningState(ctx context.Context, tenantID, groupID, userID int64) (*WarningState, error)
 	UpsertWarningState(ctx context.Context, ws *WarningState) error
-	CreateWarningStateIfMissing(ctx context.Context, groupID, userID int64) error
+	CreateWarningStateIfMissing(ctx context.Context, tenantID, groupID, userID int64) error
 }
 
 // ListsRepo es la vista minima del repositorio para las listas
@@ -34,12 +34,12 @@ type WarnRepo interface {
 // por rule cuando hay varias reglas DB-dependent), y los handlers la
 // usan para CRUD via Service.{Add,Remove}{BannedWord,LinkAllowlist}.
 type ListsRepo interface {
-	ListBannedWords(ctx context.Context, groupID int64) ([]string, error)
-	AddBannedWord(ctx context.Context, groupID int64, word string) error
-	RemoveBannedWord(ctx context.Context, groupID int64, word string) error
-	ListLinkAllowlist(ctx context.Context, groupID int64) ([]string, error)
-	AddLinkAllowlist(ctx context.Context, groupID int64, domain string) error
-	RemoveLinkAllowlist(ctx context.Context, groupID int64, domain string) error
+	ListBannedWords(ctx context.Context, tenantID, groupID int64) ([]string, error)
+	AddBannedWord(ctx context.Context, tenantID, groupID int64, word string) error
+	RemoveBannedWord(ctx context.Context, tenantID, groupID int64, word string) error
+	ListLinkAllowlist(ctx context.Context, tenantID, groupID int64) ([]string, error)
+	AddLinkAllowlist(ctx context.Context, tenantID, groupID int64, domain string) error
+	RemoveLinkAllowlist(ctx context.Context, tenantID, groupID int64, domain string) error
 }
 
 // Service orquesta el pipeline de moderacion automatica. HandleMessage
@@ -51,6 +51,10 @@ type ListsRepo interface {
 // de grupos no las puebla completas; la Bot API no las exige para
 // sendMessage/restrictChatMember/banChatMember en grupos siendo admin.
 type Service struct {
+	// tenantID aisla la instancia (slice 0): un Service por tenant,
+	// todos compartiendo los repos (que reciben el tenant por
+	// parametro). El Subscriber de cada bus llama a SU instancia.
+	tenantID      int64
 	settingsRepo  SettingsRepo
 	warnRepo      WarnRepo
 	listsRepo     ListsRepo
@@ -74,6 +78,7 @@ type Service struct {
 // warningSender (slice 2.1) puede ser nil para tests/deploys donde no
 // se quiere enviar warnings visuales; el pipeline skipea el paso 7.5.
 func NewService(
+	tenantID int64,
 	settingsRepo SettingsRepo,
 	warnRepo WarnRepo,
 	listsRepo ListsRepo,
@@ -88,6 +93,7 @@ func NewService(
 		logger = slog.Default()
 	}
 	return &Service{
+		tenantID:      tenantID,
 		settingsRepo:  settingsRepo,
 		warnRepo:      warnRepo,
 		listsRepo:     listsRepo,
@@ -140,7 +146,7 @@ func (s *Service) HandleMessage(ctx context.Context, msg *telegram.Message) erro
 
 	// Paso 4: permissionOkAdmin. Si falla, skip silencioso (sin log:
 	// el bot no es admin y el modulo no aplica).
-	group, err := s.groups.GetByTelegramID(ctx, msg.Chat.ID)
+	group, err := s.groups.GetByTenant(ctx, s.tenantID, msg.Chat.ID)
 	if err != nil {
 		// Grupo no existe (raro: el bus publica desde un grupo que la
 		// deteccion no vio). Skip silencioso — no tiene sentido
@@ -182,6 +188,7 @@ func (s *Service) HandleMessage(ctx context.Context, msg *telegram.Message) erro
 
 	targetUserID := msg.From.ID
 	ruleEntry := &logs.Entry{
+		TenantID:     s.tenantID,
 		ActorID:      nil, // sistema, NO admin
 		GroupID:      msg.Chat.ID,
 		Action:       logs.ActionRuleTriggered,
@@ -224,6 +231,7 @@ func (s *Service) HandleMessage(ctx context.Context, msg *telegram.Message) erro
 	if ws.WarningCount >= settings.AutobanWarnings {
 		s.enqueueAction(AutoAction{
 			Kind:         AutoActionBan,
+			TenantID:     s.tenantID,
 			GroupID:      msg.Chat.ID,
 			UserID:       msg.From.ID,
 			RuleName:     hit.RuleName,
@@ -232,6 +240,7 @@ func (s *Service) HandleMessage(ctx context.Context, msg *telegram.Message) erro
 	} else if ws.WarningCount >= settings.AutomuteWarnings {
 		s.enqueueAction(AutoAction{
 			Kind:         AutoActionMute,
+			TenantID:     s.tenantID,
 			GroupID:      msg.Chat.ID,
 			UserID:       msg.From.ID,
 			MinutesUntil: settings.AutomuteMinutes,
@@ -273,7 +282,7 @@ func thresholdKindFor(s *Settings, count int16) WarningKind {
 // Defaults: ver DefaultSettings() en model.go (unica fuente de verdad
 // para mantener consistencia entre handler y Service).
 func (s *Service) LoadOrCreateSettings(ctx context.Context, groupID int64) (*Settings, error) {
-	settings, err := s.settingsRepo.GetSettings(ctx, groupID)
+	settings, err := s.settingsRepo.GetSettings(ctx, s.tenantID, groupID)
 	if err == nil {
 		return settings, nil
 	}
@@ -282,29 +291,29 @@ func (s *Service) LoadOrCreateSettings(ctx context.Context, groupID int64) (*Set
 	}
 	// Auto-create con defaults desde DefaultSettings (incluye slice 2.1
 	// WarnUserEnabled=true + WarnUserTemplate=nil).
-	defaults := DefaultSettings(groupID)
+	defaults := DefaultSettings(s.tenantID, groupID)
 	if err := s.settingsRepo.UpsertSettings(ctx, defaults); err != nil {
 		return nil, fmt.Errorf("automation: create default settings: %w", err)
 	}
 	// Releer para obtener updated_at puesto por la DB.
-	return s.settingsRepo.GetSettings(ctx, groupID)
+	return s.settingsRepo.GetSettings(ctx, s.tenantID, groupID)
 }
 
 // LoadOrCreateWarningState devuelve el warning_state, creando la fila
 // con warning_count=0 si no existe. El reset logico por expiracion
 // ocurre en HandleMessage (paso 5).
 func (s *Service) LoadOrCreateWarningState(ctx context.Context, groupID, userID int64) (*WarningState, error) {
-	ws, err := s.warnRepo.GetWarningState(ctx, groupID, userID)
+	ws, err := s.warnRepo.GetWarningState(ctx, s.tenantID, groupID, userID)
 	if err == nil {
 		return ws, nil
 	}
 	if !errors.Is(err, ErrNotFound) {
 		return nil, err
 	}
-	if err := s.warnRepo.CreateWarningStateIfMissing(ctx, groupID, userID); err != nil {
+	if err := s.warnRepo.CreateWarningStateIfMissing(ctx, s.tenantID, groupID, userID); err != nil {
 		return nil, fmt.Errorf("automation: create default warning state: %w", err)
 	}
-	return s.warnRepo.GetWarningState(ctx, groupID, userID)
+	return s.warnRepo.GetWarningState(ctx, s.tenantID, groupID, userID)
 }
 
 // --- API handler delegates (slice 2) ---
@@ -320,44 +329,46 @@ func (s *Service) LoadOrCreateWarningState(ctx context.Context, groupID, userID 
 // al admin cuando el grupo no configuro nada: el primer GET crea la
 // fila con defaults.
 func (s *Service) GetSettings(ctx context.Context, groupID int64) (*Settings, error) {
-	return s.settingsRepo.GetSettings(ctx, groupID)
+	return s.settingsRepo.GetSettings(ctx, s.tenantID, groupID)
 }
 
 // UpsertSettings reemplaza/crea la fila de settings del grupo. El
 // caller (handler) ya valido los rangos; los CHECK constraints en la
-// DB catchean cualquier inconsistencia residual.
+// DB catchean cualquier inconsistencia residual. El tenant se impone
+// desde la instancia (el handler no puede escribir en otro tenant).
 func (s *Service) UpsertSettings(ctx context.Context, settings *Settings) error {
+	settings.TenantID = s.tenantID
 	return s.settingsRepo.UpsertSettings(ctx, settings)
 }
 
 // ListBannedWords devuelve las palabras prohibidas del grupo (slice 2).
 func (s *Service) ListBannedWords(ctx context.Context, groupID int64) ([]string, error) {
-	return s.listsRepo.ListBannedWords(ctx, groupID)
+	return s.listsRepo.ListBannedWords(ctx, s.tenantID, groupID)
 }
 
 // AddBannedWord agrega una palabra (idempotente via ON CONFLICT).
 func (s *Service) AddBannedWord(ctx context.Context, groupID int64, word string) error {
-	return s.listsRepo.AddBannedWord(ctx, groupID, word)
+	return s.listsRepo.AddBannedWord(ctx, s.tenantID, groupID, word)
 }
 
 // RemoveBannedWord remueve una palabra (idempotente: nil si no existia).
 func (s *Service) RemoveBannedWord(ctx context.Context, groupID int64, word string) error {
-	return s.listsRepo.RemoveBannedWord(ctx, groupID, word)
+	return s.listsRepo.RemoveBannedWord(ctx, s.tenantID, groupID, word)
 }
 
 // ListLinkAllowlist devuelve los dominios permitidos del grupo.
 func (s *Service) ListLinkAllowlist(ctx context.Context, groupID int64) ([]string, error) {
-	return s.listsRepo.ListLinkAllowlist(ctx, groupID)
+	return s.listsRepo.ListLinkAllowlist(ctx, s.tenantID, groupID)
 }
 
 // AddLinkAllowlist agrega un dominio (idempotente).
 func (s *Service) AddLinkAllowlist(ctx context.Context, groupID int64, domain string) error {
-	return s.listsRepo.AddLinkAllowlist(ctx, groupID, domain)
+	return s.listsRepo.AddLinkAllowlist(ctx, s.tenantID, groupID, domain)
 }
 
 // RemoveLinkAllowlist remueve un dominio (idempotente).
 func (s *Service) RemoveLinkAllowlist(ctx context.Context, groupID int64, domain string) error {
-	return s.listsRepo.RemoveLinkAllowlist(ctx, groupID, domain)
+	return s.listsRepo.RemoveLinkAllowlist(ctx, s.tenantID, groupID, domain)
 }
 
 // enqueueAction hace un non-blocking send al canal. Si el buffer esta
@@ -401,7 +412,7 @@ func (s *Service) preloadLists(ctx context.Context, settings *Settings) *Lists {
 	}
 	out := &Lists{}
 	if settings.BannedWordsEnabled {
-		words, err := s.listsRepo.ListBannedWords(ctx, settings.GroupID)
+		words, err := s.listsRepo.ListBannedWords(ctx, s.tenantID, settings.GroupID)
 		if err != nil {
 			// Falla silenciosa: log + cero banned words. La regla
 			// BannedWordsRule opera con lista vacia y vuelve nil.
@@ -412,7 +423,7 @@ func (s *Service) preloadLists(ctx context.Context, settings *Settings) *Lists {
 		out.BannedWords = words
 	}
 	if settings.AntiLinkEnabled {
-		allow, err := s.listsRepo.ListLinkAllowlist(ctx, settings.GroupID)
+		allow, err := s.listsRepo.ListLinkAllowlist(ctx, s.tenantID, settings.GroupID)
 		if err != nil {
 			s.logger.Warn("automation: preload link allowlist failed",
 				"group_id", settings.GroupID, "error", err)

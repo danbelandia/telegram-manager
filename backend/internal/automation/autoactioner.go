@@ -32,8 +32,9 @@ type LogWriter interface {
 }
 
 // GroupReader (consumer-side) — *groups.Repository lo satisface.
+// Scopeado por tenant (slice 0).
 type GroupReader interface {
-	GetByTelegramID(ctx context.Context, id int64) (*groups.Group, error)
+	GetByTenant(ctx context.Context, tenantID, id int64) (*groups.Group, error)
 }
 
 // TelegramActor es la vista minima del adapter que el AutoActioner
@@ -90,7 +91,7 @@ func NewAutoActioner(tg TelegramActor, logs LogWriter, groups GroupReader, logge
 //  4. Si admin → mute (calcula untilDate) o ban (indefinido+revoke).
 //     Log SUCCESS o mapea error a status.
 func (a *tgAutoActioner) Execute(ctx context.Context, action AutoAction) error {
-	g, err := a.groups.GetByTelegramID(ctx, action.GroupID)
+	g, err := a.groups.GetByTenant(ctx, action.TenantID, action.GroupID)
 	if err != nil {
 		// Grupo no existe o error de DB → log NOT_FOUND, no despacha.
 		return a.logNotFound(ctx, action)
@@ -127,6 +128,7 @@ func (a *tgAutoActioner) Execute(ctx context.Context, action AutoAction) error {
 // status=SUCCESS, action=ActionXxx, metadata={rule_name, warning_count}.
 func (a *tgAutoActioner) logSuccess(ctx context.Context, action AutoAction, actionConst string) {
 	e := &logs.Entry{
+		TenantID:     action.TenantID,
 		ActorID:      nil, // sistema, NO admin
 		GroupID:      action.GroupID,
 		Action:       actionConst,
@@ -150,6 +152,7 @@ func (a *tgAutoActioner) logSuccess(ctx context.Context, action AutoAction, acti
 func (a *tgAutoActioner) logFailure(ctx context.Context, action AutoAction, actionConst string, err error) {
 	status := mapTelegramError(err)
 	e := &logs.Entry{
+		TenantID:     action.TenantID,
 		ActorID:      nil,
 		GroupID:      action.GroupID,
 		Action:       actionConst,
@@ -176,6 +179,7 @@ func (a *tgAutoActioner) logFailure(ctx context.Context, action AutoAction, acti
 func (a *tgAutoActioner) logPermissionDenied(ctx context.Context, action AutoAction) error {
 	actionConst := actionConstFor(action)
 	e := &logs.Entry{
+		TenantID:     action.TenantID,
 		ActorID:      nil,
 		GroupID:      action.GroupID,
 		Action:       actionConst,
@@ -198,6 +202,7 @@ func (a *tgAutoActioner) logPermissionDenied(ctx context.Context, action AutoAct
 func (a *tgAutoActioner) logNotFound(ctx context.Context, action AutoAction) error {
 	actionConst := actionConstFor(action)
 	e := &logs.Entry{
+		TenantID:     action.TenantID,
 		ActorID:      nil,
 		GroupID:      action.GroupID,
 		Action:       actionConst,

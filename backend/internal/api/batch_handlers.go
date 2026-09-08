@@ -108,7 +108,12 @@ type batchResponse struct {
 // documentado como convencion para que un futuro script de auditoria
 // pueda correlacionar las filas del batch por actor + ventana de tiempo.
 func (s *Server) handleCreatePublicationBatch(w http.ResponseWriter, r *http.Request) {
-	if s.publications == nil {
+	tenantID, ok := tenantIDFromClaims(w, r)
+	if !ok {
+		return
+	}
+	pubs, ok := s.resolvePublications(tenantID)
+	if !ok {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de publicaciones no habilitado")
 		return
 	}
@@ -147,7 +152,7 @@ func (s *Server) handleCreatePublicationBatch(w http.ResponseWriter, r *http.Req
 	}
 
 	for i, item := range req.Publications {
-		s.processBatchItem(r, actorID, i, item, nowFn, &resp)
+		s.processBatchItem(r, pubs, tenantID, actorID, i, item, nowFn, &resp)
 	}
 
 	respond(w, http.StatusOK, resp)
@@ -162,6 +167,8 @@ func (s *Server) handleCreatePublicationBatch(w http.ResponseWriter, r *http.Req
 // el service.
 func (s *Server) processBatchItem(
 	r *http.Request,
+	pubs publicationStore,
+	tenantID int64,
 	actorID int64,
 	index int,
 	item createPublicationRequest,
@@ -182,7 +189,7 @@ func (s *Server) processBatchItem(
 
 	if item.ScheduledAt == "" {
 		// Inmediato (REQ-17 escenario 1).
-		rows, err = s.publications.PublishMany(r.Context(), actorID, payload)
+		rows, err = pubs.PublishMany(r.Context(), tenantID, actorID, payload)
 	} else {
 		// Programado (REQ-17 escenario 2). NormalizeScheduledAt valida
 		// formato + futuro estricto con `nowFn`. Si falla, NO abortamos
@@ -196,7 +203,7 @@ func (s *Server) processBatchItem(
 			})
 			return
 		}
-		rows, err = s.publications.Schedule(r.Context(), actorID, payload, *scheduledAt, nowFn)
+		rows, err = pubs.Schedule(r.Context(), tenantID, actorID, payload, *scheduledAt, nowFn)
 	}
 
 	if err != nil {

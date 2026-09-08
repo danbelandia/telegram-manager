@@ -1,31 +1,18 @@
 package moderation
 
 import (
-	"github.com/telegram-manager/backend/internal/logs"
+	"github.com/telegram-manager/backend/internal/groups"
 )
 
-// actionPermissions mapea cada accion administrativa a la
-// bot_permission que el bot debe tener (tasks 2.6). La referencia de la
-// Bot API corrige reject: approve y reject requieren can_invite_users
-// (docs/telegram_api_reference.md §7); el design inicial decia
-// can_restrict_members para reject.
+// permissionOk decide si el bot puede actuar en el grupo (bugfix #172,
+// invariante del slice 0): SOLO por bot_status == administrator.
 //
-// Reverse: el mapa de la tabla groups.bot_permissions usa las mismas
-// claves can_* (poblado por la deteccion de grupos, paso 8).
-var actionPermissions = map[string]string{
-	logs.ActionBanUser:            "can_restrict_members",
-	logs.ActionUnbanUser:          "can_restrict_members",
-	logs.ActionMuteUser:           "can_restrict_members",
-	logs.ActionUnmuteUser:         "can_restrict_members",
-	logs.ActionLockGroup:          "can_restrict_members",
-	logs.ActionUnlockGroup:        "can_restrict_members",
-	logs.ActionDeleteMessage:      "can_delete_messages",
-	logs.ActionPinMessage:         "can_pin_messages",
-	logs.ActionApproveJoinRequest: "can_invite_users",
-	logs.ActionRejectJoinRequest:  "can_invite_users",
-}
-
-// permissionFor devuelve la bot_permission requerida para la accion.
-func permissionFor(action string) string {
-	return actionPermissions[action]
+// No se lee ninguna clave de permiso individual del mapa
+// bot_permissions para decidir: la deteccion de grupos no las puebla
+// completas y la Bot API no las exige para estas acciones siendo
+// admin. Misma logica que publications.permissionOk y
+// automation.permissionOkAdmin (copia defensiva por paquete, como en
+// esos modulos, para no acoplar dominios).
+func permissionOk(g *groups.Group) bool {
+	return g != nil && g.BotStatus == groups.StatusAdministrator
 }

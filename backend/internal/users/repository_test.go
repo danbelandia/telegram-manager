@@ -31,10 +31,25 @@ func testDB(t *testing.T) *sql.DB {
 	if err := database.Migrate(context.Background(), db); err != nil {
 		t.Fatalf("migrate test db: %v", err)
 	}
-	if _, err := db.ExecContext(context.Background(), "TRUNCATE users"); err != nil {
-		t.Fatalf("truncate users: %v", err)
+	if _, err := db.ExecContext(context.Background(), "TRUNCATE users, join_requests, warnings"); err != nil {
+		t.Fatalf("truncate: %v", err)
 	}
 	return db
+}
+
+// testTenant devuelve el id del tenant `default` (idempotente, slice
+// 0): GetByTenant requiere presencia en tablas hijas del tenant.
+func testTenant(t *testing.T, db *sql.DB) int64 {
+	t.Helper()
+	var id int64
+	const q = `
+INSERT INTO tenants (slug) VALUES ('default')
+ON CONFLICT (slug) DO UPDATE SET slug = EXCLUDED.slug
+RETURNING id`
+	if err := db.QueryRowContext(context.Background(), q).Scan(&id); err != nil {
+		t.Fatalf("ensure default tenant: %v", err)
+	}
+	return id
 }
 
 func TestRepository_UpsertIdempotent(t *testing.T) {
@@ -103,3 +118,92 @@ func TestRepository_UpsertNullUsername(t *testing.T) {
 }
 
 func ptr(s string) *string { return &s }
+
+// --- Scope por tenant via join (slice 0, T9/Q3-a) ---
+
+func TestRepository_GetByTenantViaJoinRequest(t *testing.T) {
+	db := testDB(t)
+	repo := NewRepository(db)
+	ctx := context.Background()
+	tid := testTenant(t, db)
+
+	u := &User{TelegramID: 2000000001, FirstName: "Ana", Username: ptr("ana")}
+	if err := repo.UpsertByTelegramID(ctx, u); err != nil {
+		t.Fatalf("upsert user: %v", err)
+	}
+	// Sin presencia en el tenant: NOT_FOUND aunque el usuario exista.
+	if _, err := repo.GetByTenant(ctx, tid, u.TelegramID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("sin presencia err = %v, want ErrNotFound", err)
+	}
+	// Presencia via join_request del tenant.
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO join_requests (tenant_id, group_id, user_id) VALUES ($1, $2, $3)`,
+		tid, -1001, u.TelegramID,
+	); err != nil {
+		t.Fatalf("insert join request: %v", err)
+	}
+	got, err := repo.GetByTenant(ctx, tid, u.TelegramID)
+	if err != nil {
+		t.Fatalf("get by tenant: %v", err)
+	}
+	if got.FirstName != "Ana" {
+		t.Errorf("first_name = %q, want Ana", got.FirstName)
+	}
+}
+
+func TestRepository_GetByTenantOtherTenantNotFound(t *testing.T) {
+	db := testDB(t)
+	repo := NewRepository(db)
+	ctx := context.Background()
+	tid := testTenant(t, db)
+	var tidB int64
+	const q = `
+INSERT INTO tenants (slug) VALUES ('users-other')
+ON CONFLICT (slug) DO UPDATE SET slug = EXCLUDED.slug
+RETURNING id`
+	if err := db.QueryRowContext(ctx, q).Scan(&tidB); err != nil {
+		t.Fatalf("ensure tenant: %v", err)
+	}
+
+	u := &User{TelegramID: 2000000002, FirstName: "Beto"}
+	if err := repo.UpsertByTelegramID(ctx, u); err != nil {
+		t.Fatalf("upsert user: %v", err)
+	}
+	// Presencia SOLO en el otro tenant.
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO join_requests (tenant_id, group_id, user_id) VALUES ($1, $2, $3)`,
+		tidB, -1002, u.TelegramID,
+	); err != nil {
+		t.Fatalf("insert join request: %v", err)
+	}
+	// Usuario solo de otro tenant → NOT_FOUND.
+	if _, err := repo.GetByTenant(ctx, tid, u.TelegramID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+	// Y visible desde su tenant.
+	if _, err := repo.GetByTenant(ctx, tidB, u.TelegramID); err != nil {
+		t.Errorf("get by tenant B: %v", err)
+	}
+}
+
+func TestRepository_GetByTenantViaWarning(t *testing.T) {
+	db := testDB(t)
+	repo := NewRepository(db)
+	ctx := context.Background()
+	tid := testTenant(t, db)
+
+	u := &User{TelegramID: 2000000003, FirstName: "Ceci"}
+	if err := repo.UpsertByTelegramID(ctx, u); err != nil {
+		t.Fatalf("upsert user: %v", err)
+	}
+	// Presencia via warnings del tenant (sin join_request).
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO warnings (tenant_id, group_id, user_id) VALUES ($1, $2, $3)`,
+		tid, -1003, u.TelegramID,
+	); err != nil {
+		t.Fatalf("insert warning: %v", err)
+	}
+	if _, err := repo.GetByTenant(ctx, tid, u.TelegramID); err != nil {
+		t.Errorf("get by tenant via warning: %v", err)
+	}
+}

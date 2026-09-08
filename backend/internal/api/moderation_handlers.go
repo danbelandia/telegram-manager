@@ -54,6 +54,15 @@ func (s *Server) handleBan(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	tenantID, ok := tenantIDFromClaims(w, r)
+	if !ok {
+		return
+	}
+	mod, ok := s.resolveModeration(tenantID)
+	if !ok {
+		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de moderacion no habilitado")
+		return
+	}
 
 	var req banRequest
 	if !decodeOptionalBody(r, w, &req) {
@@ -64,7 +73,7 @@ func (s *Server) handleBan(w http.ResponseWriter, r *http.Request) {
 		revoke = *req.RevokeMessages
 	}
 
-	err := s.moderation.Ban(r.Context(), actorID, groupID, userID, req.UntilDate, revoke)
+	err := 	mod.Ban(r.Context(), actorID, groupID, userID, req.UntilDate, revoke)
 	if !respondModerationError(w, err) {
 		respond(w, http.StatusOK, map[string]string{"status": "ok"})
 	}
@@ -84,8 +93,17 @@ func (s *Server) handleUnban(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	tenantID, ok := tenantIDFromClaims(w, r)
+	if !ok {
+		return
+	}
+	mod, ok := s.resolveModeration(tenantID)
+	if !ok {
+		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de moderacion no habilitado")
+		return
+	}
 
-	err := s.moderation.Unban(r.Context(), actorID, groupID, userID)
+	err := 	mod.Unban(r.Context(), actorID, groupID, userID)
 	if !respondModerationError(w, err) {
 		respond(w, http.StatusOK, map[string]string{"status": "ok"})
 	}
@@ -105,13 +123,22 @@ func (s *Server) handleMute(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	tenantID, ok := tenantIDFromClaims(w, r)
+	if !ok {
+		return
+	}
+	mod, ok := s.resolveModeration(tenantID)
+	if !ok {
+		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de moderacion no habilitado")
+		return
+	}
 
 	var req muteRequest
 	if !decodeOptionalBody(r, w, &req) {
 		return
 	}
 
-	err := s.moderation.Mute(r.Context(), actorID, groupID, userID, req.UntilDate)
+	err := 	mod.Mute(r.Context(), actorID, groupID, userID, req.UntilDate)
 	if !respondModerationError(w, err) {
 		respond(w, http.StatusOK, map[string]string{"status": "ok"})
 	}
@@ -131,8 +158,17 @@ func (s *Server) handleUnmute(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	tenantID, ok := tenantIDFromClaims(w, r)
+	if !ok {
+		return
+	}
+	mod, ok := s.resolveModeration(tenantID)
+	if !ok {
+		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de moderacion no habilitado")
+		return
+	}
 
-	err := s.moderation.Unmute(r.Context(), actorID, groupID, userID)
+	err := 	mod.Unmute(r.Context(), actorID, groupID, userID)
 	if !respondModerationError(w, err) {
 		respond(w, http.StatusOK, map[string]string{"status": "ok"})
 	}
@@ -152,8 +188,17 @@ func (s *Server) handleDeleteMessage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	tenantID, ok := tenantIDFromClaims(w, r)
+	if !ok {
+		return
+	}
+	mod, ok := s.resolveModeration(tenantID)
+	if !ok {
+		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de moderacion no habilitado")
+		return
+	}
 
-	err := s.moderation.DeleteMessage(r.Context(), actorID, groupID, messageID)
+	err := 	mod.DeleteMessage(r.Context(), actorID, groupID, messageID)
 	if !respondModerationError(w, err) {
 		respond(w, http.StatusOK, map[string]string{"status": "ok"})
 	}
@@ -173,8 +218,17 @@ func (s *Server) handlePinMessage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	tenantID, ok := tenantIDFromClaims(w, r)
+	if !ok {
+		return
+	}
+	mod, ok := s.resolveModeration(tenantID)
+	if !ok {
+		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de moderacion no habilitado")
+		return
+	}
 
-	err := s.moderation.PinMessage(r.Context(), actorID, groupID, messageID)
+	err := 	mod.PinMessage(r.Context(), actorID, groupID, messageID)
 	if !respondModerationError(w, err) {
 		respond(w, http.StatusOK, map[string]string{"status": "ok"})
 	}
@@ -190,8 +244,17 @@ func (s *Server) handleLock(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	tenantID, ok := tenantIDFromClaims(w, r)
+	if !ok {
+		return
+	}
+	mod, ok := s.resolveModeration(tenantID)
+	if !ok {
+		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de moderacion no habilitado")
+		return
+	}
 
-	err := s.moderation.Lock(r.Context(), actorID, groupID)
+	err := 	mod.Lock(r.Context(), actorID, groupID)
 	if !respondModerationError(w, err) {
 		respond(w, http.StatusOK, map[string]string{"status": "ok"})
 	}
@@ -207,8 +270,17 @@ func (s *Server) handleUnlock(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	tenantID, ok := tenantIDFromClaims(w, r)
+	if !ok {
+		return
+	}
+	mod, ok := s.resolveModeration(tenantID)
+	if !ok {
+		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de moderacion no habilitado")
+		return
+	}
 
-	err := s.moderation.Unlock(r.Context(), actorID, groupID)
+	err := 	mod.Unlock(r.Context(), actorID, groupID)
 	if !respondModerationError(w, err) {
 		respond(w, http.StatusOK, map[string]string{"status": "ok"})
 	}

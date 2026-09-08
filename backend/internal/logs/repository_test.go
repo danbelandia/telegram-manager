@@ -32,23 +32,41 @@ func testDB(t *testing.T) *sql.DB {
 	return db
 }
 
-func sampleEntry(groupID int64, action string, status Status) *Entry {
+// testTenant devuelve el id del tenant `default` (idempotente, slice
+// 0): los writes del paquete requieren tenant.
+func testTenant(t *testing.T, db *sql.DB) int64 {
+	t.Helper()
+	var id int64
+	const q = `
+INSERT INTO tenants (slug) VALUES ('default')
+ON CONFLICT (slug) DO UPDATE SET slug = EXCLUDED.slug
+RETURNING id`
+	if err := db.QueryRowContext(context.Background(), q).Scan(&id); err != nil {
+		t.Fatalf("ensure default tenant: %v", err)
+	}
+	return id
+}
+
+func sampleEntry(tenantID, groupID int64, action string, status Status) *Entry {
 	actor := int64(1)
 	return &Entry{
-		ActorID: &actor,
-		GroupID: groupID,
-		Action:  action,
-		Status:  status,
+		TenantID: tenantID,
+		ActorID:  &actor,
+		GroupID:  groupID,
+		Action:   action,
+		Status:   status,
 	}
 }
 
 func TestRepository_CreateAndGet(t *testing.T) {
 	db := testDB(t)
 	repo := NewRepository(db)
+	tid := testTenant(t, db)
 
 	ctx := context.Background()
 	target := int64(456)
 	entry := &Entry{
+		TenantID:     tid,
 		ActorID:      ptr64(7),
 		GroupID:      -100123,
 		Action:       ActionBanUser,
@@ -60,7 +78,7 @@ func TestRepository_CreateAndGet(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	got, err := repo.ListByGroup(ctx, -100123)
+	got, err := repo.ListByGroup(ctx, tid, -100123)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -88,20 +106,21 @@ func TestRepository_CreateAndGet(t *testing.T) {
 func TestRepository_ListByGroupFiltersAndOrders(t *testing.T) {
 	db := testDB(t)
 	repo := NewRepository(db)
+	tid := testTenant(t, db)
 
 	ctx := context.Background()
 	// Logs del grupo 1 (mas reciente al final en insercion) y uno del 2.
 	for _, e := range []*Entry{
-		sampleEntry(-1001, ActionLockGroup, StatusSuccess),
-		sampleEntry(-1002, ActionPinMessage, StatusSuccess),
-		sampleEntry(-1001, ActionUnlockGroup, StatusSuccess),
+		sampleEntry(tid, -1001, ActionLockGroup, StatusSuccess),
+		sampleEntry(tid, -1002, ActionPinMessage, StatusSuccess),
+		sampleEntry(tid, -1001, ActionUnlockGroup, StatusSuccess),
 	} {
 		if err := repo.Create(ctx, e); err != nil {
 			t.Fatalf("create %s: %v", e.Action, err)
 		}
 	}
 
-	got, err := repo.ListByGroup(ctx, -1001)
+	got, err := repo.ListByGroup(ctx, tid, -1001)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -117,8 +136,9 @@ func TestRepository_ListByGroupFiltersAndOrders(t *testing.T) {
 func TestRepository_ListByGroupEmpty(t *testing.T) {
 	db := testDB(t)
 	repo := NewRepository(db)
+	tid := testTenant(t, db)
 
-	got, err := repo.ListByGroup(context.Background(), -999)
+	got, err := repo.ListByGroup(context.Background(), tid, -999)
 	if err != nil {
 		t.Fatalf("list empty: %v", err)
 	}
@@ -130,17 +150,18 @@ func TestRepository_ListByGroupEmpty(t *testing.T) {
 func TestRepository_CreateFailureLog(t *testing.T) {
 	db := testDB(t)
 	repo := NewRepository(db)
+	tid := testTenant(t, db)
 
 	ctx := context.Background()
 	msg := "el bot no tiene permisos suficientes"
-	entry := sampleEntry(-1001, ActionBanUser, StatusPermissionDenied)
+	entry := sampleEntry(tid, -1001, ActionBanUser, StatusPermissionDenied)
 	entry.TargetUserID = ptr64(456)
 	entry.ErrorMessage = &msg
 	if err := repo.Create(ctx, entry); err != nil {
 		t.Fatalf("create failure log: %v", err)
 	}
 
-	got, err := repo.ListByGroup(ctx, -1001)
+	got, err := repo.ListByGroup(ctx, tid, -1001)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -159,11 +180,11 @@ func ptr64(n int64) *int64 { return &n }
 // insertLogAt crea un log con created_at fijo (via SQL directo: la
 // columna tiene DEFAULT now(), pero los tests del dashboard necesitan
 // logs antiguos para verificar el filtro since). Helper de slice 3.
-func insertLogAt(t *testing.T, db *sql.DB, groupID int64, action string, createdAt time.Time) {
+func insertLogAt(t *testing.T, db *sql.DB, tenantID, groupID int64, action string, createdAt time.Time) {
 	t.Helper()
 	if _, err := db.ExecContext(context.Background(),
-		`INSERT INTO logs (actor_id, group_id, action, status, created_at) VALUES (NULL, $1, $2, 'SUCCESS', $3)`,
-		groupID, action, createdAt.UTC(),
+		`INSERT INTO logs (tenant_id, actor_id, group_id, action, status, created_at) VALUES ($1, NULL, $2, $3, 'SUCCESS', $4)`,
+		tenantID, groupID, action, createdAt.UTC(),
 	); err != nil {
 		t.Fatalf("insert log %s @ %v: %v", action, createdAt, err)
 	}
@@ -176,21 +197,22 @@ func TestRepository_CountByActionAndGroup_HappyPath(t *testing.T) {
 	db := testDB(t)
 	repo := NewRepository(db)
 	ctx := context.Background()
+	tid := testTenant(t, db)
 	groupID := int64(-100301)
 
 	now := time.Now().UTC()
 	for i := 0; i < 5; i++ {
-		insertLogAt(t, db, groupID, ActionRuleTriggered, now)
+		insertLogAt(t, db, tid, groupID, ActionRuleTriggered, now)
 	}
 	for i := 0; i < 2; i++ {
-		insertLogAt(t, db, groupID, ActionAutomuteUser, now)
+		insertLogAt(t, db, tid, groupID, ActionAutomuteUser, now)
 	}
-	insertLogAt(t, db, groupID, ActionAutobanUser, now)
+	insertLogAt(t, db, tid, groupID, ActionAutobanUser, now)
 	for i := 0; i < 3; i++ {
-		insertLogAt(t, db, groupID, ActionBanUser, now)
+		insertLogAt(t, db, tid, groupID, ActionBanUser, now)
 	}
 
-	got, err := repo.CountByActionAndGroup(ctx, groupID,
+	got, err := 	repo.CountByActionAndGroup(ctx, tid, groupID,
 		[]string{ActionRuleTriggered, ActionAutomuteUser, ActionAutobanUser},
 		now.Add(-1*time.Hour),
 	)
@@ -221,18 +243,19 @@ func TestRepository_CountByActionAndGroup_SinceFilter(t *testing.T) {
 	db := testDB(t)
 	repo := NewRepository(db)
 	ctx := context.Background()
+	tid := testTenant(t, db)
 	groupID := int64(-100302)
 
 	now := time.Now().UTC()
 	for i := 0; i < 5; i++ {
-		insertLogAt(t, db, groupID, ActionRuleTriggered, now.Add(-48*time.Hour))
+		insertLogAt(t, db, tid, groupID, ActionRuleTriggered, now.Add(-48*time.Hour))
 	}
 	for i := 0; i < 3; i++ {
-		insertLogAt(t, db, groupID, ActionRuleTriggered, now.Add(-1*time.Hour))
+		insertLogAt(t, db, tid, groupID, ActionRuleTriggered, now.Add(-1*time.Hour))
 	}
 
 	since := now.Add(-24 * time.Hour)
-	got, err := repo.CountByActionAndGroup(ctx, groupID, []string{ActionRuleTriggered}, since)
+	got, err := 	repo.CountByActionAndGroup(ctx, tid, groupID, []string{ActionRuleTriggered}, since)
 	if err != nil {
 		t.Fatalf("CountByActionAndGroup: %v", err)
 	}
@@ -247,15 +270,16 @@ func TestRepository_CountByActionAndGroup_ActionsSubset(t *testing.T) {
 	db := testDB(t)
 	repo := NewRepository(db)
 	ctx := context.Background()
+	tid := testTenant(t, db)
 	groupID := int64(-100303)
 
 	now := time.Now().UTC()
 	for i := 0; i < 4; i++ {
-		insertLogAt(t, db, groupID, ActionRuleTriggered, now)
+		insertLogAt(t, db, tid, groupID, ActionRuleTriggered, now)
 	}
-	insertLogAt(t, db, groupID, ActionAutomuteUser, now)
+	insertLogAt(t, db, tid, groupID, ActionAutomuteUser, now)
 
-	got, err := repo.CountByActionAndGroup(ctx, groupID, []string{ActionRuleTriggered}, now.Add(-1*time.Hour))
+	got, err := 	repo.CountByActionAndGroup(ctx, tid, groupID, []string{ActionRuleTriggered}, now.Add(-1*time.Hour))
 	if err != nil {
 		t.Fatalf("CountByActionAndGroup: %v", err)
 	}
@@ -276,8 +300,9 @@ func TestRepository_CountByActionAndGroup_Empty(t *testing.T) {
 	db := testDB(t)
 	repo := NewRepository(db)
 	ctx := context.Background()
+	tid := testTenant(t, db)
 
-	got, err := repo.CountByActionAndGroup(ctx, -100304,
+	got, err := repo.CountByActionAndGroup(ctx, tid, -100304,
 		[]string{ActionRuleTriggered, ActionAutomuteUser, ActionAutobanUser},
 		time.Now().Add(-1*time.Hour),
 	)
@@ -289,5 +314,39 @@ func TestRepository_CountByActionAndGroup_Empty(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Errorf("map len = %d, want 0 (got = %v)", len(got), got)
+	}
+}
+
+func TestRepository_CrossTenantIsolation(t *testing.T) {
+	db := testDB(t)
+	repo := NewRepository(db)
+	ctx := context.Background()
+	tidA := testTenant(t, db)
+	var tidB int64
+	const q = `
+INSERT INTO tenants (slug) VALUES ('logs-other')
+ON CONFLICT (slug) DO UPDATE SET slug = EXCLUDED.slug
+RETURNING id`
+	if err := db.QueryRowContext(ctx, q).Scan(&tidB); err != nil {
+		t.Fatalf("ensure tenant: %v", err)
+	}
+
+	if err := repo.Create(ctx, sampleEntry(tidA, -1001, ActionBanUser, StatusSuccess)); err != nil {
+		t.Fatalf("create A: %v", err)
+	}
+
+	gotB, err := repo.ListByGroup(ctx, tidB, -1001)
+	if err != nil {
+		t.Fatalf("list B: %v", err)
+	}
+	if len(gotB) != 0 {
+		t.Errorf("list B = %+v, want vacio (fuga del tenant A)", gotB)
+	}
+	gotA, err := repo.ListByGroup(ctx, tidA, -1001)
+	if err != nil || len(gotA) != 1 {
+		t.Fatalf("list A: %+v, %v", gotA, err)
+	}
+	if gotA[0].TenantID != tidA {
+		t.Errorf("tenant_id = %d, want %d", gotA[0].TenantID, tidA)
 	}
 }
