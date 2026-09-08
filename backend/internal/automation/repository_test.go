@@ -668,3 +668,93 @@ func TestRepository_AddLinkAllowlist_RejectsEmpty(t *testing.T) {
 		t.Error("AddLinkAllowlist(empty) = nil, want CHECK violation")
 	}
 }
+
+// --- Tests de slice 2.1 (warn_user_enabled + warn_user_template) ---
+
+// TestRepository_Settings_Defaults_WarnUserColumns: insert via
+// DefaultSettings() → round-trip preserva WarnUserEnabled=true y
+// WarnUserTemplate=nil. Cubre REQ-23.
+func TestRepository_Settings_Defaults_WarnUserColumns(t *testing.T) {
+	db := setupRepoDB(t)
+	repo := NewRepository(db)
+	insertGroup(t, db, -1001)
+
+	defaults := DefaultSettings(-1001)
+	if !defaults.WarnUserEnabled {
+		t.Fatalf("DefaultSettings WarnUserEnabled = false, want true")
+	}
+	if defaults.WarnUserTemplate != nil {
+		t.Fatalf("DefaultSettings WarnUserTemplate = %v, want nil", defaults.WarnUserTemplate)
+	}
+	if err := repo.UpsertSettings(context.Background(), defaults); err != nil {
+		t.Fatalf("UpsertSettings: %v", err)
+	}
+
+	got, err := repo.GetSettings(context.Background(), -1001)
+	if err != nil {
+		t.Fatalf("GetSettings: %v", err)
+	}
+	if !got.WarnUserEnabled {
+		t.Errorf("round-trip WarnUserEnabled = false, want true")
+	}
+	if got.WarnUserTemplate != nil {
+		t.Errorf("round-trip WarnUserTemplate = %v, want nil", got.WarnUserTemplate)
+	}
+}
+
+// TestRepository_Settings_RoundTrip_WarnUserColumns: persistir un
+// template custom (no vacio) + WarnUserEnabled=false → round-trip
+// preserva ambos valores exactos. Cubre REQ-22 + REQ-24.
+func TestRepository_Settings_RoundTrip_WarnUserColumns(t *testing.T) {
+	db := setupRepoDB(t)
+	repo := NewRepository(db)
+	insertGroup(t, db, -1001)
+
+	custom := "⚠️ {nombre}, llevás {count} advertencias. Custom template."
+	s := &Settings{
+		GroupID:           -1001,
+		Enabled:           true,
+		FloodEnabled:      true,
+		FloodMessages:     5,
+		FloodSeconds:      10,
+		WarningLimit:      3,
+		AutomuteWarnings:  3,
+		AutomuteMinutes:   10,
+		AutobanWarnings:   5,
+		WarningExpireDays: 30,
+		WarnUserEnabled:   false,
+		WarnUserTemplate:  &custom,
+	}
+	if err := repo.UpsertSettings(context.Background(), s); err != nil {
+		t.Fatalf("UpsertSettings: %v", err)
+	}
+
+	got, err := repo.GetSettings(context.Background(), -1001)
+	if err != nil {
+		t.Fatalf("GetSettings: %v", err)
+	}
+	if got.WarnUserEnabled {
+		t.Errorf("round-trip WarnUserEnabled = true, want false")
+	}
+	if got.WarnUserTemplate == nil {
+		t.Fatalf("round-trip WarnUserTemplate = nil, want ptr")
+	}
+	if *got.WarnUserTemplate != custom {
+		t.Errorf("round-trip WarnUserTemplate = %q, want %q", *got.WarnUserTemplate, custom)
+	}
+
+	// Segundo upsert: togglear a true + template nil. Debe
+	// sobreescribir (no merge).
+	s.WarnUserEnabled = true
+	s.WarnUserTemplate = nil
+	if err := repo.UpsertSettings(context.Background(), s); err != nil {
+		t.Fatalf("second UpsertSettings: %v", err)
+	}
+	got2, _ := repo.GetSettings(context.Background(), -1001)
+	if !got2.WarnUserEnabled {
+		t.Errorf("post-2nd-upsert WarnUserEnabled = false, want true")
+	}
+	if got2.WarnUserTemplate != nil {
+		t.Errorf("post-2nd-upsert WarnUserTemplate = %v, want nil", got2.WarnUserTemplate)
+	}
+}

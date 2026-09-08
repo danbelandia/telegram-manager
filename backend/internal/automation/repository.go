@@ -28,7 +28,9 @@ SELECT group_id, enabled, anti_spam_enabled, anti_link_enabled,
        banned_words_enabled, flood_enabled,
        flood_messages, flood_seconds, warning_limit,
        automute_warnings, automute_minutes, autoban_warnings,
-       warning_expire_days, updated_at
+       warning_expire_days,
+       warn_user_enabled, warn_user_template,
+       updated_at
 FROM group_moderation_settings
 WHERE group_id = $1`
 
@@ -54,8 +56,9 @@ INSERT INTO group_moderation_settings (
     flood_enabled,
     flood_messages, flood_seconds, warning_limit,
     automute_warnings, automute_minutes, autoban_warnings,
-    warning_expire_days
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+    warning_expire_days,
+    warn_user_enabled, warn_user_template
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 ON CONFLICT (group_id) DO UPDATE SET
     enabled               = EXCLUDED.enabled,
     anti_spam_enabled     = EXCLUDED.anti_spam_enabled,
@@ -69,6 +72,8 @@ ON CONFLICT (group_id) DO UPDATE SET
     automute_minutes      = EXCLUDED.automute_minutes,
     autoban_warnings      = EXCLUDED.autoban_warnings,
     warning_expire_days   = EXCLUDED.warning_expire_days,
+    warn_user_enabled     = EXCLUDED.warn_user_enabled,
+    warn_user_template    = EXCLUDED.warn_user_template,
     updated_at            = now()`
 
 	_, err := r.db.ExecContext(ctx, q,
@@ -78,6 +83,7 @@ ON CONFLICT (group_id) DO UPDATE SET
 		s.FloodMessages, s.FloodSeconds, s.WarningLimit,
 		s.AutomuteWarnings, s.AutomuteMinutes, s.AutobanWarnings,
 		s.WarningExpireDays,
+		s.WarnUserEnabled, s.WarnUserTemplate,
 	)
 	if err != nil {
 		return fmt.Errorf("automation: upsert settings %d: %w", s.GroupID, err)
@@ -315,7 +321,9 @@ func scanSettings(row rowScanner) (Settings, error) {
 		&s.FloodEnabled,
 		&s.FloodMessages, &s.FloodSeconds, &s.WarningLimit,
 		&s.AutomuteWarnings, &s.AutomuteMinutes, &s.AutobanWarnings,
-		&s.WarningExpireDays, &s.UpdatedAt,
+		&s.WarningExpireDays,
+		&s.WarnUserEnabled, &s.WarnUserTemplate,
+		&s.UpdatedAt,
 	)
 	if err != nil {
 		return Settings{}, err

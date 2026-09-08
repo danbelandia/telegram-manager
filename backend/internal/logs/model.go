@@ -54,6 +54,9 @@ const (
 	ActionRemoveBannedWord         = "REMOVE_BANNED_WORD"
 	ActionAddLinkAllowlist         = "ADD_LINK_ALLOWLIST"
 	ActionRemoveLinkAllowlist      = "REMOVE_LINK_ALLOWLIST"
+	// Slice 2.1 — warning visual al usuario antes de la auto-action.
+	// ActorID=nil (sistema). Disparado por automation.WarningSender.
+	ActionWarnUserSent = "WARN_USER_SENT"
 )
 
 // Entry es una fila de auditoria. ActorID es el id del admin del panel

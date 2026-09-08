@@ -72,12 +72,21 @@ func DefaultSettings(groupID int64) *Settings {
 		AutomuteMinutes:   10,
 		AutobanWarnings:   5,
 		WarningExpireDays: 30,
+		// Slice 2.1: warning visual ON por default out-of-the-box; el
+		// admin lo apaga o customiza por grupo desde el panel.
+		WarnUserEnabled:  true,
+		WarnUserTemplate: nil,
 	}
 }
 
 // Settings es la fila de group_moderation_settings. GroupID es el
 // telegram_id del grupo (id natural que usamos en todas las llamadas a
 // la Bot API). UpdatedAt lo setea la DB.
+//
+// Slice 2.1: WarnUserEnabled (default true) + WarnUserTemplate (*string,
+// default nil) controlan el warning visual al usuario antes de mute/ban
+// (REQ-22..28). nil en WarnUserTemplate = usar default hardcoded en
+// automation/templates.go.
 type Settings struct {
 	GroupID            int64
 	Enabled            bool
@@ -92,6 +101,8 @@ type Settings struct {
 	AutomuteMinutes    int16
 	AutobanWarnings    int16
 	WarningExpireDays  int16
+	WarnUserEnabled    bool
+	WarnUserTemplate   *string
 	UpdatedAt          time.Time
 }
 
