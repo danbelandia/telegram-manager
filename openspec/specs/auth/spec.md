@@ -8,6 +8,14 @@ corto (15 min) y refresh token largo (7 días) en cookie httpOnly. El
 middleware de auth solo verifica identidad; la autorización por
 grupos/roles es una capa aparte (pasos posteriores).
 
+> **Histórico de slices**: Slice 0 multitenancy-backend (archivada en
+> `openspec/changes/archive/2026-09-08-slice-0-multitenancy-backend/`,
+> mergeada en este archivo) extiende los claims con `tenant_id`: el
+> access lo exige (los tokens legacy sin tenant degradan con 401 +
+> re-login), el refresh re-emite el access con el `tenant_id` actual
+> del admin, `GET /api/auth/me` expone `tenant_id`, y el seed del admin
+> inicial adopta el tenant `default`.
+
 ## Requirements
 
 ### Requirement: Login con credenciales
@@ -40,20 +48,32 @@ falló.
 
 ### Requirement: Access token
 
-El sistema MUST emitir un access token JWT firmado con `JWT_SECRET` con
-expiración de 15 minutos y claims de identidad (`sub`, `username`).
+El sistema MUST emitir un access token JWT firmado con `JWT_SECRET`
+con expiración de 15 minutos y claims de identidad (`sub`, `username`,
+`tenant_id`).
+(Previously: claims eran solo `sub` y `username`, sin tenant.)
 
 #### Scenario: Access token válido
 
 - GIVEN un login exitoso
-- THEN el `access_token` decodifica con `sub` = id del admin y
-  `username` = username, con exp ~15 min
+- THEN el `access_token` decodifica con `sub` = id del admin,
+  `username` = username y `tenant_id` = tenant del admin, con exp ~15 min
+
+#### Scenario: Access legacy sin tenant
+
+- GIVEN un access token pre-multitenancy válido en firma pero sin
+  claim `tenant_id`
+- WHEN se llama a una ruta protegida
+- THEN responde 401 con mensaje de re-login requerido
 
 ### Requirement: Refresh token
 
 El sistema MUST emitir un refresh token JWT con expiración de 7 días,
 stateless (sin sesiones en DB), y entregarlo en una cookie
-`httpOnly`, `SameSite=Strict` — `Secure` según `COOKIE_SECURE`.
+`httpOnly`, `SameSite=Strict` — `Secure` según `COOKIE_SECURE`. Al
+refrescar, MUST re-emitir el access con el `tenant_id` actual del
+admin, incluso si el refresh fue emitido antes de multitenancy.
+(Previously: el refresh re-emitía access sin tenant.)
 
 #### Scenario: Cookie de refresh entregada
 
@@ -73,16 +93,25 @@ stateless (sin sesiones en DB), y entregarlo en una cookie
 - WHEN se llama `POST /api/auth/refresh`
 - THEN responde 401
 
+#### Scenario: Refresh legacy re-emite con tenant
+
+- GIVEN un refresh válido emitido antes de multitenancy (sin tenant)
+- WHEN se llama `POST /api/auth/refresh`
+- THEN responde 200 con un `access_token` que incluye el `tenant_id`
+  actual del admin
+
 ### Requirement: Identidad protegida
 
-El sistema MUST proteger rutas verificando el access token e inyectar
-la identidad del admin para el handler.
+El sistema MUST proteger rutas verificando el access token (que MUST
+incluir `tenant_id`) e inyectar la identidad del admin para el
+handler. `GET /api/auth/me` MUST exponer el `tenant_id`.
+(Previously: `me` devolvía solo id y username; no se exigía tenant.)
 
 #### Scenario: Ruta protegida con access válido
 
 - GIVEN un access token válido en `Authorization: Bearer ...`
 - WHEN se llama `GET /api/auth/me`
-- THEN responde 200 con id y username del admin
+- THEN responde 200 con id, username y `tenant_id` del admin
 
 #### Scenario: Ruta protegida sin access
 
@@ -102,18 +131,20 @@ El sistema MUST permitir cerrar sesión borrando la cookie de refresh.
 
 ### Requirement: Bootstrap del admin inicial
 
-El sistema MUST crear un admin inicial al arrancar si la tabla `admins`
-está vacía, usando `ADMIN_USERNAME` y `ADMIN_PASSWORD`, con password
-hasheado con bcrypt costo 12. Si la tabla no está vacía, MUST no crear
+El sistema MUST crear un admin inicial al arrancar si la tabla
+`admins` está vacía, usando `ADMIN_USERNAME` y `ADMIN_PASSWORD`, con
+password hasheado con bcrypt costo 12, adoptando el tenant `default`
+(creándolo si no existe). Si la tabla no está vacía, MUST no crear
 nada.
+(Previously: el seed no asignaba ningún tenant.)
 
 #### Scenario: Seed en tabla vacía
 
 - GIVEN la tabla `admins` vacía y env `ADMIN_USERNAME`/`ADMIN_PASSWORD`
   configurados
 - WHEN el backend arranca
-- THEN existe un admin con ese username y password hash bcrypt, y se
-  puede loguear
+- THEN existe un admin con ese username y password hash bcrypt,
+  vinculado al tenant `default`, y se puede loguear
 
 #### Scenario: Seed no duplica
 
