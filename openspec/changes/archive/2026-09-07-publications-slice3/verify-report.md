@@ -116,7 +116,7 @@ This is a vitest pool/environment configuration issue, NOT a slice-3 regression.
 
 ## Security check
 
-- `.env` exists locally with a real token (`TELEGRAM_BOT_TOKEN=><==***REDACTED-AFTER-SEC-INCIDENT-2026-09-08***`).
+- `.env` exists locally with a real token (redacted in this report; value intentionally omitted — see SECURITY incident 2026-09-08). The `.gitignore` excludes `.env` so the token is NOT in git history except for this verify-report which has been redacted post-hoc.
 - `.gitignore` excludes `.env` and `.env.*` patterns — token NOT in git diff.
 - `git diff main...feat/publications-slice3 --stat`: no token / secret leakage.
 - `.env.example` ships without values, only variable names.
