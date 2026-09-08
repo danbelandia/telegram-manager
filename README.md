@@ -3,13 +3,16 @@
 Plataforma para administrar grupos de Telegram: bot, backend en Go, panel
 React + TypeScript y PostgreSQL.
 
-> **Estado: MVP Fase 1 + Fase 2 slice 1-2-3** (AGENTS.md §26-27 + §22):
-> administración de grupos, membresía y moderación básica, solicitudes
-> de ingreso, logs, autenticación del panel y **publicaciones con
-> foto por URL, botones inline de URL, envío multi-grupo,
-> programación (`scheduled_at`), cancelación de filas `scheduled` e
-> historial paginado**. Las fases 3 (moderación automática) y 4
-> (automatizaciones) son posteriores y **no** están en esta versión.
+> **Estado: MVP Fase 1 + Fase 2 slice 1-2-3 + Fase 3 slice 1-2**
+> (AGENTS.md §22-23): administración de grupos, membresía y moderación
+> básica, solicitudes de ingreso, logs, autenticación del panel,
+> publicaciones con foto por URL + botones inline + envío multi-grupo +
+> programación (`scheduled_at`) + cancelación + historial paginado, y
+> **moderación automática** (Fase 3, slice 1 foundation: Flood + auto-
+> mute/ban + audit; slice 2: anti-spam + anti-link + banned-words +
+> allowlist + editor de settings en el panel). Las fases 4
+> (automatizaciones) y 3-slice-3 (dashboard de warnings) son
+> posteriores y **no** están en esta versión.
 
 ## Quick path
 
@@ -83,6 +86,7 @@ y el login falla con **HTTP 405**. Dejá la variable vacía o comentada.
 | `/groups/:telegram_id/requests` | Solicitudes de ingreso (aprobar/rechazar) |
 | `/groups/:telegram_id/logs` | Auditoría de acciones administrativas |
 | `/publications` | Publicar ahora con foto URL + botones inline, multi-grupo, filtro por grupo en historial |
+| `/groups/:telegram_id/automation` | Editor de moderación automática: toggles (Flood / Anti-spam / Anti-link / Banned-words), umbrales, listas de palabras prohibidas y allowlist de enlaces |
 
 Nota: el `:telegram_id` de las URLs es el ID de Telegram del grupo (ej.
 `-100123456789`), no un id interno.
@@ -202,6 +206,99 @@ el audit trail — el admin puede ver el `error_message` real de una
 publicación fallida en el historial.
 
 ### Historial paginado (slice 3)
+
+`GET /api/publications` acepta:
+
+- `?group_id=<int64>` (filtro por grupo, slice 2).
+- `?limit=<int>` (default `50`, max `100`). Valores fuera de rango
+  devuelven 400 `VALIDATION_ERROR`.
+- `?offset=<int>` (default `0`). Valores negativos devuelven 400.
+
+El panel muestra los controles **Anterior / Siguiente** debajo del
+listado (Prev deshabilitado en `offset=0`; Next deshabilitado cuando
+la página retornada tiene menos filas que `limit`).
+
+## Moderación automática (Fase 3)
+
+El bot puede aplicar reglas automáticas sobre los mensajes entrantes y
+ejecutar acciones escalonadas (warning → auto-mute → auto-ban) sin
+intervención humana. La configuración es **por grupo** y vive en el
+panel `/groups/:id/automation`.
+
+### Reglas (slice 1 + 2)
+
+El `automation.Service` mantiene un **registry de reglas** que se evalúa
+en orden `Flood → AntiSpam → AntiLink → BannedWords` (cheap-first → DB-
+pre-loaded). El primer hit short-circuitea el resto.
+
+| Regla | Detecta | Toggle | Notas |
+|-------|---------|--------|-------|
+| **Flood** | `N` mensajes del mismo usuario en `S` segundos | `flood_enabled` | In-mem; ventana deslizante por (group, user). Reset on process restart (acceptable). |
+| **Anti-spam** | MAYÚSCULAS (`>70%` letras upper, texto `>10` chars), 5+ chars repetidos consecutivos, URL con cuerpo `<20` chars | `anti_spam_enabled` | Stateless; CPU puro. |
+| **Anti-link** | URLs `http(s)://` o `t.me/` o `telegram.me/` fuera de la allowlist | `anti_link_enabled` | Helper `domainMatches` exige `.` antes del allow domain (no `notexample.com` matchea `example.com`). |
+| **Banned-words** | Cualquier palabra de `banned_words` aparece como substring (case-insensitive) | `banned_words_enabled` | Lista persiste en `banned_words(group_id, word)` con PK compuesta + FK CASCADE. |
+
+### Acciones automáticas
+
+Cuando una regla dispara, `Service.HandleMessage` incrementa el
+`warning_count` del usuario en `user_warning_state` y emite un log
+`RULE_TRIGGERED` (ActorID=nil porque es auto-action del sistema). El
+worker luego encola auto-actions según thresholds:
+
+- `warning_count >= automute_warnings` → `AutoActionMute` (tg.restrictChatMember
+  con `UntilDate = now + automute_minutes*60`). Log `AUTOMUTE_USER`.
+- `warning_count >= autoban_warnings` → `AutoActionBan` (tg.banChatMember
+  indefinido + `revoke=true`). Log `AUTOBAN_USER`.
+
+El worker respeta el rate limit del adapter (§18.1: token bucket ~25 req/seg
+global + `retry_after` en 429). El check de admin antes de despachar es
+`g.BotStatus == StatusAdministrator` (bugfix #172, nunca claves `can_*`).
+
+### Editor de settings (panel)
+
+Ruta `/groups/:telegram_id/automation`. Layout con 4 secciones:
+
+1. **General**: switch principal `Habilitar moderación automática`.
+2. **Reglas**: 4 sub-toggles (Flood / Anti-spam / Anti-link / Banned-words).
+3. **Umbrales**: 6 NumberInputs (flood messages/seconds, warning limit,
+   auto-mute warnings/minutes, auto-ban warnings, warning expire days).
+4. **Listas**: 2 TagsInput (palabras prohibidas + allowlist de dominios).
+
+**Single Save button** al fondo dispara `Promise.all` en paralelo: PUT
+de settings + POST/DELETE por cada palabra/dominio cambiado. Las
+notificaciones de éxito/error se acumulan por sección; un fallo NO
+aborta el resto.
+
+### Endpoints REST
+
+| Método | Path | Body | Returns |
+|--------|------|------|---------|
+| GET | `/api/groups/{id}/automation/settings` | — | `{settings: AutomationSettings}` (200 / 404) |
+| PUT | `/api/groups/{id}/automation/settings` | `SettingsUpdate` (body parcial) | `{settings: AutomationSettings}` (200 / 400 / 404) |
+| GET | `/api/groups/{id}/automation/banned-words` | — | `{words: []string}` (200) |
+| POST | `/api/groups/{id}/automation/banned-words` | `{word: string}` | `{words: []string}` (200 / 400) |
+| DELETE | `/api/groups/{id}/automation/banned-words/{word}` | — | `{words: []string}` (200) |
+| GET | `/api/groups/{id}/automation/link-allowlist` | — | `{domains: []string}` (200) |
+| POST | `/api/groups/{id}/automation/link-allowlist` | `{domain: string}` | `{domains: []string}` (200 / 400) |
+| DELETE | `/api/groups/{id}/automation/link-allowlist/{domain}` | — | `{domains: []string}` (200) |
+
+Todas requieren `requireAuth` (panel admin) y validan el grupo
+(`groups.GetByTelegramID` → 404 si no existe).
+
+### Audit log (slice 1 vs slice 2)
+
+La tabla `logs` distingue **auto-actions** (slice 1: el sistema detecta
+y ejecuta) de **acciones manuales** (slice 2: el admin edita settings
+desde el panel):
+
+- Auto-action → `ActorID=nil` (la acción la genera el sistema).
+- Manual → `ActorID=<admin_id>` (la acción la dispara el admin del
+  panel). Constantes: `UPDATE_AUTOMATION_SETTINGS`, `ADD_BANNED_WORD`,
+  `REMOVE_BANNED_WORD`, `ADD_LINK_ALLOWLIST`,
+  `REMOVE_LINK_ALLOWLIST`.
+
+El comentario en `logs/model.go` documenta la distinción para futuros
+mantenedores.
 
 `GET /api/publications` acepta:
 
