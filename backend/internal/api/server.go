@@ -208,6 +208,7 @@ func WithGroups(groups groupStore, groupUsers GroupUsersLookup) Option {
 		s.groupUsers = groupUsers
 		s.mux.HandleFunc("GET /api/groups", s.requireAuth(s.handleListGroups))
 		s.mux.HandleFunc("GET /api/groups/{id}", s.requireAuth(s.handleGetGroup))
+		s.mux.HandleFunc("DELETE /api/groups/{id}", s.requireAuth(s.handleDeleteGroup))
 		s.mux.HandleFunc("GET /api/groups/{id}/users", s.requireAuth(s.handleListGroupUsers))
 	}
 }

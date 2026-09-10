@@ -193,7 +193,7 @@ export default function SignupPage() {
               name="bot_token"
               control={control}
               render={({ field }) => (
-                <PasswordInput
+                <TextInput
                   {...field}
                   label="Token del bot"
                   description="Hablá con @BotFather en Telegram para crear un bot y pegar su token"

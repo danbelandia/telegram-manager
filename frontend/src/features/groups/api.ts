@@ -13,3 +13,10 @@ export function listGroups(): Promise<Group[]> {
 export function getGroup(telegramId: string): Promise<Group> {
   return request<Group>(`/api/groups/${telegramId}`)
 }
+
+/** DELETE /api/groups/:id — eliminar grupo del panel. */
+export function deleteGroup(telegramId: number): Promise<{ status: string }> {
+  return request<{ status: string }>(`/api/groups/${telegramId}`, {
+    method: 'DELETE',
+  })
+}

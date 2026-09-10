@@ -111,6 +111,24 @@ WHERE tenant_id = $1 AND telegram_id = $2`
 	return &g, nil
 }
 
+// DeleteByTenant elimina un grupo del tenant por su id de DB.
+// Solo permite borrar grupos del propio tenant (D9).
+func (r *Repository) DeleteByTenant(ctx context.Context, tenantID, groupID int64) error {
+	const q = `DELETE FROM groups WHERE id = $1 AND tenant_id = $2`
+	result, err := r.db.ExecContext(ctx, q, groupID, tenantID)
+	if err != nil {
+		return fmt.Errorf("groups: delete %d: %w", groupID, err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("groups: delete %d rows affected: %w", groupID, err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // rowScanner es la vista minima de fila que el scanner necesita;
 // *sql.Rows y *sql.Row la satisfacen.
 type rowScanner interface {

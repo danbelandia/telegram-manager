@@ -18,6 +18,7 @@ import (
 type groupStore interface {
 	ListByTenant(ctx context.Context, tenantID int64) ([]groups.Group, error)
 	GetByTenant(ctx context.Context, tenantID, telegramID int64) (*groups.Group, error)
+	DeleteByTenant(ctx context.Context, tenantID, groupID int64) error
 }
 
 // groupUsersLookup es la vista minima del Service de Telegram para
@@ -219,6 +220,42 @@ func toMemberResponse(m telegram.ChatMember) memberResponse {
 	out.CanPinMessages = m.CanPinMessages
 	out.CanInviteUsers = m.CanInviteUsers
 	return out
+}
+
+// handleDeleteGroup responde DELETE /api/groups/{id}.
+// Elimina el grupo del panel (no de Telegram). Solo permite borrar
+// grupos del tenant autenticado (D9).
+func (s *Server) handleDeleteGroup(w http.ResponseWriter, r *http.Request) {
+	if s.groups == nil {
+		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de grupos no habilitado")
+		return
+	}
+	tenantID, ok := tenantIDFromClaims(w, r)
+	if !ok {
+		return
+	}
+	telegramID, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	g, err := s.groups.GetByTenant(r.Context(), tenantID, telegramID)
+	if err != nil {
+		if errors.Is(err, groups.ErrNotFound) {
+			respondError(w, http.StatusNotFound, "NOT_FOUND", "grupo no encontrado")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "no se pudo obtener el grupo")
+		return
+	}
+	if err := s.groups.DeleteByTenant(r.Context(), tenantID, g.ID); err != nil {
+		if errors.Is(err, groups.ErrNotFound) {
+			respondError(w, http.StatusNotFound, "NOT_FOUND", "grupo no encontrado")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "no se pudo eliminar el grupo")
+		return
+	}
+	respond(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 // pathID parsea un path param como int64 (design D10): ids de Telegram

@@ -69,9 +69,10 @@ func Load() (Config, error) {
 		WorkerConcurrency:                    envIntOr("AUTOMATION_WORKER_CONCURRENCY", 1),
 	}
 
-	if cfg.TelegramBotToken == "" {
-		return cfg, fmt.Errorf("config: TELEGRAM_BOT_TOKEN is required")
-	}
+	// TELEGRAM_BOT_TOKEN es opcional: si el tenant default ya tiene su
+	// token propio cifrado en DB (post-rotacion), el backend lo usa via
+	// registry sin necesidad del env var. Requerido solo para el
+	// arranque inicial (seeder del tenant default).
 	if cfg.DatabaseURL == "" {
 		return cfg, fmt.Errorf("config: DATABASE_URL is required")
 	}

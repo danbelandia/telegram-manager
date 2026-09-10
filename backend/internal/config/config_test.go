@@ -45,11 +45,14 @@ func TestLoad(t *testing.T) {
 			env:  validEnv(),
 		},
 		{
-			name: "missing bot token",
+			// TELEGRAM_BOT_TOKEN es opcional post-rotacion (D10).
+			name: "missing bot token (optional after rotation)",
 			env: map[string]string{
 				"DATABASE_URL": "postgres://telegram:telegram@localhost:5432/telegram_manager?sslmode=disable",
+				"JWT_SECRET":   "clave-suficientemente-larga-para-firmar-jwt-abcdefghijklmnop",
+				"ADMIN_USERNAME": "admin",
+				"ADMIN_PASSWORD": "secret123",
 			},
-			wantErr: true,
 		},
 		{
 			name: "missing database url",

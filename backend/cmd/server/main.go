@@ -119,17 +119,23 @@ func run() error {
 		}
 	}
 
-	// Adapter legacy (TELEGRAM_BOT_TOKEN): valida fail-fast como
-	// siempre y sirve al tenant `default` salvo que tenga token propio.
-	legacyBot := telegram.NewAdapter(cfg.TelegramBotToken)
-	botUser, err := legacyBot.GetMe(ctx)
-	if err != nil {
-		if errors.Is(err, telegram.ErrInvalidToken) {
-			return errors.New("startup: telegram rejected the bot token (invalid TELEGRAM_BOT_TOKEN)")
+	// Adapter legacy (TELEGRAM_BOT_TOKEN): opcional post-rotacion.
+	// Si el env var esta vacio, el backend arranca sin legacy adapter y
+	// el tenant default DEBE tener su token en DB (via registry).
+	var legacyBot *telegram.Adapter
+	if cfg.TelegramBotToken != "" {
+		legacyBot = telegram.NewAdapter(cfg.TelegramBotToken)
+		botUser, err := legacyBot.GetMe(ctx)
+		if err != nil {
+			if errors.Is(err, telegram.ErrInvalidToken) {
+				return errors.New("startup: telegram rejected the bot token (invalid TELEGRAM_BOT_TOKEN)")
+			}
+			return fmt.Errorf("startup: validate bot token: %w", err)
 		}
-		return fmt.Errorf("startup: validate bot token: %w", err)
+		slog.Info("bot connected", "bot_id", botUser.ID, "bot_username", botUser.Username)
+	} else {
+		slog.Info("startup: TELEGRAM_BOT_TOKEN empty, using tenant DB tokens only")
 	}
-	slog.Info("bot connected", "bot_id", botUser.ID, "bot_username", botUser.Username)
 
 	// Canales de errores de background (buffer holgado: N tenants x
 	// workers/schedulers; el select toma el primero).
@@ -297,9 +303,11 @@ func run() error {
 
 	switch cfg.TelegramMode {
 	case "webhook":
-		// Fallo rapido: si Telegram rechaza la URL o el secret, el
-		// backend ni arranca. Solo adapter legacy (multiplexado por
-		// tenant = futuro, fuera del slice).
+		// Webhook REQUIERE TELEGRAM_BOT_TOKEN:SetWebhook necesita un
+		// token para registrar la URL en Telegram.
+		if legacyBot == nil {
+			return fmt.Errorf("startup: webhook mode requires TELEGRAM_BOT_TOKEN")
+		}
 		if err := legacyBot.SetWebhook(ctx, cfg.TelegramWebhookURL, cfg.TelegramWebhookSecret, telegram.MVPAllowedUpdates); err != nil {
 			return fmt.Errorf("startup: set webhook: %w", err)
 		}
@@ -370,9 +378,12 @@ func run() error {
 
 		// Tenant default: con token propio ya tiene stack; sin token
 		// se levanta con el legacy via registry (poller en caliente
-		// como cualquier tenant).
+		// como cualquier tenant). Sin legacy ni token DB → error claro.
 		defaultStack := stacks[defaultTenantID]
 		if defaultStack == nil {
+			if cfg.TelegramBotToken == "" {
+				return fmt.Errorf("startup: tenant default sin token en DB ni TELEGRAM_BOT_TOKEN; rotá el token desde /tenant o setear el env var")
+			}
 			bus := buildBus(defaultTenantID)
 			tgRegistry.RegisterHot(ctx, defaultTenantID, "default", cfg.TelegramBotToken, bus)
 			adapter, ok := tgRegistry.AdapterFor(defaultTenantID)
@@ -399,10 +410,18 @@ func run() error {
 			return nil
 		}
 
-		server = api.NewServer(db, legacyBot,
+		// Adaptador para health check y groups: preferir legacy, si no
+		// existe usar el adapter del defaultStack (siempre disponible
+		// gracias al check de arriba).
+		statusAdapter := legacyBot
+		if statusAdapter == nil {
+			statusAdapter = defaultStack.adapter
+		}
+
+		server = api.NewServer(db, statusAdapter,
 			api.WithAuth(authService, tokenManager, cfg.CookieSecure),
 			api.WithSignup(signupSvc, onTenantReady),
-			api.WithGroups(groupsRepo, legacyBot),
+			api.WithGroups(groupsRepo, statusAdapter),
 			api.WithUsers(usersRepo),
 			api.WithModeration(defaultStack.moderation),
 			api.WithJoinRequests(joinRequestsRepo, defaultStack.moderation),

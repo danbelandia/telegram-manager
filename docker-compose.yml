@@ -20,8 +20,9 @@ services:
     build:
       context: ./backend
     environment:
-      # Fallo rapido si falta TELEGRAM_BOT_TOKEN en .env
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?Set TELEGRAM_BOT_TOKEN in .env}
+      # Token opcional post-rotacion: si el tenant default ya tiene su
+      # token en DB, el backend lo usa sin necesidad del env var.
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_MODE: ${TELEGRAM_MODE:-polling}
       TELEGRAM_WEBHOOK_URL: ${TELEGRAM_WEBHOOK_URL:-}
       TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
@@ -29,6 +30,7 @@ services:
       ADMIN_USERNAME: ${ADMIN_USERNAME:?Set ADMIN_USERNAME in .env}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      TENANT_TOKEN_ENC_KEY: ${TENANT_TOKEN_ENC_KEY:-}
       DATABASE_URL: postgres://telegram:telegram@postgres:5432/telegram_manager?sslmode=disable
       PORT: ${PORT:-8080}
       RUN_MIGRATIONS: ${RUN_MIGRATIONS:-true}

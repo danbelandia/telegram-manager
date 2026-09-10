@@ -45,7 +45,14 @@ func (s *Server) handleGetTenantMe(w http.ResponseWriter, r *http.Request) {
 	botStatus := "unknown"
 	if s.tenantRegistry != nil {
 		if status, ok := s.tenantRegistry.Status(tenantID); ok {
-			botStatus = status
+			switch status {
+			case "active":
+				botStatus = "connected"
+			case "degraded":
+				botStatus = "disconnected"
+			default:
+				botStatus = status
+			}
 		}
 	}
 
@@ -149,6 +156,11 @@ func (s *Server) handleRotateBotToken(w http.ResponseWriter, r *http.Request) {
 
 // handleGetTenantStatus devuelve el bot_status runtime del tenant
 // (consultando el registry, no la DB). Endpoint liviano.
+//
+// Mapeo de status interno → valor de API:
+//   - "active" → "connected"
+//   - "degraded" → "disconnected"
+//   - desconocido → "unknown"
 func (s *Server) handleGetTenantStatus(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := tenantIDFromClaims(w, r)
 	if !ok {
@@ -158,7 +170,14 @@ func (s *Server) handleGetTenantStatus(w http.ResponseWriter, r *http.Request) {
 	botStatus := "unknown"
 	if s.tenantRegistry != nil {
 		if status, ok := s.tenantRegistry.Status(tenantID); ok {
-			botStatus = status
+			switch status {
+			case "active":
+				botStatus = "connected"
+			case "degraded":
+				botStatus = "disconnected"
+			default:
+				botStatus = status
+			}
 		}
 	}
 

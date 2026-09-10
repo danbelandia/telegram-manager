@@ -65,6 +65,10 @@ func (f *fakeGroupStore) GetByTenant(_ context.Context, _ int64, id int64) (*gro
 	return f.get, nil
 }
 
+func (f *fakeGroupStore) DeleteByTenant(_ context.Context, _, _ int64) error {
+	return f.err
+}
+
 // fakeGroupUsers satisface groupUsersLookup.
 type fakeGroupUsers struct {
 	members []telegram.ChatMember

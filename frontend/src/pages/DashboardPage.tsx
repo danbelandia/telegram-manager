@@ -18,7 +18,7 @@ import {
   Title,
 } from '@mantine/core'
 import { formatPermissions } from '../features/groups/permissions'
-import { useGroups } from '../features/groups/hooks'
+import { useDeleteGroup, useGroups } from '../features/groups/hooks'
 
 function formatMembers(count: number | null): string {
   if (count === null || count === undefined) return '—'
@@ -52,6 +52,7 @@ function DashboardSkeleton() {
 
 export default function DashboardPage() {
   const { data: groups, isPending, isError, error, refetch } = useGroups()
+  const deleteGroup = useDeleteGroup()
 
   return (
     <Stack gap="md">
@@ -108,9 +109,21 @@ export default function DashboardPage() {
                 </Group>
                 <GroupPermissions permissions={g.bot_permissions} />
               </Stack>
-              <Button component={Link} to={`/groups/${g.telegram_id}`} variant="light">
-                Administrar
-              </Button>
+              <Group gap="xs">
+                <Button component={Link} to={`/groups/${g.telegram_id}`} variant="light" flex={1}>
+                  Administrar
+                </Button>
+                {g.bot_status === 'left' ? (
+                  <Button
+                    color="red"
+                    variant="light"
+                    loading={deleteGroup.isPending}
+                    onClick={() => deleteGroup.mutate(g.telegram_id)}
+                  >
+                    Eliminar
+                  </Button>
+                ) : null}
+              </Group>
             </Card>
           ))}
         </SimpleGrid>
