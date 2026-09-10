@@ -3,12 +3,38 @@ package api
 import (
 	"context"
 	"net/http"
+
+	"github.com/telegram-manager/backend/internal/telegram"
+	"github.com/telegram-manager/backend/internal/tenants"
 )
 
 // pinger es la minima vista de la base de datos que el API necesita.
 // Declarada donde se consume; *sql.DB la satisface.
 type pinger interface {
 	PingContext(ctx context.Context) error
+}
+
+// tenantSettingsRepo es la vista minima del repositorio de tenants
+// que los handlers de tenant settings necesitan. Declarada donde se
+// consume; *tenants.Repository la satisface.
+type tenantSettingsRepo interface {
+	GetByID(ctx context.Context, id int64) (*tenants.Tenant, error)
+	UpdateToken(ctx context.Context, id int64, enc []byte, botUsername *string) error
+}
+
+// tenantSettingsRegistry es la vista minima del registry que los
+// handlers de tenant settings necesitan: status y registerHot.
+// telegram.Registry la satisface.
+type tenantSettingsRegistry interface {
+	Status(tenantID int64) (string, bool)
+	RegisterHot(ctx context.Context, tenantID int64, slug, tokenPlain string, bus telegram.Publisher)
+}
+
+// tenantSettingsCrypter es la vista minima del crypter para
+// descifrar/cifrar tokens. tenants.Crypter la satisface.
+type tenantSettingsCrypter interface {
+	Encrypt(plain []byte) ([]byte, error)
+	Decrypt(blob []byte) ([]byte, error)
 }
 
 // Server agrupa las dependencias del API y su router.
@@ -45,6 +71,14 @@ type Server struct {
 	groupUsersFor   func(tenantID int64) (GroupUsersLookup, bool)
 	publicationsFor func(tenantID int64) (PublicationStore, bool)
 	automationFor   func(tenantID int64) (AutomationService, bool)
+
+	// Tenant settings (slice tenant-settings): repo + registry + crypter
+	// para los handlers de GET /tenants/me, PUT /tenants/me/bot-token,
+	// GET /tenants/me/status y la ampliacion de /auth/me con tenant_slug.
+	tenantsRepo    tenantSettingsRepo
+	tenantRegistry tenantSettingsRegistry
+	tenantCrypter  tenantSettingsCrypter
+	tenantBusFor   func(tenantID int64) telegram.Publisher
 
 	// Lookup de usuarios con scope de tenant (slice 0, Q3-a: users
 	// global, alcance via join). Lo usa el ?userId= de grupos.
@@ -123,6 +157,27 @@ func WithTenantResolvers(
 		s.groupUsersFor = groupUsers
 		s.publicationsFor = publications
 		s.automationFor = automation
+	}
+}
+
+// WithTenants monta las rutas de configuracion del tenant
+// (GET /tenants/me, PUT /tenants/me/bot-token, GET /tenants/me/status)
+// e inyecta las dependencias necesarias: repo, registry, crypter y
+// busFor para el reinicio del poller en caliente.
+func WithTenants(
+	repo tenantSettingsRepo,
+	registry tenantSettingsRegistry,
+	crypter tenantSettingsCrypter,
+	busFor func(tenantID int64) telegram.Publisher,
+) Option {
+	return func(s *Server) {
+		s.tenantsRepo = repo
+		s.tenantRegistry = registry
+		s.tenantCrypter = crypter
+		s.tenantBusFor = busFor
+		s.mux.HandleFunc("GET /api/tenants/me", s.requireAuth(s.handleGetTenantMe))
+		s.mux.HandleFunc("PUT /api/tenants/me/bot-token", s.requireAuth(s.handleRotateBotToken))
+		s.mux.HandleFunc("GET /api/tenants/me/status", s.requireAuth(s.handleGetTenantStatus))
 	}
 }
 

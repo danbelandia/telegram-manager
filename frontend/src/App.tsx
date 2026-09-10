@@ -22,6 +22,7 @@ import GroupLogsPage from './pages/GroupLogsPage'
 import GroupAutomationPage from './pages/GroupAutomationPage'
 import GroupModerationPage from './pages/GroupModerationPage'
 import PublicationsPage from './pages/PublicationsPage'
+import TenantSettingsPage from './pages/TenantSettingsPage'
 import NotFoundPage from './pages/NotFoundPage'
 
 export default function App() {
@@ -70,6 +71,7 @@ export default function App() {
         <Route path="/groups/:id/automation" element={<GroupAutomationPage />} />
         <Route path="/groups/:id/moderation" element={<GroupModerationPage />} />
         <Route path="/publications" element={<PublicationsPage />} />
+        <Route path="/tenant" element={<TenantSettingsPage />} />
       </Route>
 
       <Route path="*" element={<NotFoundPage />} />

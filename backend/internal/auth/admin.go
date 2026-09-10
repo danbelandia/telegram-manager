@@ -6,6 +6,8 @@ package auth
 import (
 	"errors"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 // Admin es un administrador del panel. Su password vive como hash
@@ -19,6 +21,12 @@ type Admin struct {
 	TenantID    int64
 	CreatedAt   time.Time
 	LastLoginAt *time.Time
+}
+
+// CheckPassword valida una password en claro contra el hash bcrypt.
+// Devuelve true si coincide; false si no.
+func (a *Admin) CheckPassword(password string) bool {
+	return bcrypt.CompareHashAndPassword([]byte(a.PasswordHash), []byte(password)) == nil
 }
 
 // ErrCredentialInvalid se devuelve cuando username o password no

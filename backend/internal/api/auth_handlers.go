@@ -16,6 +16,7 @@ import (
 type authService interface {
 	Login(ctx context.Context, username, password string) (auth.LoginResult, error)
 	Refresh(ctx context.Context, refreshToken string) (string, error)
+	GetAdminByID(ctx context.Context, id int64) (*auth.Admin, error)
 }
 
 // signupService es la vista minima del alta de tenants (slice 0).
@@ -83,17 +84,26 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 // handleMe devuelve la identidad del admin autenticado, incluyendo su
 // tenant (slice 0). Es la prueba de que requireAuth funciona.
+// Devuelve tenant_slug via lookup del repositorio (spec auth delta REQ 1).
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	claims := claimsFromContext(r.Context())
 	if claims == nil {
 		respondError(w, http.StatusUnauthorized, "UNAUTHORIZED", "no autenticado")
 		return
 	}
-	respond(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"id":        claims.Subject,
 		"username":  claims.Username,
 		"tenant_id": claims.TenantID,
-	})
+	}
+	// Ampliacion con tenant_slug: si el repo esta disponible, busca el
+	// slug del tenant. Si no esta (tests sin WithTenants), omite.
+	if s.tenantsRepo != nil {
+		if t, err := s.tenantsRepo.GetByID(r.Context(), claims.TenantID); err == nil {
+			resp["tenant_slug"] = t.Slug
+		}
+	}
+	respond(w, http.StatusOK, resp)
 }
 
 // signupRequest es el body de POST /api/auth/signup (slice 0).

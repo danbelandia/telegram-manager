@@ -130,6 +130,17 @@ func (r *Repository) SetStatus(ctx context.Context, id int64, status string) err
 	return nil
 }
 
+// UpdateToken cifra y persiste un nuevo bot_token + username. Lo usa la
+// rotacion de token (PUT /tenants/me/bot-token). Nunca loguea el token.
+func (r *Repository) UpdateToken(ctx context.Context, id int64, enc []byte, botUsername *string) error {
+	const q = `UPDATE tenants SET bot_token_encrypted = $2, bot_username = $3, updated_at = now() WHERE id = $1`
+
+	if _, err := r.db.ExecContext(ctx, q, id, enc, botUsername); err != nil {
+		return fmt.Errorf("tenants: update token %d: %w", id, err)
+	}
+	return nil
+}
+
 // rowScanner es la vista minima de fila que el scanner necesita;
 // *sql.Rows y *sql.Row la satisfacen.
 type rowScanner interface {

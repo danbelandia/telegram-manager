@@ -28,11 +28,13 @@ import {
   IconUsersGroup,
   IconSend,
   IconLogout,
+  IconSettings,
 } from '@tabler/icons-react'
 import { Link, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth-context'
 import { notifySuccess } from '../lib/notifications'
 import ColorSchemeToggle from './ColorSchemeToggle'
+import DegradedBanner from './DegradedBanner'
 
 type NavItem = {
   to: string
@@ -44,6 +46,7 @@ const NAV_ITEMS: ReadonlyArray<NavItem> = [
   { to: '/dashboard', label: 'Dashboard', icon: IconLayoutDashboard },
   { to: '/groups', label: 'Grupos', icon: IconUsersGroup },
   { to: '/publications', label: 'Publicaciones', icon: IconSend },
+  { to: '/tenant', label: 'Configuracion', icon: IconSettings },
 ]
 
 export default function Layout() {
@@ -122,6 +125,7 @@ export default function Layout() {
       </AppShell.Navbar>
 
       <AppShell.Main>
+        <DegradedBanner />
         <Outlet />
       </AppShell.Main>
     </AppShell>

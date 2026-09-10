@@ -316,6 +316,12 @@ func run() error {
 			api.WithLogs(logsRepo),
 			api.WithPublications(defaultStack.pubs),
 			api.WithAutomation(defaultStack.automation, logsRepo, groupsRepo, automationRepo),
+			api.WithTenants(tenantsRepo, tgRegistry, crypter, func(tenantID int64) telegram.Publisher {
+				if st, ok := stacks[tenantID]; ok {
+					return st.bus
+				}
+				return nil
+			}),
 		)
 
 	case "polling":
@@ -403,6 +409,7 @@ func run() error {
 			api.WithLogs(logsRepo),
 			api.WithPublications(defaultStack.pubs),
 			api.WithAutomation(defaultStack.automation, logsRepo, groupsRepo, automationRepo),
+			api.WithTenants(tenantsRepo, tgRegistry, crypter, busFor),
 			api.WithTenantResolvers(
 				func(tenantID int64) (api.ModerationActions, bool) {
 					if st, ok := stacks[tenantID]; ok && st.moderation != nil {

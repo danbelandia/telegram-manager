@@ -103,6 +103,19 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (string, err
 // el cliente borrando la cookie. Metodo presente para la intencion.
 func (s *Service) Logout() {}
 
+// GetAdminByID devuelve un admin por su ID. Lo usan los handlers de
+// tenant settings para validar la password antes de rotar el token.
+func (s *Service) GetAdminByID(ctx context.Context, id int64) (*Admin, error) {
+	admin, err := s.repo.GetByID(ctx, id)
+	if errors.Is(err, ErrNotFound) {
+		return nil, err
+	}
+	if err != nil {
+		return nil, fmt.Errorf("auth: get admin %d: %w", id, err)
+	}
+	return &admin, nil
+}
+
 func parseSubjectID(subject string) (int64, error) {
 	var id int64
 	if _, err := fmt.Sscanf(subject, "%d", &id); err != nil {
