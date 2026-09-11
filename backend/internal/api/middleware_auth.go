@@ -60,3 +60,18 @@ func claimsFromContext(ctx context.Context) *auth.Claims {
 	c, _ := ctx.Value(claimsKey).(*auth.Claims)
 	return c
 }
+
+// requireSuperAdmin verifica que el admin autenticado tenga
+// is_super_admin = true. Debe encadenarse DESPUES de requireAuth
+// (que inyecta claims en el context).
+func (s *Server) requireSuperAdmin(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := claimsFromContext(r.Context())
+		if claims == nil || !claims.IsSuperAdmin {
+			respondError(w, http.StatusForbidden, "FORBIDDEN",
+				"se requieren permisos de super-administrador")
+			return
+		}
+		next(w, r)
+	}
+}

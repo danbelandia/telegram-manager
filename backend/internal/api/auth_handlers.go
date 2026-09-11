@@ -84,7 +84,8 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 // handleMe devuelve la identidad del admin autenticado, incluyendo su
 // tenant (slice 0). Es la prueba de que requireAuth funciona.
-// Devuelve tenant_slug via lookup del repositorio (spec auth delta REQ 1).
+// Devuelve tenant_slug via claims (con fallback a DB para tokens
+// legacy) e is_super_admin (spec auth delta REQ 1).
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	claims := claimsFromContext(r.Context())
 	if claims == nil {
@@ -92,13 +93,16 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := map[string]any{
-		"id":        claims.Subject,
-		"username":  claims.Username,
-		"tenant_id": claims.TenantID,
+		"id":             claims.Subject,
+		"username":       claims.Username,
+		"tenant_id":      claims.TenantID,
+		"is_super_admin": claims.IsSuperAdmin,
 	}
-	// Ampliacion con tenant_slug: si el repo esta disponible, busca el
-	// slug del tenant. Si no esta (tests sin WithTenants), omite.
-	if s.tenantsRepo != nil {
+	// tenant_slug desde claims (evita lookup de DB). Fallback: si el
+	// token es legacy sin TenantSlug, lo busca del repo.
+	if claims.TenantSlug != "" {
+		resp["tenant_slug"] = claims.TenantSlug
+	} else if s.tenantsRepo != nil {
 		if t, err := s.tenantsRepo.GetByID(r.Context(), claims.TenantID); err == nil {
 			resp["tenant_slug"] = t.Slug
 		}

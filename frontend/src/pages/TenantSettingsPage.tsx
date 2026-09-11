@@ -9,6 +9,7 @@ import { getTenantMe, rotateBotToken } from '../features/tenant/api'
 import type { TenantMe } from '../features/tenant/types'
 import { notifySuccess, notifyError } from '../lib/notifications'
 import { ApiError } from '../lib/api-client'
+import LicenseCard from '../components/LicenseCard'
 
 const rotateSchema = z.object({
   password: z.string().min(1, 'La password es requerida'),
@@ -118,6 +119,9 @@ export default function TenantSettingsPage() {
           </Group>
         </Stack>
       </Paper>
+
+      {/* License card */}
+      {tenant && <LicenseCard tenant={tenant} />}
 
       <Divider />
 

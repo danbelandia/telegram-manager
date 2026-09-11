@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/telegram-manager/backend/internal/license"
 	"github.com/telegram-manager/backend/internal/telegram"
 	"github.com/telegram-manager/backend/internal/tenants"
 )
@@ -95,6 +96,14 @@ type Server struct {
 	// consume el repo directamente. Ver automationDashboardRepo en
 	// automation_handlers.go.
 	automationDashboard automationDashboardRepo
+
+	// License enforcement (license-system change).
+	licenseSvc *license.Service
+
+	// Super-admin panel (license-system change).
+	adminTenantsRepo    adminTenantsLister
+	adminTenantsGetter  adminTenantsGetter
+	adminTenantsUpdater adminTenantsUpdater
 }
 
 // NewServer construye el handler HTTP del API.
@@ -164,6 +173,8 @@ func WithTenantResolvers(
 // (GET /tenants/me, PUT /tenants/me/bot-token, GET /tenants/me/status)
 // e inyecta las dependencias necesarias: repo, registry, crypter y
 // busFor para el reinicio del poller en caliente.
+// GET /tenants/me/license es exento de requireLicense para que tenants
+// suspendidos/expirados puedan ver su propio estado.
 func WithTenants(
 	repo tenantSettingsRepo,
 	registry tenantSettingsRegistry,
@@ -175,9 +186,10 @@ func WithTenants(
 		s.tenantRegistry = registry
 		s.tenantCrypter = crypter
 		s.tenantBusFor = busFor
-		s.mux.HandleFunc("GET /api/tenants/me", s.requireAuth(s.handleGetTenantMe))
-		s.mux.HandleFunc("PUT /api/tenants/me/bot-token", s.requireAuth(s.handleRotateBotToken))
-		s.mux.HandleFunc("GET /api/tenants/me/status", s.requireAuth(s.handleGetTenantStatus))
+		s.mux.HandleFunc("GET /api/tenants/me", s.requireAuth(s.requireLicense(s.handleGetTenantMe)))
+		s.mux.HandleFunc("GET /api/tenants/me/license", s.requireAuth(s.handleGetTenantLicense))
+		s.mux.HandleFunc("PUT /api/tenants/me/bot-token", s.requireAuth(s.requireLicense(s.handleRotateBotToken)))
+		s.mux.HandleFunc("GET /api/tenants/me/status", s.requireAuth(s.requireLicense(s.handleGetTenantStatus)))
 	}
 }
 
@@ -206,10 +218,10 @@ func WithGroups(groups groupStore, groupUsers GroupUsersLookup) Option {
 	return func(s *Server) {
 		s.groups = groups
 		s.groupUsers = groupUsers
-		s.mux.HandleFunc("GET /api/groups", s.requireAuth(s.handleListGroups))
-		s.mux.HandleFunc("GET /api/groups/{id}", s.requireAuth(s.handleGetGroup))
-		s.mux.HandleFunc("DELETE /api/groups/{id}", s.requireAuth(s.handleDeleteGroup))
-		s.mux.HandleFunc("GET /api/groups/{id}/users", s.requireAuth(s.handleListGroupUsers))
+		s.mux.HandleFunc("GET /api/groups", s.requireAuth(s.requireLicense(s.handleListGroups)))
+		s.mux.HandleFunc("GET /api/groups/{id}", s.requireAuth(s.requireLicense(s.handleGetGroup)))
+		s.mux.HandleFunc("DELETE /api/groups/{id}", s.requireAuth(s.requireLicense(s.handleDeleteGroup)))
+		s.mux.HandleFunc("GET /api/groups/{id}/users", s.requireAuth(s.requireLicense(s.handleListGroupUsers)))
 	}
 }
 
@@ -220,14 +232,14 @@ func WithGroups(groups groupStore, groupUsers GroupUsersLookup) Option {
 func WithModeration(mod ModerationActions) Option {
 	return func(s *Server) {
 		s.moderation = mod
-		s.mux.HandleFunc("POST /api/groups/{id}/users/{userId}/ban", s.requireAuth(s.handleBan))
-		s.mux.HandleFunc("POST /api/groups/{id}/users/{userId}/unban", s.requireAuth(s.handleUnban))
-		s.mux.HandleFunc("POST /api/groups/{id}/users/{userId}/mute", s.requireAuth(s.handleMute))
-		s.mux.HandleFunc("POST /api/groups/{id}/users/{userId}/unmute", s.requireAuth(s.handleUnmute))
-		s.mux.HandleFunc("POST /api/groups/{id}/messages/{messageId}/delete", s.requireAuth(s.handleDeleteMessage))
-		s.mux.HandleFunc("POST /api/groups/{id}/messages/{messageId}/pin", s.requireAuth(s.handlePinMessage))
-		s.mux.HandleFunc("POST /api/groups/{id}/lock", s.requireAuth(s.handleLock))
-		s.mux.HandleFunc("POST /api/groups/{id}/unlock", s.requireAuth(s.handleUnlock))
+		s.mux.HandleFunc("POST /api/groups/{id}/users/{userId}/ban", s.requireAuth(s.requireLicense(s.handleBan)))
+		s.mux.HandleFunc("POST /api/groups/{id}/users/{userId}/unban", s.requireAuth(s.requireLicense(s.handleUnban)))
+		s.mux.HandleFunc("POST /api/groups/{id}/users/{userId}/mute", s.requireAuth(s.requireLicense(s.handleMute)))
+		s.mux.HandleFunc("POST /api/groups/{id}/users/{userId}/unmute", s.requireAuth(s.requireLicense(s.handleUnmute)))
+		s.mux.HandleFunc("POST /api/groups/{id}/messages/{messageId}/delete", s.requireAuth(s.requireLicense(s.handleDeleteMessage)))
+		s.mux.HandleFunc("POST /api/groups/{id}/messages/{messageId}/pin", s.requireAuth(s.requireLicense(s.handlePinMessage)))
+		s.mux.HandleFunc("POST /api/groups/{id}/lock", s.requireAuth(s.requireLicense(s.handleLock)))
+		s.mux.HandleFunc("POST /api/groups/{id}/unlock", s.requireAuth(s.requireLicense(s.handleUnlock)))
 	}
 }
 
@@ -240,9 +252,9 @@ func WithJoinRequests(store joinRequestStore, mod ModerationActions) Option {
 		if s.moderation == nil {
 			s.moderation = mod
 		}
-		s.mux.HandleFunc("GET /api/groups/{id}/join-requests", s.requireAuth(s.handleListJoinRequests))
-		s.mux.HandleFunc("POST /api/groups/{id}/join-requests/{requestId}/approve", s.requireAuth(s.handleApproveJoinRequest))
-		s.mux.HandleFunc("POST /api/groups/{id}/join-requests/{requestId}/reject", s.requireAuth(s.handleRejectJoinRequest))
+		s.mux.HandleFunc("GET /api/groups/{id}/join-requests", s.requireAuth(s.requireLicense(s.handleListJoinRequests)))
+		s.mux.HandleFunc("POST /api/groups/{id}/join-requests/{requestId}/approve", s.requireAuth(s.requireLicense(s.handleApproveJoinRequest)))
+		s.mux.HandleFunc("POST /api/groups/{id}/join-requests/{requestId}/reject", s.requireAuth(s.requireLicense(s.handleRejectJoinRequest)))
 	}
 }
 
@@ -250,7 +262,7 @@ func WithJoinRequests(store joinRequestStore, mod ModerationActions) Option {
 func WithLogs(store logStore) Option {
 	return func(s *Server) {
 		s.logStore = store
-		s.mux.HandleFunc("GET /api/groups/{id}/logs", s.requireAuth(s.handleListGroupLogs))
+		s.mux.HandleFunc("GET /api/groups/{id}/logs", s.requireAuth(s.requireLicense(s.handleListGroupLogs)))
 	}
 }
 
@@ -267,11 +279,11 @@ func WithLogs(store logStore) Option {
 func WithPublications(pubs PublicationStore) Option {
 	return func(s *Server) {
 		s.publications = pubs
-		s.mux.HandleFunc("POST /api/publications", s.requireAuth(s.handleCreatePublication))
-		s.mux.HandleFunc("POST /api/publications/batch", s.requireAuth(s.handleCreatePublicationBatch))
-		s.mux.HandleFunc("GET /api/publications", s.requireAuth(s.handleListPublications))
-		s.mux.HandleFunc("GET /api/publications/{id}", s.requireAuth(s.handleGetPublication))
-		s.mux.HandleFunc("DELETE /api/publications/{id}", s.requireAuth(s.handleDeletePublication))
+		s.mux.HandleFunc("POST /api/publications", s.requireAuth(s.requireLicense(s.handleCreatePublication)))
+		s.mux.HandleFunc("POST /api/publications/batch", s.requireAuth(s.requireLicense(s.handleCreatePublicationBatch)))
+		s.mux.HandleFunc("GET /api/publications", s.requireAuth(s.requireLicense(s.handleListPublications)))
+		s.mux.HandleFunc("GET /api/publications/{id}", s.requireAuth(s.requireLicense(s.handleGetPublication)))
+		s.mux.HandleFunc("DELETE /api/publications/{id}", s.requireAuth(s.requireLicense(s.handleDeletePublication)))
 	}
 }
 
@@ -307,23 +319,48 @@ func WithAutomation(
 		s.automationLogs = logs
 		s.automationGroups = groups
 		s.automationDashboard = dashboard
-		s.mux.HandleFunc("GET /api/groups/{id}/automation/settings", s.requireAuth(s.handleGetAutomationSettings))
-		s.mux.HandleFunc("PUT /api/groups/{id}/automation/settings", s.requireAuth(s.handlePutAutomationSettings))
-		s.mux.HandleFunc("GET /api/groups/{id}/automation/banned-words", s.requireAuth(s.handleListBannedWords))
-		s.mux.HandleFunc("POST /api/groups/{id}/automation/banned-words", s.requireAuth(s.handleAddBannedWord))
-		s.mux.HandleFunc("DELETE /api/groups/{id}/automation/banned-words/{word}", s.requireAuth(s.handleRemoveBannedWord))
-		s.mux.HandleFunc("GET /api/groups/{id}/automation/link-allowlist", s.requireAuth(s.handleListLinkAllowlist))
-		s.mux.HandleFunc("POST /api/groups/{id}/automation/link-allowlist", s.requireAuth(s.handleAddLinkAllowlist))
-		s.mux.HandleFunc("DELETE /api/groups/{id}/automation/link-allowlist/{domain}", s.requireAuth(s.handleRemoveLinkAllowlist))
+		s.mux.HandleFunc("GET /api/groups/{id}/automation/settings", s.requireAuth(s.requireLicense(s.handleGetAutomationSettings)))
+		s.mux.HandleFunc("PUT /api/groups/{id}/automation/settings", s.requireAuth(s.requireLicense(s.handlePutAutomationSettings)))
+		s.mux.HandleFunc("GET /api/groups/{id}/automation/banned-words", s.requireAuth(s.requireLicense(s.handleListBannedWords)))
+		s.mux.HandleFunc("POST /api/groups/{id}/automation/banned-words", s.requireAuth(s.requireLicense(s.handleAddBannedWord)))
+		s.mux.HandleFunc("DELETE /api/groups/{id}/automation/banned-words/{word}", s.requireAuth(s.requireLicense(s.handleRemoveBannedWord)))
+		s.mux.HandleFunc("GET /api/groups/{id}/automation/link-allowlist", s.requireAuth(s.requireLicense(s.handleListLinkAllowlist)))
+		s.mux.HandleFunc("POST /api/groups/{id}/automation/link-allowlist", s.requireAuth(s.requireLicense(s.handleAddLinkAllowlist)))
+		s.mux.HandleFunc("DELETE /api/groups/{id}/automation/link-allowlist/{domain}", s.requireAuth(s.requireLicense(s.handleRemoveLinkAllowlist)))
 		// Slice 3 — Warnings Dashboard.
-		s.mux.HandleFunc("GET /api/groups/{id}/automation/warnings", s.requireAuth(s.handleListWarnings))
-		s.mux.HandleFunc("POST /api/groups/{id}/automation/warnings/{user_id}/reset", s.requireAuth(s.handleResetWarning))
-		s.mux.HandleFunc("GET /api/groups/{id}/automation/stats", s.requireAuth(s.handleGetStats))
+		s.mux.HandleFunc("GET /api/groups/{id}/automation/warnings", s.requireAuth(s.requireLicense(s.handleListWarnings)))
+		s.mux.HandleFunc("POST /api/groups/{id}/automation/warnings/{user_id}/reset", s.requireAuth(s.requireLicense(s.handleResetWarning)))
+		s.mux.HandleFunc("GET /api/groups/{id}/automation/stats", s.requireAuth(s.requireLicense(s.handleGetStats)))
 	}
 }
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/health", s.handleHealth)
+}
+
+// WithLicense inyecta el servicio de licencias para enforcement.
+func WithLicense(svc *license.Service) Option {
+	return func(s *Server) {
+		s.licenseSvc = svc
+	}
+}
+
+// WithAdmin monta las rutas del panel super-admin (requireAuth +
+// requireSuperAdmin) e inyecta las dependencias del repositorio.
+func WithAdmin(
+	lister adminTenantsLister,
+	getter adminTenantsGetter,
+	updater adminTenantsUpdater,
+) Option {
+	return func(s *Server) {
+		s.adminTenantsRepo = lister
+		s.adminTenantsGetter = getter
+		s.adminTenantsUpdater = updater
+		adminRoutes := s.requireSuperAdmin
+		s.mux.HandleFunc("GET /api/admin/tenants", adminRoutes(s.handleAdminListTenants))
+		s.mux.HandleFunc("GET /api/admin/tenants/{id}", adminRoutes(s.handleAdminGetTenant))
+		s.mux.HandleFunc("PUT /api/admin/tenants/{id}", adminRoutes(s.handleAdminUpdateTenant))
+	}
 }
 
 // ServeHTTP hace que *Server sea un http.Handler.

@@ -18,9 +18,11 @@ type Admin struct {
 	PasswordHash string
 	// TenantID aisla al admin (slice 0, bot-per-tenant: 1 user = 1
 	// tenant). 0 solo en tokens legacy pre-multitenancy.
-	TenantID    int64
-	CreatedAt   time.Time
-	LastLoginAt *time.Time
+	TenantID     int64
+	TenantSlug   string // slug del tenant (para JWT claims, evita lookup).
+	IsSuperAdmin bool   // true = super-admin con acceso al panel admin.
+	CreatedAt    time.Time
+	LastLoginAt  *time.Time
 }
 
 // CheckPassword valida una password en claro contra el hash bcrypt.

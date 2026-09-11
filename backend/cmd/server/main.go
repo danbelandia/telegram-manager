@@ -26,6 +26,7 @@ import (
 	"github.com/telegram-manager/backend/internal/events"
 	"github.com/telegram-manager/backend/internal/groups"
 	"github.com/telegram-manager/backend/internal/joinrequests"
+	"github.com/telegram-manager/backend/internal/license"
 	"github.com/telegram-manager/backend/internal/logs"
 	"github.com/telegram-manager/backend/internal/moderation"
 	"github.com/telegram-manager/backend/internal/publications"
@@ -143,15 +144,14 @@ func run() error {
 	schedulerErrCh := make(chan error, 16)
 
 	// Registry multi-bot (slice 0, solo polling; en webhook queda sin
-	// uso: multiplexado = futuro). onStatus persiste degraded/active.
-	tgRegistry := telegram.NewRegistry(slog.Default(),
-		func(_ context.Context, tenantID int64, status string) {
-			cctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			if err := tenantsRepo.SetStatus(cctx, tenantID, status); err != nil {
-				slog.Warn("registry: persist status failed", "tenant_id", tenantID, "status", status, "error", err)
-			}
-		})
+	// uso: multiplexado = futuro). onStatus es nil porque la columna
+	// tenants.status ahora representa licencia (trial|active|suspended|
+	// expired), no conectividad del bot. El runtime status (active/
+	// degraded) vive exclusivamente en memoria del registry.
+	tgRegistry := telegram.NewRegistry(slog.Default(), nil)
+
+	// License service (license-system): enforcement middleware.
+	licenseSvc := license.NewService(tenantsRepo)
 
 	stacks := make(map[int64]*tenantStack)
 
@@ -317,6 +317,8 @@ func run() error {
 			api.WithWebhook(defaultStack.bus, cfg.TelegramWebhookSecret),
 			api.WithAuth(authService, tokenManager, cfg.CookieSecure),
 			api.WithSignup(signupSvc, webhookSignupHook),
+			api.WithLicense(licenseSvc),
+			api.WithAdmin(tenantsRepo, tenantsRepo, tenantsRepo),
 			api.WithGroups(groupsRepo, legacyBot),
 			api.WithUsers(usersRepo),
 			api.WithModeration(defaultStack.moderation),
@@ -421,6 +423,8 @@ func run() error {
 		server = api.NewServer(db, statusAdapter,
 			api.WithAuth(authService, tokenManager, cfg.CookieSecure),
 			api.WithSignup(signupSvc, onTenantReady),
+			api.WithLicense(licenseSvc),
+			api.WithAdmin(tenantsRepo, tenantsRepo, tenantsRepo),
 			api.WithGroups(groupsRepo, statusAdapter),
 			api.WithUsers(usersRepo),
 			api.WithModeration(defaultStack.moderation),

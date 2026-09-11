@@ -20,20 +20,22 @@ func NewRepository(db *sql.DB) *Repository {
 }
 
 // GetByUsername devuelve el admin con ese username, o ErrNotFound si
-// no existe.
+// no existe. JOIN tenants para traer el slug (para JWT claims).
 func (r *Repository) GetByUsername(ctx context.Context, username string) (Admin, error) {
-	return r.get(ctx, "username = $1", username)
+	return r.get(ctx, "a.username = $1", username)
 }
 
 // GetByID devuelve el admin con ese id, o ErrNotFound si no existe.
 func (r *Repository) GetByID(ctx context.Context, id int64) (Admin, error) {
-	return r.get(ctx, "id = $1", id)
+	return r.get(ctx, "a.id = $1", id)
 }
 
 func (r *Repository) get(ctx context.Context, where string, arg any) (Admin, error) {
 	const base = `
-SELECT id, username, password_hash, tenant_id, created_at, last_login_at
-FROM admins
+SELECT a.id, a.username, a.password_hash, a.tenant_id, a.is_super_admin,
+       a.created_at, a.last_login_at, t.slug
+FROM admins a
+JOIN tenants t ON t.id = a.tenant_id
 WHERE `
 
 	var a Admin
@@ -43,7 +45,8 @@ WHERE `
 
 	var lastLogin sql.NullTime
 	var tenantID sql.NullInt64
-	err := row.Scan(&a.ID, &a.Username, &a.PasswordHash, &tenantID, &a.CreatedAt, &lastLogin)
+	err := row.Scan(&a.ID, &a.Username, &a.PasswordHash, &tenantID,
+		&a.IsSuperAdmin, &a.CreatedAt, &lastLogin, &a.TenantSlug)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Admin{}, ErrNotFound
 	}
@@ -96,4 +99,14 @@ func (r *Repository) Count(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("auth: count: %w", err)
 	}
 	return n, nil
+}
+
+// HasSuperAdmin devuelve true si al menos un admin tiene is_super_admin = true.
+func (r *Repository) HasSuperAdmin(ctx context.Context) (bool, error) {
+	const q = `SELECT EXISTS(SELECT 1 FROM admins WHERE is_super_admin = true)`
+	var exists bool
+	if err := r.db.QueryRowContext(ctx, q).Scan(&exists); err != nil {
+		return false, fmt.Errorf("auth: has super admin: %w", err)
+	}
+	return exists, nil
 }

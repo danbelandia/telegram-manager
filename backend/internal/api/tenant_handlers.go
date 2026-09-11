@@ -57,10 +57,16 @@ func (s *Server) handleGetTenantMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respond(w, http.StatusOK, map[string]any{
-		"slug":         t.Slug,
-		"bot_username": t.BotUsername,
-		"bot_status":   botStatus,
-		"created_at":   t.CreatedAt,
+		"slug":              t.Slug,
+		"bot_username":      t.BotUsername,
+		"bot_status":        botStatus,
+		"created_at":        t.CreatedAt,
+		"license_status":    t.Status,
+		"plan":              t.Plan,
+		"trial_ends_at":     t.TrialEndsAt,
+		"expires_at":        t.ExpiresAt,
+		"max_groups":        t.MaxGroups,
+		"max_messages_day":  t.MaxMessagesDay,
 	})
 }
 
@@ -187,4 +193,34 @@ func (s *Server) handleGetTenantStatus(w http.ResponseWriter, r *http.Request) {
 // botStatusResult es la respuesta de GET /api/tenants/me/status.
 type botStatusResult struct {
 	Status string `json:"bot_status"`
+}
+
+// handleGetTenantLicense devuelve la info de licencia del tenant
+// autenticado. Exento de requireLicense para que tenants suspendidos/
+// expirados puedan ver su propio estado.
+func (s *Server) handleGetTenantLicense(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := tenantIDFromClaims(w, r)
+	if !ok {
+		return
+	}
+
+	t, err := s.tenantsRepo.GetByID(r.Context(), tenantID)
+	if errors.Is(err, tenants.ErrNotFound) {
+		respondError(w, http.StatusNotFound, "NOT_FOUND", "tenant no encontrado")
+		return
+	}
+	if err != nil {
+		slog.Error("tenants/me/license: repo error", "tenant_id", tenantID, "error", err)
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "no se pudo obtener la licencia")
+		return
+	}
+
+	respond(w, http.StatusOK, map[string]any{
+		"license_status":    t.Status,
+		"plan":              t.Plan,
+		"trial_ends_at":     t.TrialEndsAt,
+		"expires_at":        t.ExpiresAt,
+		"max_groups":        t.MaxGroups,
+		"max_messages_day":  t.MaxMessagesDay,
+	})
 }

@@ -7,7 +7,7 @@ import (
 
 func testAdmin() Admin {
 	now := time.Now()
-	return Admin{ID: 42, Username: "admin", TenantID: 7, CreatedAt: now}
+	return Admin{ID: 42, Username: "admin", TenantID: 7, TenantSlug: "test-slug", IsSuperAdmin: false, CreatedAt: now}
 }
 
 func TestTokenManager_IssueAndParseAccess(t *testing.T) {
@@ -112,5 +112,49 @@ func TestTokenManager_WrongSecretRejected(t *testing.T) {
 	verifier := NewTokenManager("secret-b-distinta-yyyyyyyyyyyyyyyyyyy")
 	if _, err := verifier.ParseAccess(tokenStr); err == nil {
 		t.Fatal("want error for wrong secret, got nil")
+	}
+}
+
+func TestTokenManager_SuperAdminClaim(t *testing.T) {
+	m := NewTokenManager("test-secret-ojos-que-no-ven-corazon-que-no-siente-x")
+	admin := Admin{ID: 1, Username: "admin", TenantID: 7, TenantSlug: "my-slug", IsSuperAdmin: true}
+
+	tokenStr, err := m.IssueAccess(admin)
+	if err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+
+	claims, err := m.ParseAccess(tokenStr)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !claims.IsSuperAdmin {
+		t.Error("is_super_admin = false, want true")
+	}
+	if claims.TenantSlug != "my-slug" {
+		t.Errorf("tenant_slug = %q, want my-slug", claims.TenantSlug)
+	}
+}
+
+func TestTokenManager_LegacyTokenBackwardCompatible(t *testing.T) {
+	// Un token legacy sin is_super_admin ni tenant_slug: al decodificar,
+	// los campos deben ser zero-value (false / "").
+	m := NewTokenManager("test-secret-ojos-que-no-ven-corazon-que-no-siente-x")
+	admin := Admin{ID: 1, Username: "admin", TenantID: 7}
+
+	tokenStr, err := m.IssueAccess(admin)
+	if err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+
+	claims, err := m.ParseAccess(tokenStr)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if claims.IsSuperAdmin {
+		t.Error("is_super_admin = true for legacy token, want false")
+	}
+	if claims.TenantSlug != "" {
+		t.Errorf("tenant_slug = %q for legacy token, want empty", claims.TenantSlug)
 	}
 }

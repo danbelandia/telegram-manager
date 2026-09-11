@@ -29,6 +29,7 @@ import {
   IconSend,
   IconLogout,
   IconSettings,
+  IconShield,
 } from '@tabler/icons-react'
 import { Link, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth-context'
@@ -42,7 +43,7 @@ type NavItem = {
   icon: React.ComponentType<{ size?: number }>
 }
 
-const NAV_ITEMS: ReadonlyArray<NavItem> = [
+const BASE_NAV_ITEMS: ReadonlyArray<NavItem> = [
   { to: '/dashboard', label: 'Dashboard', icon: IconLayoutDashboard },
   { to: '/groups', label: 'Grupos', icon: IconUsersGroup },
   { to: '/publications', label: 'Publicaciones', icon: IconSend },
@@ -53,6 +54,13 @@ export default function Layout() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
   const [mobileOpened, { toggle: toggleMobile }] = useDisclosure(false)
+
+  const navItems: NavItem[] = [
+    ...BASE_NAV_ITEMS,
+    ...(user?.isSuperAdmin
+      ? [{ to: '/admin/tenants', label: 'Admin Panel', icon: IconShield } as NavItem]
+      : []),
+  ]
 
   const handleLogout = async () => {
     await logout()
@@ -111,7 +119,7 @@ export default function Layout() {
 
       <AppShell.Navbar p="md">
         <Stack gap="xs">
-          {NAV_ITEMS.map((item) => (
+          {navItems.map((item) => (
             <NavLink
               key={item.to}
               component={Link}

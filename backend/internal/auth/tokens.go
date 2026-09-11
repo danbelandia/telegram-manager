@@ -17,11 +17,15 @@ const (
 
 // Claims es la identidad que viaja en los tokens. sub es el id del
 // admin; username es informativo para el panel; tenant_id aisla los
-// datos del tenant (slice 0). omitempty: los tokens legacy no lo
-// traen y requireAuth los rechaza con re-login.
+// datos del tenant (slice 0). tenant_slug evita un lookup de DB en
+// /me; is_super_admin habilita el panel admin. omitempty: los tokens
+// legacy no los traen y los campos se interpretan como zero-value
+// (backward compatible: is_super_admin → false).
 type Claims struct {
-	Username string `json:"username"`
-	TenantID int64  `json:"tenant_id,omitempty"`
+	Username     string `json:"username"`
+	TenantID     int64  `json:"tenant_id,omitempty"`
+	TenantSlug   string `json:"tenant_slug,omitempty"`
+	IsSuperAdmin bool   `json:"is_super_admin,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -54,8 +58,10 @@ func (m *TokenManager) IssueRefresh(a Admin) (string, error) {
 func (m *TokenManager) issue(a Admin, ttl time.Duration) (string, error) {
 	now := m.now()
 	claims := Claims{
-		Username: a.Username,
-		TenantID: a.TenantID,
+		Username:     a.Username,
+		TenantID:     a.TenantID,
+		TenantSlug:   a.TenantSlug,
+		IsSuperAdmin: a.IsSuperAdmin,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   fmt.Sprintf("%d", a.ID),
 			IssuedAt:  jwt.NewNumericDate(now),

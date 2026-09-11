@@ -12,6 +12,7 @@ export interface MeResponse {
   username: string
   tenant_id: number
   tenant_slug?: string
+  is_super_admin: boolean
 }
 
 /** Body de POST /api/auth/signup (alta publica de tenant bot-per-tenant). */

@@ -18,6 +18,10 @@ export type ApiErrorCode =
   | 'INTERNAL_ERROR'
   | 'UNAUTHORIZED'
   | 'INVALID_CREDENTIALS'
+  | 'LICENSE_SUSPENDED'
+  | 'LICENSE_EXPIRED'
+  | 'FORBIDDEN'
+  | 'INVALID_TRANSITION'
 
 export class ApiError extends Error {
   constructor(

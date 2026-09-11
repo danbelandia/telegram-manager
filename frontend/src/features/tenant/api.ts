@@ -20,3 +20,18 @@ export function rotateBotToken(body: RotateTokenInput): Promise<{ status: string
 export function getTenantStatus(): Promise<TenantStatus> {
   return request<TenantStatus>('/api/tenants/me/status')
 }
+
+/** License info for the own tenant. */
+export interface LicenseInfo {
+  license_status: string
+  plan: string
+  trial_ends_at: string | null
+  expires_at: string | null
+  max_groups: number
+  max_messages_day: number
+}
+
+/** GET /api/tenants/me/license */
+export function getTenantLicense(): Promise<LicenseInfo> {
+  return request<LicenseInfo>('/api/tenants/me/license')
+}

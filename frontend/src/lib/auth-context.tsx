@@ -11,6 +11,7 @@ export interface SessionUser {
   username: string
   tenantId: number | null
   tenantSlug: string | null
+  isSuperAdmin: boolean
 }
 
 interface AuthContextValue {
@@ -63,6 +64,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             username: me.username,
             tenantId: me.tenant_id,
             tenantSlug: me.tenant_slug ?? null,
+            isSuperAdmin: me.is_super_admin ?? false,
           })
         }
       } catch {
@@ -88,6 +90,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       username: me.username,
       tenantId: me.tenant_id,
       tenantSlug: me.tenant_slug ?? null,
+      isSuperAdmin: me.is_super_admin ?? false,
     })
   }, [])
 
