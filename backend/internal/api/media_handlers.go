@@ -36,6 +36,7 @@ const (
 type MediaStore interface {
 	Save(tenantID int64, filename string, reader io.Reader) (string, error)
 	ServePath(tenantID int64, filename string) (string, error)
+	Open(tenantID int64, filename string) (io.ReadCloser, error)
 }
 
 // LocalMediaStore guarda archivos en disco local, organizados por tenant.
@@ -74,6 +75,16 @@ func (s *LocalMediaStore) ServePath(tenantID int64, filename string) (string, er
 		return "", fmt.Errorf("media: not found")
 	}
 	return path, nil
+}
+
+// Open devuelve un ReadCloser del archivo local para re-enviarlo a Telegram.
+func (s *LocalMediaStore) Open(tenantID int64, filename string) (io.ReadCloser, error) {
+	path := filepath.Join(s.uploadDir, fmt.Sprintf("%d", tenantID), filename)
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("media: open: %w", err)
+	}
+	return f, nil
 }
 
 // --- Handlers ---

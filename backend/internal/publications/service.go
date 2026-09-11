@@ -98,6 +98,12 @@ type PublishPayload struct {
 	GroupIDs []int64                           `json:"group_ids"`
 }
 
+// MediaOpener abre archivos multimedia locales para re-enviar a Telegram
+// cuando la URL es un path relativo (/api/media/...).
+type MediaOpener interface {
+	Open(tenantID int64, filename string) (io.ReadCloser, error)
+}
+
 // Service ejecuta el flujo de publicaciones. ActorID es el id del admin
 // autenticado (claims); se registra como actor en la fila y en el log.
 type Service struct {
@@ -105,11 +111,12 @@ type Service struct {
 	tg     MessageSender
 	logs   LogWriter
 	store  PubStore
+	media  MediaOpener
 }
 
 // NewService construye el servicio de publicaciones.
-func NewService(groups GroupReader, tg MessageSender, store PubStore, logs LogWriter) *Service {
-	return &Service{groups: groups, tg: tg, logs: logs, store: store}
+func NewService(groups GroupReader, tg MessageSender, store PubStore, logs LogWriter, media MediaOpener) *Service {
+	return &Service{groups: groups, tg: tg, logs: logs, store: store, media: media}
 }
 
 // keyboardOrNil devuelve un *telegram.InlineKeyboardMarkup no-nil
@@ -304,7 +311,7 @@ func (s *Service) publishOne(ctx context.Context, tenantID, actorID, groupID int
 func (s *Service) publishOneFinalize(ctx context.Context, pub *Publication, entry *logs.Entry, hasPhoto bool, photoURL *string, hasVideo bool, videoURL *string, buttons [][]telegram.InlineKeyboardButton) {
 	buttonsJSON, _ := MarshalButtons(buttons) // best-effort; ya estaba persistido
 
-	messageID, err := s.dispatchMedia(ctx, pub.TelegramID, pub.Text, hasPhoto, photoURL, hasVideo, videoURL, buttons)
+	messageID, err := s.dispatchMedia(ctx, pub.TenantID, pub.TelegramID, pub.Text, hasPhoto, photoURL, hasVideo, videoURL, buttons)
 	if err != nil {
 		msg := err.Error()
 		_ = s.store.UpdateStatus(ctx, pub.TenantID, pub.ID, StatusFailed, nil, &msg)
@@ -339,27 +346,64 @@ func (s *Service) publishOneFinalize(ctx context.Context, pub *Publication, entr
 func (s *Service) dispatch(ctx context.Context, pub *Publication) (int64, error) {
 	hasPhoto := pub.PhotoURL != nil && *pub.PhotoURL != ""
 	hasVideo := pub.VideoURL != nil && *pub.VideoURL != ""
+	keyboard := keyboardOrNil(nil)
 	if hasPhoto {
-		return s.tg.SendPhoto(ctx, pub.TelegramID, *pub.PhotoURL, pub.Text, keyboardOrNil(nil))
+		if isLocalMediaURL(*pub.PhotoURL) && s.media != nil {
+			return s.sendLocalMedia(ctx, pub.TenantID, pub.TelegramID, *pub.PhotoURL, pub.Text, keyboard, "photo")
+		}
+		return s.tg.SendPhoto(ctx, pub.TelegramID, *pub.PhotoURL, pub.Text, keyboard)
 	}
 	if hasVideo {
-		return s.tg.SendVideo(ctx, pub.TelegramID, *pub.VideoURL, pub.Text, keyboardOrNil(nil))
+		if isLocalMediaURL(*pub.VideoURL) && s.media != nil {
+			return s.sendLocalMedia(ctx, pub.TenantID, pub.TelegramID, *pub.VideoURL, pub.Text, keyboard, "video")
+		}
+		return s.tg.SendVideo(ctx, pub.TelegramID, *pub.VideoURL, pub.Text, keyboard)
 	}
-	return s.tg.SendMessage(ctx, pub.TelegramID, pub.Text, false, keyboardOrNil(nil))
+	return s.tg.SendMessage(ctx, pub.TelegramID, pub.Text, false, keyboard)
+}
+
+// isLocalMediaURL detecta paths de uploads (/api/media/...).
+func isLocalMediaURL(raw string) bool {
+	return strings.HasPrefix(raw, "/api/media/")
+}
+
+// mediaFilename extrae el nombre de archivo de un path /api/media/X.
+func mediaFilename(raw string) string {
+	return strings.TrimPrefix(raw, "/api/media/")
 }
 
 // dispatchMedia es la version usada por publishOneFinalize antes de
 // persistir (sabemos hasPhoto/photoURL/hasVideo/videoURL/buttons
 // directamente del payload).
-func (s *Service) dispatchMedia(ctx context.Context, groupID int64, text string, hasPhoto bool, photoURL *string, hasVideo bool, videoURL *string, buttons [][]telegram.InlineKeyboardButton) (int64, error) {
+func (s *Service) dispatchMedia(ctx context.Context, tenantID int64, groupID int64, text string, hasPhoto bool, photoURL *string, hasVideo bool, videoURL *string, buttons [][]telegram.InlineKeyboardButton) (int64, error) {
 	keyboard := keyboardOrNil(buttons)
 	if hasPhoto {
+		if isLocalMediaURL(*photoURL) && s.media != nil {
+			return s.sendLocalMedia(ctx, tenantID, groupID, *photoURL, text, keyboard, "photo")
+		}
 		return s.tg.SendPhoto(ctx, groupID, *photoURL, text, keyboard)
 	}
 	if hasVideo {
+		if isLocalMediaURL(*videoURL) && s.media != nil {
+			return s.sendLocalMedia(ctx, tenantID, groupID, *videoURL, text, keyboard, "video")
+		}
 		return s.tg.SendVideo(ctx, groupID, *videoURL, text, keyboard)
 	}
 	return s.tg.SendMessage(ctx, groupID, text, false, keyboard)
+}
+
+// sendLocalMedia lee un archivo local y lo envia via multipart a Telegram.
+func (s *Service) sendLocalMedia(ctx context.Context, tenantID, groupID int64, mediaURL, text string, keyboard *telegram.InlineKeyboardMarkup, mediaType string) (int64, error) {
+	filename := mediaFilename(mediaURL)
+	rc, err := s.media.Open(tenantID, filename)
+	if err != nil {
+		return 0, fmt.Errorf("publications: open local media: %w", err)
+	}
+	defer rc.Close()
+	if mediaType == "photo" {
+		return s.tg.SendPhotoUpload(ctx, groupID, rc, filename, text, keyboard)
+	}
+	return s.tg.SendVideoUpload(ctx, groupID, rc, filename, text, keyboard)
 }
 
 // createSending persiste la fila en estado sending y devuelve el row
@@ -535,13 +579,17 @@ func validateTextLength(hasPhoto bool, text string) error {
 	return nil
 }
 
-// validatePhotoURL exige http(s) + longitud <= maxPhotoURLLength.
+// validatePhotoURL exige http(s) o path local /api/media/ + longitud maxima.
 func validatePhotoURL(raw string) error {
 	if raw == "" {
 		return ErrPhotoURLEmpty
 	}
 	if len(raw) > maxPhotoURLLength {
 		return ErrPhotoURLTooLong
+	}
+	// Aceptar paths relativos de media upload (ej. /api/media/uuid.jpg).
+	if strings.HasPrefix(raw, "/api/media/") {
+		return nil
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -554,13 +602,17 @@ func validatePhotoURL(raw string) error {
 	return nil
 }
 
-// validateVideoURL exige http(s) + longitud <= maxVideoURLLength.
+// validateVideoURL exige http(s) o path local /api/media/ + longitud maxima.
 func validateVideoURL(raw string) error {
 	if raw == "" {
 		return ErrVideoURLEmpty
 	}
 	if len(raw) > maxVideoURLLength {
 		return ErrVideoURLTooLong
+	}
+	// Aceptar paths relativos de media upload (ej. /api/media/uuid.mp4).
+	if strings.HasPrefix(raw, "/api/media/") {
+		return nil
 	}
 	u, err := url.Parse(raw)
 	if err != nil {

@@ -156,6 +156,13 @@ func run() error {
 
 	stacks := make(map[int64]*tenantStack)
 
+	// Media store para uploads de fotos/videos (photos-videos-upload).
+	uploadDir := filepath.Join(".", "uploads")
+	if err := os.MkdirAll(uploadDir, 0o755); err != nil {
+		return fmt.Errorf("startup: create upload dir: %w", err)
+	}
+	mediaStore := api.NewLocalMediaStore(uploadDir)
+
 	// buildBus crea el bus propio del tenant y registra los handlers de
 	// eventos que NO necesitan adapter: logging, deteccion de grupos
 	// (upsert scopeado al tenant) y solicitudes de ingreso (usuario
@@ -229,7 +236,7 @@ func run() error {
 	// caliente; el legacy viene de env).
 	buildServices := func(tenantID int64, slug string, bus *events.Bus, adapter *telegram.Adapter) *tenantStack {
 		moderationSvc := moderation.NewService(tenantID, groupsRepo, adapter, joinRequestsRepo, logsRepo)
-		pubsSvc := publications.NewService(groupsRepo, adapter, pubsRepo, logsRepo)
+		pubsSvc := publications.NewService(groupsRepo, adapter, pubsRepo, logsRepo, mediaStore)
 
 		// Moderacion automatica (Fase 3): pipeline por tenant con el
 		// adapter de su bot. Gated por cfg.AutomationEnabled.
@@ -299,13 +306,6 @@ func run() error {
 	// Signup (slice 0): alta transaccional + poller en caliente. Sin
 	// clave de cifrado el servicio rechaza (ErrSignupNotConfigured).
 	signupSvc := auth.NewSignupService(db, tenantsRepo, authRepo, crypter, auth.ValidateBotToken)
-
-	// Media store para uploads de fotos/videos (photos-videos-upload).
-	uploadDir := filepath.Join(".", "uploads")
-	if err := os.MkdirAll(uploadDir, 0o755); err != nil {
-		return fmt.Errorf("startup: create upload dir: %w", err)
-	}
-	mediaStore := api.NewLocalMediaStore(uploadDir)
 
 	var server *api.Server
 

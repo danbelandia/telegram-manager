@@ -255,7 +255,7 @@ func newPubService(t *testing.T, tg *fakeTelegramPub, store *fakePubStore, group
 		store = newFakePubStore()
 	}
 	logsFake := &fakeLogsPub{}
-	svc := NewService(&fakeGroupsPub{groups: groupsMap}, tg, store, logsFake)
+	svc := NewService(&fakeGroupsPub{groups: groupsMap}, tg, store, logsFake, nil)
 	return svc, logsFake
 }
 
