@@ -103,7 +103,7 @@ func (s *Server) handleAdminListTenants(w http.ResponseWriter, r *http.Request) 
 	for i, t := range tenantsList {
 		items[i] = tenantToListItem(t)
 	}
-	respond(w, http.StatusOK, map[string]any{"data": items})
+	respond(w, http.StatusOK, items)
 }
 
 // handleAdminGetTenant devuelve el detalle de un tenant.
@@ -144,7 +144,7 @@ func (s *Server) handleAdminGetTenant(w http.ResponseWriter, r *http.Request) {
 		s := t.ExpiresAt.Format(time.RFC3339)
 		item.ExpiresAt = &s
 	}
-	respond(w, http.StatusOK, map[string]any{"data": item})
+	respond(w, http.StatusOK, item)
 }
 
 // handleAdminUpdateTenant actualiza los campos de licencia de un tenant.
@@ -220,7 +220,7 @@ func (s *Server) handleAdminUpdateTenant(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	respond(w, http.StatusOK, map[string]any{"data": map[string]string{"status": "updated"}})
+	respond(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
 // tenantToListItem convierte un Tenant a tenantListItem con fechas RFC3339.
