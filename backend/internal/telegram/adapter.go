@@ -19,9 +19,16 @@ import (
 const defaultBaseURL = "https://api.telegram.org"
 
 // defaultRequestTimeout aplica a llamadas sin deadline propio (getMe,
-// setWebhook...). El long poll NO usa este valor: GetUpdates deriva su
-// propio deadline de timeout+5s (ver abajo).
+// sendMessage, etc.). Las que transfieren archivos (multipart) usan
+// multipartRequestTimeout porque subir un video de 50 MB puede tardar
+// mucho mas que 10s.
 const defaultRequestTimeout = 10 * time.Second
+
+// multipartRequestTimeout es el deadline para subir archivos via
+// multipart/form-data (sendPhoto, sendVideo upload). Telegram limita
+// fotos a 10 MB y videos a 50 MB; subir 50 MB puede tardar >30s en
+// conexiones lentas.
+const multipartRequestTimeout = 90 * time.Second
 
 // Limites del rate limiter (AGENTS.md §18.1): ~25 req/seg globales
 // dejan margen sobre el limite real de la Bot API (~30 req/seg).
@@ -196,7 +203,7 @@ func (a *Adapter) doMultipart(ctx context.Context, method, fieldName string, rea
 
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, defaultRequestTimeout)
+		ctx, cancel = context.WithTimeout(ctx, multipartRequestTimeout)
 		defer cancel()
 	}
 
