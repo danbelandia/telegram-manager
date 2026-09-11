@@ -1,8 +1,23 @@
 import { useEffect, useState } from 'react'
 import {
-  Paper, Title, Text, Table, Select, Group, Badge, Loader, Stack,
+  ActionIcon,
+  Badge,
+  Button,
+  Group,
+  Loader,
+  Modal,
+  NativeSelect,
+  NumberInput,
+  Paper,
+  Select,
+  Stack,
+  Table,
+  Text,
+  TextInput,
+  Title,
 } from '@mantine/core'
-import { adminListTenants } from '../features/admin/api'
+import { IconEdit } from '@tabler/icons-react'
+import { adminGetTenant, adminListTenants, adminUpdateTenant } from '../features/admin/api'
 import type { AdminTenant } from '../features/admin/types'
 import { ApiError } from '../lib/api-client'
 
@@ -12,6 +27,10 @@ const STATUS_OPTIONS = [
   { value: 'active', label: 'Activa' },
   { value: 'suspended', label: 'Suspendida' },
   { value: 'expired', label: 'Expirada' },
+]
+
+const PLAN_OPTIONS = [
+  { value: 'pro', label: 'Pro' },
 ]
 
 function statusColor(status: string): string {
@@ -24,29 +43,111 @@ function statusColor(status: string): string {
   }
 }
 
+/** Transiciones validas de status (replica del backend). */
+const VALID_TRANSITIONS: Record<string, string[]> = {
+  trial: ['active', 'suspended', 'expired'],
+  active: ['suspended'],
+  suspended: ['active'],
+  expired: ['active'],
+}
+
+function editableStatuses(current: string): { value: string; label: string }[] {
+  const allowed = VALID_TRANSITIONS[current] ?? []
+  return [
+    { value: current, label: `${current} (actual)` },
+    ...allowed.map((s) => ({ value: s, label: s })),
+  ]
+}
+
+function toLocalDatetime(iso: string | null): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
 export default function AdminTenantsPage() {
   const [tenants, setTenants] = useState<AdminTenant[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [filter, setFilter] = useState('')
 
-  useEffect(() => {
-    let cancelled = false
-    const load = async () => {
-      try {
-        const data = await adminListTenants()
-        if (!cancelled) setTenants(data)
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof ApiError ? err.message : 'Error al cargar tenants')
-        }
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
+  // Edit modal state
+  const [editing, setEditing] = useState<AdminTenant | null>(null)
+  const [editForm, setEditForm] = useState({
+    status: '',
+    plan: '',
+    trial_ends_at: '',
+    expires_at: '',
+    max_groups: -1,
+    max_messages_day: -1,
+  })
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+
+  const loadTenants = async () => {
+    try {
+      const data = await adminListTenants()
+      setTenants(data)
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Error al cargar tenants')
+    } finally {
+      setLoading(false)
     }
-    void load()
-    return () => { cancelled = true }
+  }
+
+  useEffect(() => {
+    void loadTenants()
   }, [])
+
+  const openEdit = async (tenant: AdminTenant) => {
+    setSaveError(null)
+    try {
+      // Fetch full detail (same data for now, but future-proof).
+      const detail = await adminGetTenant(tenant.id)
+      setEditing(detail)
+      setEditForm({
+        status: detail.status,
+        plan: detail.plan,
+        trial_ends_at: toLocalDatetime(detail.trial_ends_at),
+        expires_at: toLocalDatetime(detail.expires_at),
+        max_groups: detail.max_groups,
+        max_messages_day: detail.max_messages_day,
+      })
+    } catch {
+      setEditing(tenant)
+      setEditForm({
+        status: tenant.status,
+        plan: tenant.plan,
+        trial_ends_at: toLocalDatetime(tenant.trial_ends_at),
+        expires_at: toLocalDatetime(tenant.expires_at),
+        max_groups: tenant.max_groups,
+        max_messages_day: tenant.max_messages_day,
+      })
+    }
+  }
+
+  const handleSave = async () => {
+    if (!editing) return
+    setSaving(true)
+    setSaveError(null)
+    try {
+      await adminUpdateTenant(editing.id, {
+        status: editForm.status,
+        plan: editForm.plan,
+        trial_ends_at: editForm.trial_ends_at ? new Date(editForm.trial_ends_at).toISOString() : null,
+        expires_at: editForm.expires_at ? new Date(editForm.expires_at).toISOString() : null,
+        max_groups: editForm.max_groups,
+        max_messages_day: editForm.max_messages_day,
+      })
+      setEditing(null)
+      await loadTenants()
+    } catch (err) {
+      setSaveError(err instanceof ApiError ? err.message : 'Error al guardar')
+    } finally {
+      setSaving(false)
+    }
+  }
 
   const filtered = filter
     ? tenants.filter((t) => t.status === filter)
@@ -79,6 +180,9 @@ export default function AdminTenantsPage() {
               <Table.Th>Trial hasta</Table.Th>
               <Table.Th>Expira</Table.Th>
               <Table.Th>Bot</Table.Th>
+              <Table.Th>Grupos</Table.Th>
+              <Table.Th>Msg/día</Table.Th>
+              <Table.Th />
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
@@ -100,11 +204,75 @@ export default function AdminTenantsPage() {
                     : '-'}
                 </Table.Td>
                 <Table.Td>{t.bot_username ?? '-'}</Table.Td>
+                <Table.Td>{t.max_groups === -1 ? '∞' : t.max_groups}</Table.Td>
+                <Table.Td>{t.max_messages_day === -1 ? '∞' : t.max_messages_day}</Table.Td>
+                <Table.Td>
+                  <ActionIcon variant="subtle" onClick={() => openEdit(t)}>
+                    <IconEdit size={16} />
+                  </ActionIcon>
+                </Table.Td>
               </Table.Tr>
             ))}
           </Table.Tbody>
         </Table>
       </Paper>
+
+      {/* Edit modal */}
+      <Modal
+        opened={editing !== null}
+        onClose={() => setEditing(null)}
+        title={editing ? `Editar tenant: ${editing.slug}` : ''}
+        size="md"
+      >
+        <Stack gap="md">
+          <NativeSelect
+            label="Estado"
+            data={editing ? editableStatuses(editing.status) : []}
+            value={editForm.status}
+            onChange={(e) => setEditForm((f) => ({ ...f, status: e.currentTarget.value }))}
+          />
+
+          <Select
+            label="Plan"
+            data={PLAN_OPTIONS}
+            value={editForm.plan}
+            onChange={(v) => setEditForm((f) => ({ ...f, plan: v ?? 'pro' }))}
+          />
+
+          <TextInput
+            label="Trial hasta"
+            type="datetime-local"
+            value={editForm.trial_ends_at}
+            onChange={(e) => setEditForm((f) => ({ ...f, trial_ends_at: e.currentTarget.value }))}
+          />
+
+          <TextInput
+            label="Expira"
+            type="datetime-local"
+            value={editForm.expires_at}
+            onChange={(e) => setEditForm((f) => ({ ...f, expires_at: e.currentTarget.value }))}
+          />
+
+          <NumberInput
+            label="Máximo de grupos (-1 = ilimitado)"
+            value={editForm.max_groups}
+            onChange={(v) => setEditForm((f) => ({ ...f, max_groups: Number(v) }))}
+          />
+
+          <NumberInput
+            label="Máximo mensajes por día (-1 = ilimitado)"
+            value={editForm.max_messages_day}
+            onChange={(v) => setEditForm((f) => ({ ...f, max_messages_day: Number(v) }))}
+          />
+
+          {saveError && <Text c="red" size="sm">{saveError}</Text>}
+
+          <Group justify="flex-end">
+            <Button variant="subtle" onClick={() => setEditing(null)}>Cancelar</Button>
+            <Button loading={saving} onClick={handleSave}>Guardar</Button>
+          </Group>
+        </Stack>
+      </Modal>
     </Stack>
   )
 }
