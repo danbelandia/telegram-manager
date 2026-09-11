@@ -82,10 +82,13 @@ async function rawRequest<T>(
   init?: RequestInit,
   retried = false,
 ): Promise<T> {
+  // Si el body es FormData (multipart upload), NO setear Content-Type:
+  // el browser genera el header con el boundary correcto automaticamente.
+  const isFormData = init?.body instanceof FormData
   const res = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
     headers: {
-      'Content-Type': 'application/json',
+      ...(!isFormData && { 'Content-Type': 'application/json' }),
       ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
       ...init?.headers,
     },
