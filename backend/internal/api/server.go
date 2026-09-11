@@ -356,7 +356,9 @@ func WithAdmin(
 		s.adminTenantsRepo = lister
 		s.adminTenantsGetter = getter
 		s.adminTenantsUpdater = updater
-		adminRoutes := s.requireSuperAdmin
+		adminRoutes := func(next http.HandlerFunc) http.HandlerFunc {
+			return s.requireAuth(s.requireSuperAdmin(next))
+		}
 		s.mux.HandleFunc("GET /api/admin/tenants", adminRoutes(s.handleAdminListTenants))
 		s.mux.HandleFunc("GET /api/admin/tenants/{id}", adminRoutes(s.handleAdminGetTenant))
 		s.mux.HandleFunc("PUT /api/admin/tenants/{id}", adminRoutes(s.handleAdminUpdateTenant))
