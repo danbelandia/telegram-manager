@@ -38,8 +38,8 @@ func NewRepository(db *sql.DB) *Repository {
 // nunca las tomaba.
 func (r *Repository) Create(ctx context.Context, p *Publication) error {
 	const q = `
-INSERT INTO publications (tenant_id, telegram_id, text, status, actor_id, photo_url, buttons, scheduled_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+INSERT INTO publications (tenant_id, telegram_id, text, status, actor_id, photo_url, video_url, buttons, scheduled_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 RETURNING id, created_at, updated_at`
 
 	var scheduledAtParam sql.NullTime
@@ -48,7 +48,7 @@ RETURNING id, created_at, updated_at`
 	}
 
 	err := r.db.QueryRowContext(ctx, q,
-		p.TenantID, p.TelegramID, p.Text, string(p.Status), p.ActorID, p.PhotoURL, []byte(p.Buttons), scheduledAtParam,
+		p.TenantID, p.TelegramID, p.Text, string(p.Status), p.ActorID, p.PhotoURL, p.VideoURL, []byte(p.Buttons), scheduledAtParam,
 	).Scan(&p.ID, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("publications: create: %w", err)
@@ -60,7 +60,7 @@ RETURNING id, created_at, updated_at`
 // ErrNotFound si no existe O es de otro tenant.
 func (r *Repository) GetByID(ctx context.Context, tenantID, id int64) (*Publication, error) {
 	const q = `
-SELECT id, tenant_id, telegram_id, text, status, message_id, scheduled_at, error_message, actor_id, photo_url, buttons, created_at, updated_at
+SELECT id, tenant_id, telegram_id, text, status, message_id, scheduled_at, error_message, actor_id, photo_url, video_url, buttons, created_at, updated_at
 FROM publications
 WHERE tenant_id = $1 AND id = $2`
 
@@ -80,7 +80,7 @@ WHERE tenant_id = $1 AND id = $2`
 // antes.
 func (r *Repository) List(ctx context.Context, tenantID int64, limit, offset int) ([]Publication, error) {
 	const q = `
-SELECT id, tenant_id, telegram_id, text, status, message_id, scheduled_at, error_message, actor_id, photo_url, buttons, created_at, updated_at
+SELECT id, tenant_id, telegram_id, text, status, message_id, scheduled_at, error_message, actor_id, photo_url, video_url, buttons, created_at, updated_at
 FROM publications
 WHERE tenant_id = $1
 ORDER BY created_at DESC
@@ -112,7 +112,7 @@ LIMIT $2 OFFSET $3`
 // tiene publicaciones (no es error).
 func (r *Repository) ListByTelegramID(ctx context.Context, tenantID, telegramID int64, limit, offset int) ([]Publication, error) {
 	const q = `
-SELECT id, tenant_id, telegram_id, text, status, message_id, scheduled_at, error_message, actor_id, photo_url, buttons, created_at, updated_at
+SELECT id, tenant_id, telegram_id, text, status, message_id, scheduled_at, error_message, actor_id, photo_url, video_url, buttons, created_at, updated_at
 FROM publications
 WHERE tenant_id = $1 AND telegram_id = $2
 ORDER BY created_at DESC
@@ -160,7 +160,7 @@ func (r *Repository) ClaimScheduledDue(ctx context.Context, tenantID int64, limi
 	defer func() { _ = tx.Rollback() }() // noop si Commit OK
 
 	const selectQ = `
-SELECT id, tenant_id, telegram_id, text, status, message_id, scheduled_at, error_message, actor_id, photo_url, buttons, created_at, updated_at
+SELECT id, tenant_id, telegram_id, text, status, message_id, scheduled_at, error_message, actor_id, photo_url, video_url, buttons, created_at, updated_at
 FROM publications
 WHERE tenant_id = $1 AND status = 'scheduled' AND scheduled_at <= now()
 ORDER BY scheduled_at ASC
@@ -304,7 +304,7 @@ func scanPublication(row rowScanner) (Publication, error) {
 	err := row.Scan(
 		&p.ID, &p.TenantID, &p.TelegramID, &p.Text, &status, &p.MessageID,
 		&p.ScheduledAt, &p.ErrorMessage, &p.ActorID,
-		&p.PhotoURL, &buttons,
+		&p.PhotoURL, &p.VideoURL, &buttons,
 		&createAt, &updateAt,
 	)
 	if err != nil {

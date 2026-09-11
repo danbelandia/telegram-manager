@@ -43,6 +43,7 @@ type PublicationStore interface {
 type createPublicationRequest struct {
 	Text        string                            `json:"text"`
 	PhotoURL    *string                           `json:"photo_url,omitempty"`
+	VideoURL    *string                           `json:"video_url,omitempty"`
 	Buttons     [][]telegram.InlineKeyboardButton `json:"buttons,omitempty"`
 	GroupIDs    []int64                           `json:"group_ids"`
 	ScheduledAt string                            `json:"scheduled_at,omitempty"`
@@ -61,6 +62,7 @@ type publicationResponse struct {
 	ErrorMessage *string         `json:"error_message"`
 	ActorID      *int64          `json:"actor_id"`
 	PhotoURL     *string         `json:"photo_url"`
+	VideoURL     *string         `json:"video_url"`
 	Buttons      json.RawMessage `json:"buttons"`
 	ScheduledAt  *string         `json:"scheduled_at"`
 	CreatedAt    string          `json:"created_at"`
@@ -76,6 +78,7 @@ func toPublicationResponse(p *publications.Publication) publicationResponse {
 		ErrorMessage: p.ErrorMessage,
 		ActorID:      p.ActorID,
 		PhotoURL:     p.PhotoURL,
+		VideoURL:     p.VideoURL,
 		Buttons:      p.Buttons,
 		CreatedAt:    p.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
 	}
@@ -124,6 +127,7 @@ func (s *Server) handleCreatePublication(w http.ResponseWriter, r *http.Request)
 		rows, err := pubs.Schedule(r.Context(), tenantID, actorID, publications.PublishPayload{
 			Text:     req.Text,
 			PhotoURL: req.PhotoURL,
+			VideoURL: req.VideoURL,
 			Buttons:  req.Buttons,
 			GroupIDs: req.GroupIDs,
 		}, *t, time.Now)
@@ -142,6 +146,7 @@ func (s *Server) handleCreatePublication(w http.ResponseWriter, r *http.Request)
 	rows, err := pubs.PublishMany(r.Context(), tenantID, actorID, publications.PublishPayload{
 		Text:     req.Text,
 		PhotoURL: req.PhotoURL,
+		VideoURL: req.VideoURL,
 		Buttons:  req.Buttons,
 		GroupIDs: req.GroupIDs,
 	})
@@ -360,6 +365,10 @@ var validationErrorSet = []error{
 	publications.ErrPhotoURLEmpty,
 	publications.ErrPhotoURLScheme,
 	publications.ErrPhotoURLTooLong,
+	publications.ErrVideoURLEmpty,
+	publications.ErrVideoURLScheme,
+	publications.ErrVideoURLTooLong,
+	publications.ErrMediaExclusive,
 	publications.ErrButtonsMalformed,
 	publications.ErrButtonsLimit,
 	publications.ErrButtonTextLong,

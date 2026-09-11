@@ -100,6 +100,9 @@ type Server struct {
 	// License enforcement (license-system change).
 	licenseSvc *license.Service
 
+	// Media store para uploads de fotos/videos (photos-videos-upload).
+	mediaStore MediaStore
+
 	// Super-admin panel (license-system change).
 	adminTenantsRepo    adminTenantsLister
 	adminTenantsGetter  adminTenantsGetter
@@ -342,6 +345,16 @@ func (s *Server) routes() {
 func WithLicense(svc *license.Service) Option {
 	return func(s *Server) {
 		s.licenseSvc = svc
+	}
+}
+
+// WithMedia monta las rutas de upload/serve de archivos multimedia
+// (POST /api/media/upload, GET /api/media/{filename}).
+func WithMedia(store MediaStore) Option {
+	return func(s *Server) {
+		s.mediaStore = store
+		s.mux.HandleFunc("POST /api/media/upload", s.requireAuth(s.requireLicense(s.handleMediaUpload)))
+		s.mux.HandleFunc("GET /api/media/{filename}", s.requireAuth(s.requireLicense(s.handleMediaServe)))
 	}
 }
 

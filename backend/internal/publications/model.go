@@ -39,6 +39,9 @@ const (
 	maxTextLength       = 4096 // sin foto
 	maxCaptionLength    = 1024 // con foto (caption de sendPhoto)
 	maxPhotoURLLength   = 2048
+	maxVideoURLLength   = 2048
+	maxUploadPhotoSize  = 10 * 1024 * 1024 // 10 MB
+	maxUploadVideoSize  = 50 * 1024 * 1024 // 50 MB
 	maxButtonsRows      = 8
 	maxButtonsPerRow    = 8
 	maxButtonTextLength = 64
@@ -67,6 +70,7 @@ type Publication struct {
 	ErrorMessage *string
 	ActorID      *int64
 	PhotoURL     *string
+	VideoURL     *string
 	Buttons      json.RawMessage
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
@@ -103,6 +107,18 @@ var (
 	ErrGroupsEmpty = errors.New("se requiere al menos un grupo")
 	// ErrGroupsLimit: group_ids > 10.
 	ErrGroupsLimit = errors.New("maximo 10 grupos por publicacion")
+	// ErrVideoURLEmpty: video_url fue enviado como string vacio.
+	ErrVideoURLEmpty = errors.New("la URL del video no puede estar vacia")
+	// ErrVideoURLScheme: la URL no usa esquema http/https.
+	ErrVideoURLScheme = errors.New("la URL del video debe empezar con http o https")
+	// ErrVideoURLTooLong: la URL excede maxVideoURLLength.
+	ErrVideoURLTooLong = errors.New("la URL del video excede 2048 caracteres")
+	// ErrMediaExclusive: se enviaron foto y video a la vez.
+	ErrMediaExclusive = errors.New("no se puede enviar foto y video a la vez")
+	// ErrFileTooLarge: el archivo subido excede el tamaño maximo.
+	ErrFileTooLarge = errors.New("el archivo excede el tamaño máximo permitido")
+	// ErrInvalidFileType: tipo de archivo no soportado.
+	ErrInvalidFileType = errors.New("tipo de archivo no soportado")
 	// ErrNotFound: la publicacion no existe.
 	ErrNotFound = errors.New("publications: not found")
 

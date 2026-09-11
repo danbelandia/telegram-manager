@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -174,6 +175,58 @@ func (a *Adapter) doPost(ctx context.Context, method string, body any, result an
 		return fmt.Errorf("telegram: build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+
+	respBody, err := a.doRequest(req)
+	if err != nil {
+		return err
+	}
+	return a.handleEnvelope(respBody, result)
+}
+
+// doMultipart envia un archivo via multipart/form-data a un metodo de
+// la Bot API (sendPhoto, sendVideo, etc.). fieldName es el nombre del
+// campo de archivo ("photo" o "video"); filename es el nombre sugerido
+// para Content-Disposition; extraFields agrega campos adicionales
+// (chat_id, caption, reply_markup serializado a JSON). Decodifica el
+// envelope estandar igual que doPost.
+func (a *Adapter) doMultipart(ctx context.Context, method, fieldName string, reader io.Reader, filename string, extraFields map[string]string, result any) error {
+	if err := a.limit.wait(ctx); err != nil {
+		return err
+	}
+
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, defaultRequestTimeout)
+		defer cancel()
+	}
+
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+
+	part, err := writer.CreateFormFile(fieldName, filename)
+	if err != nil {
+		return fmt.Errorf("telegram: create form file: %w", err)
+	}
+	if _, err := io.Copy(part, reader); err != nil {
+		return fmt.Errorf("telegram: write file: %w", err)
+	}
+
+	for k, v := range extraFields {
+		if err := writer.WriteField(k, v); err != nil {
+			return fmt.Errorf("telegram: write field: %w", err)
+		}
+	}
+
+	if err := writer.Close(); err != nil {
+		return fmt.Errorf("telegram: close multipart: %w", err)
+	}
+
+	u := fmt.Sprintf("%s/bot%s/%s", a.baseURL, a.token, method)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, &buf)
+	if err != nil {
+		return fmt.Errorf("telegram: build request: %w", err)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
 
 	respBody, err := a.doRequest(req)
 	if err != nil {
