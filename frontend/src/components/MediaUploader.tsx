@@ -3,7 +3,7 @@
 // Props controladas: value (url+type) y onChange para que el padre
 // gestione el estado. Al soltar un archivo, lo sube via POST /api/media
 // y devuelve la referencia para usar en PublishRequest.
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import {
   Group,
   Text,
@@ -11,11 +11,12 @@ import {
   Image,
   Badge,
   ActionIcon,
+  Button,
   Loader,
   Alert,
 } from '@mantine/core'
 import { Dropzone, MIME_TYPES } from '@mantine/dropzone'
-import { IconUpload, IconX, IconPhoto, IconVideo } from '@tabler/icons-react'
+import { IconUpload, IconX, IconPhoto, IconVideo, IconFile } from '@tabler/icons-react'
 import { uploadMedia } from '../features/media/api'
 import type { MediaUploadResponse } from '../features/media/types'
 
@@ -48,6 +49,7 @@ export default function MediaUploader({
   onError,
   disabled = false,
 }: MediaUploaderProps) {
+  const openRef = useRef<() => void>(null)
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -144,12 +146,19 @@ export default function MediaUploader({
   return (
     <Stack gap="xs">
       <Dropzone
+        openRef={openRef}
         onDrop={handleDrop}
         onReject={handleReject}
         maxSize={MAX_FILE_SIZE}
         accept={ACCEPT_MIME_TYPES}
         disabled={disabled || uploading}
         loading={uploading}
+        radius="md"
+        style={{
+          borderStyle: 'dashed',
+          borderWidth: 2,
+          backgroundColor: 'var(--mantine-color-gray-0)',
+        }}
       >
         <Group justify="center" gap="xl" mih={120} style={{ pointerEvents: 'none' }}>
           <Dropzone.Accept>
@@ -162,14 +171,27 @@ export default function MediaUploader({
             <IconPhoto size={40} color="var(--mantine-color-dimmed)" />
           </Dropzone.Idle>
 
-          <div>
+          <Stack gap={4} align="center">
             <Text size="xl" inline>
-              Arrastrá una foto o video acá
+              Arrastrá un archivo acá
             </Text>
-            <Text size="sm" c="dimmed" inline mt={7}>
+            <Text size="sm" c="dimmed" inline>
               JPG, PNG, GIF, WebP (≤ 10 MB) o MP4 (≤ 50 MB)
             </Text>
-          </div>
+            <Button
+              variant="light"
+              size="sm"
+              mt={4}
+              leftSection={<IconFile size={14} />}
+              onClick={(e) => {
+                e.stopPropagation()
+                openRef.current?.()
+              }}
+              style={{ pointerEvents: 'all' }}
+            >
+              Seleccionar archivo
+            </Button>
+          </Stack>
         </Group>
       </Dropzone>
 
