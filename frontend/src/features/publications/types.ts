@@ -28,6 +28,7 @@ export interface Publication {
   error_message: string | null
   actor_id: number | null
   photo_url: string | null
+  video_url: string | null
   /** Verbatim JSONB: array de filas, cada fila array de InlineButton. */
   buttons: InlineButton[][] | null
   /** RFC3339; presente en filas `scheduled`. */
@@ -39,6 +40,7 @@ export interface Publication {
 export interface PublishRequest {
   text: string
   photo_url?: string
+  video_url?: string
   buttons?: InlineButton[][]
   group_ids: number[]
   /** RFC3339 con offset; el backend normaliza a UTC y exige futuro. */

@@ -178,6 +178,7 @@ func (s *Server) processBatchItem(
 	payload := publications.PublishPayload{
 		Text:     item.Text,
 		PhotoURL: item.PhotoURL,
+		VideoURL: item.VideoURL,
 		Buttons:  item.Buttons,
 		GroupIDs: item.GroupIDs,
 	}

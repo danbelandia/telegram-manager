@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"sort"
 	"strings"
 	"testing"
@@ -54,7 +55,7 @@ type fakeTelegramPub struct {
 
 // fakeTelegramCall registra una invocacion al adapter mockeado.
 type fakeTelegramCall struct {
-	kind     string // "message" o "photo"
+	kind     string // "message", "photo", "video", "photo_upload", "video_upload"
 	chatID   int64
 	text     string // text o caption segun kind
 	photoURL string
@@ -71,6 +72,21 @@ func (f *fakeTelegramPub) SendMessage(_ context.Context, chatID int64, text stri
 
 func (f *fakeTelegramPub) SendPhoto(_ context.Context, chatID int64, photoURL, caption string, _ *telegram.InlineKeyboardMarkup) (int64, error) {
 	f.calls = append(f.calls, fakeTelegramCall{kind: "photo", chatID: chatID, text: caption, photoURL: photoURL})
+	return f.sendResult(len(f.calls) - 1)
+}
+
+func (f *fakeTelegramPub) SendVideo(_ context.Context, chatID int64, videoURL, caption string, _ *telegram.InlineKeyboardMarkup) (int64, error) {
+	f.calls = append(f.calls, fakeTelegramCall{kind: "video", chatID: chatID, text: caption, photoURL: videoURL})
+	return f.sendResult(len(f.calls) - 1)
+}
+
+func (f *fakeTelegramPub) SendPhotoUpload(_ context.Context, chatID int64, _ io.Reader, _, caption string, _ *telegram.InlineKeyboardMarkup) (int64, error) {
+	f.calls = append(f.calls, fakeTelegramCall{kind: "photo_upload", chatID: chatID, text: caption})
+	return f.sendResult(len(f.calls) - 1)
+}
+
+func (f *fakeTelegramPub) SendVideoUpload(_ context.Context, chatID int64, _ io.Reader, _, caption string, _ *telegram.InlineKeyboardMarkup) (int64, error) {
+	f.calls = append(f.calls, fakeTelegramCall{kind: "video_upload", chatID: chatID, text: caption})
 	return f.sendResult(len(f.calls) - 1)
 }
 

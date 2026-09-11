@@ -25,6 +25,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"strings"
 	"time"
@@ -54,10 +55,14 @@ type GroupReader interface {
 // MessageSender es la vista minima del Service de Telegram para
 // publicaciones (*telegram.Adapter la satisface). El slice 2 amplio
 // SendMessage con un `keyboard` opcional y agrego SendPhoto para
-// soportar caption + reply_markup + foto por URL (design D1).
+// soportar caption + reply_markup + foto por URL (design D1). T4
+// agrega SendVideo (URL) y SendPhotoUpload/SendVideoUpload (multipart).
 type MessageSender interface {
 	SendMessage(ctx context.Context, chatID int64, text string, disableWebPagePreview bool, keyboard *telegram.InlineKeyboardMarkup) (int64, error)
 	SendPhoto(ctx context.Context, chatID int64, photoURL, caption string, keyboard *telegram.InlineKeyboardMarkup) (int64, error)
+	SendVideo(ctx context.Context, chatID int64, videoURL, caption string, keyboard *telegram.InlineKeyboardMarkup) (int64, error)
+	SendPhotoUpload(ctx context.Context, chatID int64, reader io.Reader, filename, caption string, keyboard *telegram.InlineKeyboardMarkup) (int64, error)
+	SendVideoUpload(ctx context.Context, chatID int64, reader io.Reader, filename, caption string, keyboard *telegram.InlineKeyboardMarkup) (int64, error)
 }
 
 // LogWriter es la vista minima del repositorio de logs
@@ -88,6 +93,7 @@ type PubStore interface {
 type PublishPayload struct {
 	Text     string                            `json:"text"`
 	PhotoURL *string                           `json:"photo_url,omitempty"`
+	VideoURL *string                           `json:"video_url,omitempty"`
 	Buttons  [][]telegram.InlineKeyboardButton `json:"buttons,omitempty"`
 	GroupIDs []int64                           `json:"group_ids"`
 }
@@ -151,7 +157,7 @@ func (s *Service) Publish(ctx context.Context, tenantID, actorID, groupID int64,
 		return nil, s.logFailure(ctx, entry, logs.StatusPermissionDenied, ErrBotPermission)
 	}
 
-	pub, err := s.createSending(ctx, tenantID, actorID, groupID, text, photoURL, buttons)
+	pub, err := s.createSending(ctx, tenantID, actorID, groupID, text, photoURL, nil, buttons)
 	if err != nil {
 		return nil, err
 	}
@@ -190,9 +196,10 @@ func (s *Service) PublishMany(ctx context.Context, tenantID, actorID int64, payl
 
 	results := make([]Publication, 0, len(payload.GroupIDs))
 	hasPhoto := payload.PhotoURL != nil && *payload.PhotoURL != ""
+	hasVideo := payload.VideoURL != nil && *payload.VideoURL != ""
 
 	for _, groupID := range payload.GroupIDs {
-		row, logEntry := s.publishOne(ctx, tenantID, actorID, groupID, payload.Text, hasPhoto, payload.PhotoURL, payload.Buttons)
+		row, logEntry := s.publishOne(ctx, tenantID, actorID, groupID, payload.Text, hasPhoto, payload.PhotoURL, hasVideo, payload.VideoURL, payload.Buttons)
 		results = append(results, row)
 		_ = logEntry // ya consumido por publishOne
 	}
@@ -207,7 +214,7 @@ func (s *Service) PublishMany(ctx context.Context, tenantID, actorID int64, payl
 // hasPhoto deriva de payload (pre-validado). photoURL es nil cuando no
 // hay foto; si hasPhoto=true y photoURL es nil, es un bug del caller
 // (PublishMany garantiza la condicion).
-func (s *Service) publishOne(ctx context.Context, tenantID, actorID, groupID int64, text string, hasPhoto bool, photoURL *string, buttons [][]telegram.InlineKeyboardButton) (Publication, *logs.Entry) {
+func (s *Service) publishOne(ctx context.Context, tenantID, actorID, groupID int64, text string, hasPhoto bool, photoURL *string, hasVideo bool, videoURL *string, buttons [][]telegram.InlineKeyboardButton) (Publication, *logs.Entry) {
 	row := Publication{
 		TenantID:   tenantID,
 		TelegramID: groupID,
@@ -252,6 +259,7 @@ func (s *Service) publishOne(ctx context.Context, tenantID, actorID, groupID int
 		Status:     StatusSending,
 		ActorID:    &actorID,
 		PhotoURL:   nilIfEmpty(photoURL),
+		VideoURL:   nilIfEmpty(videoURL),
 	}
 	if raw, mErr := MarshalButtons(buttons); mErr == nil {
 		pub.Buttons = raw
@@ -266,6 +274,7 @@ func (s *Service) publishOne(ctx context.Context, tenantID, actorID, groupID int
 	row.CreatedAt = pub.CreatedAt
 	row.UpdatedAt = pub.UpdatedAt
 	row.PhotoURL = pub.PhotoURL
+	row.VideoURL = pub.VideoURL
 	row.Buttons = pub.Buttons
 	row.Status = StatusSending
 	entry.Metadata = map[string]any{"publication_id": pub.ID}
@@ -273,7 +282,7 @@ func (s *Service) publishOne(ctx context.Context, tenantID, actorID, groupID int
 	// Slice 3: el path de envio + finalizacion (dispatch + UpdateStatus +
 	// log) vive en publishOneFinalize para que el worker reuse el
 	// mismo path sin tener que crear una nueva fila.
-	s.publishOneFinalize(ctx, pub, entry, hasPhoto, photoURL, buttons)
+	s.publishOneFinalize(ctx, pub, entry, hasPhoto, photoURL, hasVideo, videoURL, buttons)
 	// Reflejar el estado final en el row devuelto.
 	row.Status = pub.Status
 	row.MessageID = pub.MessageID
@@ -292,10 +301,10 @@ func (s *Service) publishOne(ctx context.Context, tenantID, actorID, groupID int
 // worker via processClaimed) ya lo hizo. Asi evitamos tanto la doble
 // consulta a GetByTelegramID como una doble corrida de permissionOk
 // (que ya fue validada por publishOne y por el Check del claim).
-func (s *Service) publishOneFinalize(ctx context.Context, pub *Publication, entry *logs.Entry, hasPhoto bool, photoURL *string, buttons [][]telegram.InlineKeyboardButton) {
+func (s *Service) publishOneFinalize(ctx context.Context, pub *Publication, entry *logs.Entry, hasPhoto bool, photoURL *string, hasVideo bool, videoURL *string, buttons [][]telegram.InlineKeyboardButton) {
 	buttonsJSON, _ := MarshalButtons(buttons) // best-effort; ya estaba persistido
 
-	messageID, err := s.dispatchWithPhoto(ctx, pub.TelegramID, pub.Text, hasPhoto, photoURL, buttons)
+	messageID, err := s.dispatchMedia(ctx, pub.TelegramID, pub.Text, hasPhoto, photoURL, hasVideo, videoURL, buttons)
 	if err != nil {
 		msg := err.Error()
 		_ = s.store.UpdateStatus(ctx, pub.TenantID, pub.ID, StatusFailed, nil, &msg)
@@ -325,31 +334,37 @@ func (s *Service) publishOneFinalize(ctx context.Context, pub *Publication, entr
 	_ = s.logs.Create(ctx, entry)
 }
 
-// dispatch decide si enviar SendPhoto (con foto) o SendMessage.
+// dispatch decide si enviar SendPhoto, SendVideo o SendMessage.
 // Centralizado para que Publish y publishOne compartan el path.
 func (s *Service) dispatch(ctx context.Context, pub *Publication) (int64, error) {
 	hasPhoto := pub.PhotoURL != nil && *pub.PhotoURL != ""
+	hasVideo := pub.VideoURL != nil && *pub.VideoURL != ""
 	if hasPhoto {
-		// photoURL no-nil garantizado por la guarda anterior.
 		return s.tg.SendPhoto(ctx, pub.TelegramID, *pub.PhotoURL, pub.Text, keyboardOrNil(nil))
+	}
+	if hasVideo {
+		return s.tg.SendVideo(ctx, pub.TelegramID, *pub.VideoURL, pub.Text, keyboardOrNil(nil))
 	}
 	return s.tg.SendMessage(ctx, pub.TelegramID, pub.Text, false, keyboardOrNil(nil))
 }
 
-// dispatchWithPhoto es la version usada por PublishMany antes de
-// persistir (sabemos hasPhoto/photoURL/buttons directamente del
-// payload).
-func (s *Service) dispatchWithPhoto(ctx context.Context, groupID int64, text string, hasPhoto bool, photoURL *string, buttons [][]telegram.InlineKeyboardButton) (int64, error) {
+// dispatchMedia es la version usada por publishOneFinalize antes de
+// persistir (sabemos hasPhoto/photoURL/hasVideo/videoURL/buttons
+// directamente del payload).
+func (s *Service) dispatchMedia(ctx context.Context, groupID int64, text string, hasPhoto bool, photoURL *string, hasVideo bool, videoURL *string, buttons [][]telegram.InlineKeyboardButton) (int64, error) {
 	keyboard := keyboardOrNil(buttons)
 	if hasPhoto {
 		return s.tg.SendPhoto(ctx, groupID, *photoURL, text, keyboard)
+	}
+	if hasVideo {
+		return s.tg.SendVideo(ctx, groupID, *videoURL, text, keyboard)
 	}
 	return s.tg.SendMessage(ctx, groupID, text, false, keyboard)
 }
 
 // createSending persiste la fila en estado sending y devuelve el row
 // con ID, CreatedAt y UpdatedAt asignados.
-func (s *Service) createSending(ctx context.Context, tenantID, actorID, groupID int64, text string, photoURL *string, buttons [][]telegram.InlineKeyboardButton) (*Publication, error) {
+func (s *Service) createSending(ctx context.Context, tenantID, actorID, groupID int64, text string, photoURL *string, videoURL *string, buttons [][]telegram.InlineKeyboardButton) (*Publication, error) {
 	pub := &Publication{
 		TenantID:   tenantID,
 		TelegramID: groupID,
@@ -357,6 +372,7 @@ func (s *Service) createSending(ctx context.Context, tenantID, actorID, groupID 
 		Status:     StatusSending,
 		ActorID:    &actorID,
 		PhotoURL:   nilIfEmpty(photoURL),
+		VideoURL:   nilIfEmpty(videoURL),
 	}
 	if raw, err := MarshalButtons(buttons); err == nil {
 		pub.Buttons = raw
@@ -422,6 +438,7 @@ func (s *Service) Schedule(ctx context.Context, tenantID, actorID int64, payload
 			Status:     StatusScheduled,
 			ActorID:    &actorID,
 			PhotoURL:   nilIfEmpty(payload.PhotoURL),
+			VideoURL:   nilIfEmpty(payload.VideoURL),
 		}
 		if raw, err := MarshalButtons(payload.Buttons); err == nil {
 			row.Buttons = raw
@@ -458,13 +475,26 @@ func validatePayload(p PublishPayload) error {
 		return ErrTextEmpty
 	}
 	hasPhoto := p.PhotoURL != nil && *p.PhotoURL != ""
-	if err := validateTextLength(hasPhoto, p.Text); err != nil {
+	hasVideo := p.VideoURL != nil && *p.VideoURL != ""
+
+	if hasPhoto && hasVideo {
+		return ErrMediaExclusive
+	}
+
+	if err := validateTextLength(hasPhoto || hasVideo, p.Text); err != nil {
 		return err
 	}
 
 	// Foto (opcional).
 	if p.PhotoURL != nil {
 		if err := validatePhotoURL(*p.PhotoURL); err != nil {
+			return err
+		}
+	}
+
+	// Video (opcional).
+	if p.VideoURL != nil {
+		if err := validateVideoURL(*p.VideoURL); err != nil {
 			return err
 		}
 	}
@@ -520,6 +550,25 @@ func validatePhotoURL(raw string) error {
 	scheme := strings.ToLower(u.Scheme)
 	if scheme != "http" && scheme != "https" {
 		return ErrPhotoURLScheme
+	}
+	return nil
+}
+
+// validateVideoURL exige http(s) + longitud <= maxVideoURLLength.
+func validateVideoURL(raw string) error {
+	if raw == "" {
+		return ErrVideoURLEmpty
+	}
+	if len(raw) > maxVideoURLLength {
+		return ErrVideoURLTooLong
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ErrVideoURLScheme
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return ErrVideoURLScheme
 	}
 	return nil
 }

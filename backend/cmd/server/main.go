@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -299,6 +300,13 @@ func run() error {
 	// clave de cifrado el servicio rechaza (ErrSignupNotConfigured).
 	signupSvc := auth.NewSignupService(db, tenantsRepo, authRepo, crypter, auth.ValidateBotToken)
 
+	// Media store para uploads de fotos/videos (photos-videos-upload).
+	uploadDir := filepath.Join(".", "uploads")
+	if err := os.MkdirAll(uploadDir, 0o755); err != nil {
+		return fmt.Errorf("startup: create upload dir: %w", err)
+	}
+	mediaStore := api.NewLocalMediaStore(uploadDir)
+
 	var server *api.Server
 
 	switch cfg.TelegramMode {
@@ -318,6 +326,7 @@ func run() error {
 			api.WithAuth(authService, tokenManager, cfg.CookieSecure),
 			api.WithSignup(signupSvc, webhookSignupHook),
 			api.WithLicense(licenseSvc),
+			api.WithMedia(mediaStore),
 			api.WithAdmin(tenantsRepo, tenantsRepo, tenantsRepo),
 			api.WithGroups(groupsRepo, legacyBot),
 			api.WithUsers(usersRepo),
@@ -424,6 +433,7 @@ func run() error {
 			api.WithAuth(authService, tokenManager, cfg.CookieSecure),
 			api.WithSignup(signupSvc, onTenantReady),
 			api.WithLicense(licenseSvc),
+			api.WithMedia(mediaStore),
 			api.WithAdmin(tenantsRepo, tenantsRepo, tenantsRepo),
 			api.WithGroups(groupsRepo, statusAdapter),
 			api.WithUsers(usersRepo),

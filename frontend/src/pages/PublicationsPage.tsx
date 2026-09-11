@@ -3,6 +3,10 @@
 // pagina): la pagina completa usa Stack/Group/Card/Textarea/TextInput/
 // Radio/Checkbox/Table/Badge/Alert. La logica de negocio no cambia
 // (validation cliente + hooks existentes en features/publications/).
+//
+// Slice photos-videos-upload: reemplaza TextInput de foto URL por
+// MediaUploader (Dropzone) que soporta fotos JPG/PNG/GIF/WebP y
+// videos MP4 subidos desde el PC.
 import { useMemo, useState } from 'react'
 import {
   Alert,
@@ -44,6 +48,8 @@ import type {
 import { useGroups } from '../features/groups/hooks'
 import ButtonsEditor from '../features/publications/ButtonsEditor'
 import BatchWizard from '../features/publications-batch/BatchWizard'
+import MediaUploader from '../components/MediaUploader'
+import type { MediaValue } from '../components/MediaUploader'
 
 const STATUS_LABEL: Record<PublicationStatus, string> = {
   draft: 'Borrador',
@@ -100,14 +106,19 @@ export default function PublicationsPage() {
   const [mode, setMode] = useState<PublishMode>('now')
   const [text, setText] = useState('')
   const [photoUrl, setPhotoUrl] = useState('')
+  const [mediaFile, setMediaFile] = useState<MediaValue | null>(null)
   const [buttons, setButtons] = useState<InlineButton[][]>([])
   const [selectedGroupIds, setSelectedGroupIds] = useState<number[]>([])
   const [scheduledLocal, setScheduledLocal] = useState('')
   const [clientError, setClientError] = useState<string | null>(null)
   const [batchOpen, setBatchOpen] = useState(false)
 
-  const hasPhoto = photoUrl.trim().length > 0
-  const textMax = hasPhoto ? MAX_TEXT_WITH_PHOTO : MAX_TEXT_NO_PHOTO
+  // Media: archivo subido (Dropzone) tiene prioridad sobre URL manual
+  const hasMedia = mediaFile !== null
+  const hasPhotoUrl = !hasMedia && photoUrl.trim().length > 0
+  const hasAnyMedia = hasMedia || hasPhotoUrl
+  // Con foto/video, el caption baja a 1024 (limite de sendPhoto/sendVideo)
+  const textMax = hasAnyMedia ? MAX_TEXT_WITH_PHOTO : MAX_TEXT_NO_PHOTO
   const textOver = text.length > textMax
 
   const createError = create.error ? formatPublicationsError(create.error) : null
@@ -135,17 +146,20 @@ export default function PublicationsPage() {
     }
     if (textOver) {
       setClientError(
-        hasPhoto
-          ? 'El texto excede 1024 caracteres cuando se envía con foto.'
+        hasAnyMedia
+          ? 'El texto excede 1024 caracteres cuando se envía con media.'
           : `El texto excede ${MAX_TEXT_NO_PHOTO} caracteres.`,
       )
       return
     }
 
-    const photoErr = validatePhotoUrlClient(photoUrl.trim())
-    if (photoErr) {
-      setClientError(photoErr)
-      return
+    // Validar URL solo si no hay archivo subido y se pegó una URL
+    if (!hasMedia && photoUrl.trim().length > 0) {
+      const photoErr = validatePhotoUrlClient(photoUrl.trim())
+      if (photoErr) {
+        setClientError(photoErr)
+        return
+      }
     }
 
     const rows = nonEmptyRows(buttons)
@@ -171,9 +185,23 @@ export default function PublicationsPage() {
       scheduledAt = res.iso
     }
 
+    // Construir payload: archivo subido o URL manual
+    let photo_url: string | undefined
+    let video_url: string | undefined
+    if (hasMedia) {
+      if (mediaFile!.type === 'photo') {
+        photo_url = mediaFile!.url
+      } else {
+        video_url = mediaFile!.url
+      }
+    } else if (hasPhotoUrl) {
+      photo_url = photoUrl.trim()
+    }
+
     create.mutate({
       text: trimmedText,
-      photo_url: hasPhoto ? photoUrl.trim() : undefined,
+      photo_url,
+      video_url,
       buttons: rows.length > 0 ? rows : undefined,
       group_ids: selectedGroupIds,
       scheduled_at: scheduledAt,
@@ -259,18 +287,31 @@ export default function PublicationsPage() {
               maxRows={20}
               maxLength={textMax}
               radius="lg"
-              error={textOver ? `Excede el límite (${textMax}).${hasPhoto ? ' Con foto el máximo es 1024 (caption).' : ''}` : undefined}
+              error={textOver ? `Excede el límite (${textMax}).${hasAnyMedia ? ' Con media el máximo es 1024 (caption).' : ''}` : undefined}
               styles={{ input: { fontSize: '0.95rem' } }}
             />
 
-            <TextInput
-              type="url"
-              label="Foto (URL pública, opcional, ≤ 5 MB)"
-              value={photoUrl}
-              onChange={(e) => setPhotoUrl(e.currentTarget.value)}
-              placeholder="https://ejemplo.com/imagen.jpg"
-              radius="md"
-            />
+            <Stack gap="xs">
+              <Text fw={500} size="sm">
+                Media (opcional)
+              </Text>
+              <MediaUploader
+                value={mediaFile}
+                onChange={setMediaFile}
+                onError={(msg) => setClientError(msg)}
+              />
+              {!hasMedia && (
+                <TextInput
+                  type="url"
+                  label="O pegá una URL de imagen"
+                  value={photoUrl}
+                  onChange={(e) => setPhotoUrl(e.currentTarget.value)}
+                  placeholder="https://ejemplo.com/imagen.jpg"
+                  radius="md"
+                  size="sm"
+                />
+              )}
+            </Stack>
 
             <Stack gap="xs">
               <Text fw={500} size="sm">
@@ -393,7 +434,7 @@ export default function PublicationsPage() {
                 <Table.Thead>
                   <Table.Tr>
                     <Table.Th>Mensaje</Table.Th>
-                    <Table.Th>Foto</Table.Th>
+                    <Table.Th>Media</Table.Th>
                     <Table.Th>Botones</Table.Th>
                     <Table.Th>Grupo</Table.Th>
                     <Table.Th>Estado</Table.Th>
@@ -467,6 +508,10 @@ function PublicationRow({
             alt="foto publicación"
             style={{ maxWidth: 60, maxHeight: 40, borderRadius: 4 }}
           />
+        ) : pub.video_url ? (
+          <Badge color="blue" variant="light" size="sm">
+            Video
+          </Badge>
         ) : (
           '—'
         )}

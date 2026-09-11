@@ -184,11 +184,12 @@ func (s *Scheduler) processClaimed(ctx context.Context, row *Publication) {
 	}
 
 	hasPhoto := row.PhotoURL != nil && *row.PhotoURL != ""
+	hasVideo := row.VideoURL != nil && *row.VideoURL != ""
 	// El Service expone publishOneFinalize (no se llama desde afuera
 	// del paquete). Reusamos esa funcion via un Service efimero para
 	// no romper la interfaz publica del Service.
 	svc := &Service{groups: s.groups, tg: s.tg, logs: s.log, store: s.store}
-	svc.publishOneFinalize(ctx, row, entry, hasPhoto, row.PhotoURL, buttons)
+	svc.publishOneFinalize(ctx, row, entry, hasPhoto, row.PhotoURL, hasVideo, row.VideoURL, buttons)
 }
 
 // permissionOk expone el mismo check del Service (bugfix #172) para
