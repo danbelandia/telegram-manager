@@ -14,6 +14,7 @@ import {
   Button,
   Loader,
   Alert,
+  useComputedColorScheme,
 } from '@mantine/core'
 import { Dropzone, MIME_TYPES } from '@mantine/dropzone'
 import { IconUpload, IconX, IconPhoto, IconVideo, IconFile } from '@tabler/icons-react'
@@ -52,6 +53,7 @@ export default function MediaUploader({
   const openRef = useRef<() => void>(null)
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const colorScheme = useComputedColorScheme('light')
 
   const handleDrop = async (files: File[]) => {
     const file = files[0]
@@ -111,7 +113,7 @@ export default function MediaUploader({
                 h={60}
                 justify="center"
                 align="center"
-                style={{ backgroundColor: 'var(--mantine-color-gray-1)', borderRadius: 'var(--mantine-radius-md)' }}
+                style={{ backgroundColor: colorScheme === 'dark' ? 'var(--mantine-color-dark-5)' : 'var(--mantine-color-gray-1)', borderRadius: 'var(--mantine-radius-md)' }}
               >
                 <IconVideo size={24} color="var(--mantine-color-blue-6)" />
               </Group>
@@ -157,7 +159,7 @@ export default function MediaUploader({
         style={{
           borderStyle: 'dashed',
           borderWidth: 2,
-          backgroundColor: 'var(--mantine-color-gray-0)',
+          backgroundColor: colorScheme === 'dark' ? 'var(--mantine-color-dark-6)' : 'var(--mantine-color-gray-0)',
         }}
       >
         <Group justify="center" gap="xl" mih={120} style={{ pointerEvents: 'none' }}>
