@@ -224,12 +224,18 @@ export default function AdminTenantsPage() {
         size="md"
       >
         <Stack gap="md">
-          <Select
-            label="Estado"
-            data={editing ? editableStatuses(editing.status) : []}
-            value={editForm.status}
-            onChange={(v) => setEditForm((f) => ({ ...f, status: v ?? f.status }))}
-          />
+          <div>
+            <Text size="sm" fw={500} mb={4}>Estado</Text>
+            <select
+              style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--mantine-radius-sm)', border: '1px solid var(--mantine-color-default-border)' }}
+              value={editForm.status}
+              onChange={(e) => setEditForm((f) => ({ ...f, status: e.target.value }))}
+            >
+              {editing && editableStatuses(editing.status).map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          </div>
 
           <Select
             label="Plan"
@@ -242,14 +248,14 @@ export default function AdminTenantsPage() {
             label="Trial hasta"
             type="datetime-local"
             value={editForm.trial_ends_at}
-            onChange={(e) => setEditForm((f) => ({ ...f, trial_ends_at: e.currentTarget.value }))}
+            onChange={(e) => setEditForm((f) => ({ ...f, trial_ends_at: e.target.value }))}
           />
 
           <TextInput
             label="Expira"
             type="datetime-local"
             value={editForm.expires_at}
-            onChange={(e) => setEditForm((f) => ({ ...f, expires_at: e.currentTarget.value }))}
+            onChange={(e) => setEditForm((f) => ({ ...f, expires_at: e.target.value }))}
           />
 
           <NumberInput
