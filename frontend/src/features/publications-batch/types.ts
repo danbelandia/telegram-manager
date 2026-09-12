@@ -20,6 +20,7 @@ import type { InlineButton, Publication } from '../publications/types'
 export interface BatchItemInput {
   text: string
   photo_url?: string
+  video_url?: string
   buttons?: InlineButton[][]
   group_ids: number[]
   /** RFC3339 con offset; ausente o vacio = publicacion inmediata. */

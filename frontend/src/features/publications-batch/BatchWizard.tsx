@@ -51,6 +51,8 @@ import type {
 } from './types'
 import ButtonsEditor from '../publications/ButtonsEditor'
 import { useGroups } from '../groups/hooks'
+import MediaUploader from '../../components/MediaUploader'
+import type { MediaValue } from '../../components/MediaUploader'
 
 /** Cap maximo por batch (server-side REQ-16). */
 const MAX_BATCH_SIZE = 10
@@ -61,6 +63,7 @@ const DEFAULT_SLOT_COUNT = 2
 interface SlotDraft {
   text: string
   photoUrl: string
+  mediaFile: MediaValue | null
   buttons: InlineButton[][]
   groupIds: number[]
   scheduledDate: Date | null
@@ -70,6 +73,7 @@ function emptySlot(): SlotDraft {
   return {
     text: '',
     photoUrl: '',
+    mediaFile: null,
     buttons: [],
     groupIds: [],
     scheduledDate: null,
@@ -78,13 +82,21 @@ function emptySlot(): SlotDraft {
 
 function slotToInput(s: SlotDraft): BatchItemInput {
   const trimmedText = s.text.trim()
-  const photoUrl = s.photoUrl.trim()
   const buttons = nonEmptyRows(s.buttons)
   const item: BatchItemInput = {
     text: trimmedText,
     group_ids: s.groupIds,
   }
-  if (photoUrl) item.photo_url = photoUrl
+  // Media: archivo subido tiene prioridad sobre URL manual
+  if (s.mediaFile) {
+    if (s.mediaFile.type === 'photo') {
+      item.photo_url = s.mediaFile.url
+    } else {
+      item.video_url = s.mediaFile.url
+    }
+  } else if (s.photoUrl.trim()) {
+    item.photo_url = s.photoUrl.trim()
+  }
   if (buttons.length > 0) item.buttons = buttons
   if (s.scheduledDate) {
     const res = validateScheduledAtClient(dateToLocalInput(s.scheduledDate), new Date())
@@ -168,8 +180,10 @@ export default function BatchWizard({ opened, onClose }: BatchWizardProps) {
   /** Validacion per-slot; devuelve null si OK o string con mensaje. */
   const slotError = (s: SlotDraft): string | null => {
     if (!s.text.trim()) return 'texto no puede estar vacio'
-    const photoErr = validatePhotoUrlClient(s.photoUrl.trim())
-    if (photoErr) return photoErr
+    if (!s.mediaFile) {
+      const photoErr = validatePhotoUrlClient(s.photoUrl.trim())
+      if (photoErr) return photoErr
+    }
     const btnErr = validateButtonsClient(nonEmptyRows(s.buttons))
     if (btnErr) return btnErr
     const groupErr = validateGroupIdsClient(s.groupIds)
@@ -289,14 +303,26 @@ export default function BatchWizard({ opened, onClose }: BatchWizardProps) {
                       error={errors[i] && errors[i]?.includes('texto') ? errors[i] : undefined}
                     />
 
-                    <TextInput
-                      type="url"
-                      label="Foto (URL pública, opcional)"
-                      value={s.photoUrl}
-                      onChange={(e) => updateSlot(i, { photoUrl: e.currentTarget.value })}
-                      placeholder="https://ejemplo.com/imagen.jpg"
-                      error={errors[i] && errors[i]?.includes('URL') ? errors[i] : undefined}
-                    />
+                    <Stack gap="xs">
+                      <Text fw={500} size="sm">
+                        Media (opcional)
+                      </Text>
+                      <MediaUploader
+                        value={s.mediaFile}
+                        onChange={(media) => updateSlot(i, { mediaFile: media })}
+                      />
+                      {!s.mediaFile && (
+                        <TextInput
+                          type="url"
+                          label="O pegá una URL de imagen"
+                          value={s.photoUrl}
+                          onChange={(e) => updateSlot(i, { photoUrl: e.currentTarget.value })}
+                          placeholder="https://ejemplo.com/imagen.jpg"
+                          error={errors[i] && errors[i]?.includes('URL') ? errors[i] : undefined}
+                          size="sm"
+                        />
+                      )}
+                    </Stack>
 
                     <Stack gap="xs">
                       <Text fw={500} size="sm">
