@@ -6,7 +6,6 @@ import {
   Group,
   Loader,
   Modal,
-  NativeSelect,
   NumberInput,
   Paper,
   Select,
@@ -225,11 +224,11 @@ export default function AdminTenantsPage() {
         size="md"
       >
         <Stack gap="md">
-          <NativeSelect
+          <Select
             label="Estado"
             data={editing ? editableStatuses(editing.status) : []}
             value={editForm.status}
-            onChange={(e) => setEditForm((f) => ({ ...f, status: e.currentTarget.value }))}
+            onChange={(v) => setEditForm((f) => ({ ...f, status: v ?? f.status }))}
           />
 
           <Select
