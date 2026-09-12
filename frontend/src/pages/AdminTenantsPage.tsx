@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { Component, type ReactNode, useEffect, useState } from 'react'
 import {
   ActionIcon,
   Badge,
@@ -6,7 +6,7 @@ import {
   Group,
   Loader,
   Modal,
-  NumberInput,
+  NativeSelect,
   Paper,
   Select,
   Stack,
@@ -56,6 +56,24 @@ function editableStatuses(current: string): { value: string; label: string }[] {
     { value: current, label: `${current} (actual)` },
     ...allowed.map((s) => ({ value: s, label: s })),
   ]
+}
+
+/** Temporary error boundary to catch and display the crash cause. */
+class ModalErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null }
+  static getDerivedStateFromError(error: Error) { return { error } }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ padding: 16, background: '#fff3f3', borderRadius: 8, border: '1px solid red' }}>
+          <Text fw={700} c="red">Error en el modal:</Text>
+          <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12 }}>{this.state.error.message}</pre>
+          <pre style={{ whiteSpace: 'pre-wrap', fontSize: 10, color: '#666' }}>{this.state.error.stack}</pre>
+        </div>
+      )
+    }
+    return this.props.children
+  }
 }
 
 function toLocalDatetime(iso: string | null): string {
@@ -223,25 +241,20 @@ export default function AdminTenantsPage() {
         title={editing ? `Editar tenant: ${editing.slug}` : ''}
         size="md"
       >
+        <ModalErrorBoundary>
         <Stack gap="md">
-          <div>
-            <Text size="sm" fw={500} mb={4}>Estado</Text>
-            <select
-              style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--mantine-radius-sm)', border: '1px solid var(--mantine-color-default-border)' }}
-              value={editForm.status}
-              onChange={(e) => setEditForm((f) => ({ ...f, status: e.target.value }))}
-            >
-              {editing && editableStatuses(editing.status).map((opt) => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
-          </div>
+          <NativeSelect
+            label="Estado"
+            data={editing ? editableStatuses(editing.status) : []}
+            value={editForm.status}
+            onChange={(e) => setEditForm((f) => ({ ...f, status: e.currentTarget.value }))}
+          />
 
-          <Select
+          <NativeSelect
             label="Plan"
             data={PLAN_OPTIONS}
             value={editForm.plan}
-            onChange={(v) => setEditForm((f) => ({ ...f, plan: v ?? 'pro' }))}
+            onChange={(e) => setEditForm((f) => ({ ...f, plan: e.currentTarget.value }))}
           />
 
           <TextInput
@@ -258,16 +271,18 @@ export default function AdminTenantsPage() {
             onChange={(e) => setEditForm((f) => ({ ...f, expires_at: e.target.value }))}
           />
 
-          <NumberInput
+          <TextInput
             label="Máximo de grupos (-1 = ilimitado)"
-            value={editForm.max_groups}
-            onChange={(v) => setEditForm((f) => ({ ...f, max_groups: Number(v) }))}
+            type="number"
+            value={String(editForm.max_groups)}
+            onChange={(e) => setEditForm((f) => ({ ...f, max_groups: Number(e.target.value) }))}
           />
 
-          <NumberInput
+          <TextInput
             label="Máximo mensajes por día (-1 = ilimitado)"
-            value={editForm.max_messages_day}
-            onChange={(v) => setEditForm((f) => ({ ...f, max_messages_day: Number(v) }))}
+            type="number"
+            value={String(editForm.max_messages_day)}
+            onChange={(e) => setEditForm((f) => ({ ...f, max_messages_day: Number(e.target.value) }))}
           />
 
           {saveError && <Text c="red" size="sm">{saveError}</Text>}
@@ -277,6 +292,7 @@ export default function AdminTenantsPage() {
             <Button loading={saving} onClick={handleSave}>Guardar</Button>
           </Group>
         </Stack>
+        </ModalErrorBoundary>
       </Modal>
     </Stack>
   )
