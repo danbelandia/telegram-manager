@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   approveJoinRequest,
   banUser,
+  batchDecideJoinRequests,
   deleteMessage,
   getGroupUser,
   listGroupUsers,
@@ -181,6 +182,28 @@ export function useRejectJoinRequest() {
   return useMutation({
     mutationFn: ({ groupId, requestId }: JoinRequestAction) =>
       rejectJoinRequest(groupId, requestId),
+    onSuccess: (_data, { groupId }) => {
+      qc.invalidateQueries({ queryKey: requestsKey(groupId) })
+      qc.invalidateQueries({ queryKey: logsKey(groupId) })
+    },
+  })
+}
+
+// ── Batch ────────────────────────────────────────────────────────────
+
+interface BatchJoinRequestAction {
+  groupId: string
+  action: 'approve' | 'reject'
+  requestIds: number[]
+}
+
+// BatchDecide procesa N solicitudes en una sola request. Invalida la
+// lista de solicitudes y los logs al completar.
+export function useBatchJoinRequest() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ groupId, action, requestIds }: BatchJoinRequestAction) =>
+      batchDecideJoinRequests(groupId, action, requestIds),
     onSuccess: (_data, { groupId }) => {
       qc.invalidateQueries({ queryKey: requestsKey(groupId) })
       qc.invalidateQueries({ queryKey: logsKey(groupId) })

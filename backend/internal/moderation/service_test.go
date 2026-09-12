@@ -413,3 +413,186 @@ func TestService_ApproveTelegramErrorKeepsPending(t *testing.T) {
 		t.Errorf("log status = %s, want PERMISSION_DENIED", logFake.entries[0].Status)
 	}
 }
+
+// ── BatchDecide tests ──────────────────────────────────────────────
+
+func TestService_BatchDecide_ApproveMultiple(t *testing.T) {
+	reqs := newFakeRequests()
+	r1 := reqs.add(-1001, 100)
+	r2 := reqs.add(-1001, 200)
+	r3 := reqs.add(-1001, 300)
+	tg := &fakeTelegram{}
+	svc, logFake := newService(t, tg, reqs, map[int64]*groups.Group{
+		-1001: adminGroup(),
+	})
+
+	results, err := svc.BatchDecide(context.Background(), 7, -1001, "approve", []int64{r1.ID, r2.ID, r3.ID})
+	if err != nil {
+		t.Fatalf("BatchDecide() error: %v", err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("results = %d, want 3", len(results))
+	}
+	for _, r := range results {
+		if r.Status != "approved" {
+			t.Errorf("result %d status = %s, want approved", r.ID, r.Status)
+		}
+		if r.Error != "" {
+			t.Errorf("result %d error = %s, want empty", r.ID, r.Error)
+		}
+	}
+	if len(tg.approved) != 3 {
+		t.Errorf("approved = %d, want 3", len(tg.approved))
+	}
+	if r1.Status != joinrequests.StatusApproved || r2.Status != joinrequests.StatusApproved || r3.Status != joinrequests.StatusApproved {
+		t.Errorf("statuses = %v, want all approved", []string{string(r1.Status), string(r2.Status), string(r3.Status)})
+	}
+	if len(logFake.entries) != 3 {
+		t.Errorf("logs = %d, want 3", len(logFake.entries))
+	}
+}
+
+func TestService_BatchDecide_RejectMultiple(t *testing.T) {
+	reqs := newFakeRequests()
+	r1 := reqs.add(-1001, 100)
+	tg := &fakeTelegram{}
+	svc, _ := newService(t, tg, reqs, map[int64]*groups.Group{
+		-1001: adminGroup(),
+	})
+
+	results, err := svc.BatchDecide(context.Background(), 7, -1001, "reject", []int64{r1.ID})
+	if err != nil {
+		t.Fatalf("BatchDecide() error: %v", err)
+	}
+	if len(results) != 1 || results[0].Status != "rejected" {
+		t.Errorf("results = %v, want [rejected]", results)
+	}
+	if len(tg.rejected) != 1 {
+		t.Errorf("rejected = %d, want 1", len(tg.rejected))
+	}
+}
+
+func TestService_BatchDecide_GroupNotFound(t *testing.T) {
+	tg := &fakeTelegram{}
+	svc, _ := newService(t, tg, nil, map[int64]*groups.Group{})
+
+	_, err := svc.BatchDecide(context.Background(), 7, -999, "approve", []int64{1})
+	if !errors.Is(err, ErrGroupNotFound) {
+		t.Fatalf("BatchDecide() error = %v, want ErrGroupNotFound", err)
+	}
+}
+
+func TestService_BatchDecide_PermissionDenied(t *testing.T) {
+	reqs := newFakeRequests()
+	reqs.add(-1001, 100)
+	tg := &fakeTelegram{}
+	svc, _ := newService(t, tg, reqs, map[int64]*groups.Group{
+		-1001: memberGroup(),
+	})
+
+	_, err := svc.BatchDecide(context.Background(), 7, -1001, "approve", []int64{1})
+	if !errors.Is(err, ErrBotPermission) {
+		t.Fatalf("BatchDecide() error = %v, want ErrBotPermission", err)
+	}
+}
+
+func TestService_BatchDecide_InvalidAction(t *testing.T) {
+	tg := &fakeTelegram{}
+	svc, _ := newService(t, tg, nil, map[int64]*groups.Group{
+		-1001: adminGroup(),
+	})
+
+	_, err := svc.BatchDecide(context.Background(), 7, -1001, "delete", []int64{1})
+	if err == nil {
+		t.Fatal("BatchDecide() error = nil, want error for invalid action")
+	}
+}
+
+func TestService_BatchDecide_PartialFailure(t *testing.T) {
+	reqs := newFakeRequests()
+	r1 := reqs.add(-1001, 100)
+	r2 := reqs.add(-1001, 200)
+	// r3 does not exist in the store (will be not found)
+	tg := &fakeTelegram{}
+	svc, logFake := newService(t, tg, reqs, map[int64]*groups.Group{
+		-1001: adminGroup(),
+	})
+
+	results, err := svc.BatchDecide(context.Background(), 7, -1001, "approve", []int64{r1.ID, 999, r2.ID})
+	if err != nil {
+		t.Fatalf("BatchDecide() error: %v", err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("results = %d, want 3", len(results))
+	}
+	// r1 approved
+	if results[0].Status != "approved" {
+		t.Errorf("result[0] status = %s, want approved", results[0].Status)
+	}
+	// 999 not found
+	if results[1].Status != "error" {
+		t.Errorf("result[1] status = %s, want error", results[1].Status)
+	}
+	// r2 approved
+	if results[2].Status != "approved" {
+		t.Errorf("result[2] status = %s, want approved", results[2].Status)
+	}
+	if len(tg.approved) != 2 {
+		t.Errorf("approved = %d, want 2", len(tg.approved))
+	}
+	// 3 log entries: 2 success + 1 not found
+	if len(logFake.entries) != 3 {
+		t.Errorf("logs = %d, want 3", len(logFake.entries))
+	}
+}
+
+func TestService_BatchDecide_AlreadyDecidedSkipped(t *testing.T) {
+	reqs := newFakeRequests()
+	r1 := reqs.add(-1001, 100)
+	r1.Status = joinrequests.StatusApproved // already decided
+	tg := &fakeTelegram{}
+	svc, _ := newService(t, tg, reqs, map[int64]*groups.Group{
+		-1001: adminGroup(),
+	})
+
+	results, err := svc.BatchDecide(context.Background(), 7, -1001, "approve", []int64{r1.ID})
+	if err != nil {
+		t.Fatalf("BatchDecide() error: %v", err)
+	}
+	if len(results) != 1 || results[0].Status != "error" {
+		t.Errorf("results = %v, want [error]", results)
+	}
+	if len(tg.approved) != 0 {
+		t.Errorf("approved = %d, want 0 (already decided, skip)", len(tg.approved))
+	}
+}
+
+func TestService_BatchDecide_TelegramErrorPerItem(t *testing.T) {
+	reqs := newFakeRequests()
+	r1 := reqs.add(-1001, 100)
+	r2 := reqs.add(-1001, 200)
+	tg := &fakeTelegram{err: telegram.ErrPermissionDenied}
+	svc, logFake := newService(t, tg, reqs, map[int64]*groups.Group{
+		-1001: adminGroup(),
+	})
+
+	results, err := svc.BatchDecide(context.Background(), 7, -1001, "approve", []int64{r1.ID, r2.ID})
+	if err != nil {
+		t.Fatalf("BatchDecide() error: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("results = %d, want 2", len(results))
+	}
+	for _, r := range results {
+		if r.Status != "error" {
+			t.Errorf("result %d status = %s, want error (telegram denied)", r.ID, r.Status)
+		}
+	}
+	// Both requests stay pending (telegram failed).
+	if r1.Status != joinrequests.StatusPending || r2.Status != joinrequests.StatusPending {
+		t.Errorf("statuses = %v, want both pending", []string{string(r1.Status), string(r2.Status)})
+	}
+	if len(logFake.entries) != 2 {
+		t.Errorf("logs = %d, want 2", len(logFake.entries))
+	}
+}

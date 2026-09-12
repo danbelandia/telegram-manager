@@ -164,6 +164,110 @@ func (s *Service) Reject(ctx context.Context, actorID, groupID, requestID int64)
 	)
 }
 
+// BatchItemResult es el resultado de una operacion individual dentro de
+// un batch approve/reject. Si Error es nil, la operacion fue exitosa.
+type BatchItemResult struct {
+	ID     int64  `json:"id"`
+	Status string `json:"status"`
+	Error  string `json:"error,omitempty"`
+}
+
+// BatchDecide procesa N solicitudes de ingreso en un solo batch.
+// Resuelve el grupo UNA vez y luego itera sobre cada requestID llamando
+// a decide() (que reutiliza grupo→solicitud→permiso→telegram→log).
+// Devuelve resultados individuales: cada item puede fallar
+// independientemente de los demas.
+func (s *Service) BatchDecide(ctx context.Context, actorID, groupID int64, action string, requestIDs []int64) ([]BatchItemResult, error) {
+	// Resolver el grupo una sola vez: si el grupo no existe o el bot
+	// no tiene permisos, todas las operaciones fallan con el mismo error
+	// (fail-fast para grupo invalido, no per-item).
+	group, err := s.groups.GetByTenant(ctx, s.tenantID, groupID)
+	if err != nil {
+		if errors.Is(err, groups.ErrNotFound) {
+			return nil, ErrGroupNotFound
+		}
+		return nil, fmt.Errorf("moderation: batch %s: get group: %w", action, err)
+	}
+	if !permissionOk(group) {
+		return nil, ErrBotPermission
+	}
+
+	var call func(ctx context.Context, chatID, userID int64) error
+	var status joinrequests.Status
+	var logAction string
+	switch action {
+	case "approve":
+		call = func(ctx context.Context, chatID, userID int64) error {
+			return s.tg.ApproveJoinRequest(ctx, chatID, userID)
+		}
+		status = joinrequests.StatusApproved
+		logAction = logs.ActionApproveJoinRequest
+	case "reject":
+		call = func(ctx context.Context, chatID, userID int64) error {
+			return s.tg.RejectJoinRequest(ctx, chatID, userID)
+		}
+		status = joinrequests.StatusRejected
+		logAction = logs.ActionRejectJoinRequest
+	default:
+		return nil, fmt.Errorf("moderation: batch: invalid action %q", action)
+	}
+
+	results := make([]BatchItemResult, 0, len(requestIDs))
+	for _, rid := range requestIDs {
+		entry := &logs.Entry{TenantID: s.tenantID, ActorID: &actorID, GroupID: groupID, Action: logAction}
+
+		req, err := s.requests.GetByID(ctx, s.tenantID, rid)
+		if err != nil {
+			if errors.Is(err, joinrequests.ErrNotFound) {
+				msg := ErrRequestNotFound.Error()
+				entry.TargetUserID = nil
+				entry.Status = logs.StatusNotFound
+				entry.ErrorMessage = &msg
+				_ = s.logs.Create(ctx, entry)
+				results = append(results, BatchItemResult{ID: rid, Status: "error", Error: msg})
+				continue
+			}
+			// Error inesperado del repositorio: abortamos el batch.
+			return results, fmt.Errorf("moderation: batch %s: get request %d: %w", action, rid, err)
+		}
+		if req.GroupID != groupID {
+			msg := ErrRequestNotFound.Error()
+			entry.Status = logs.StatusNotFound
+			entry.ErrorMessage = &msg
+			_ = s.logs.Create(ctx, entry)
+			results = append(results, BatchItemResult{ID: rid, Status: "error", Error: msg})
+			continue
+		}
+		if req.Status != joinrequests.StatusPending {
+			msg := ErrRequestAlreadyDecided.Error()
+			entry.Status = logs.StatusValidationError
+			entry.ErrorMessage = &msg
+			_ = s.logs.Create(ctx, entry)
+			results = append(results, BatchItemResult{ID: rid, Status: "error", Error: msg})
+			continue
+		}
+
+		userID := req.UserID
+		if err := call(ctx, groupID, userID); err != nil {
+			entry.Status = statusForTelError(err)
+			msg := err.Error()
+			entry.ErrorMessage = &msg
+			_ = s.logs.Create(ctx, entry)
+			results = append(results, BatchItemResult{ID: rid, Status: "error", Error: msg})
+			continue
+		}
+
+		if err := s.requests.Resolve(ctx, rid, status, &actorID); err != nil {
+			return results, fmt.Errorf("moderation: batch %s: resolve %d: %w", action, rid, err)
+		}
+		entry.Status = logs.StatusSuccess
+		_ = s.logs.Create(ctx, entry)
+		results = append(results, BatchItemResult{ID: rid, Status: string(status)})
+	}
+
+	return results, nil
+}
+
 // decide es el flujo de approve/reject: grupo → solicitud → permiso →
 // telegram → resolver → log.
 func (s *Service) decide(ctx context.Context, actorID, groupID, requestID int64, action string, status joinrequests.Status, call func(ctx context.Context, chatID, userID int64) error) error {

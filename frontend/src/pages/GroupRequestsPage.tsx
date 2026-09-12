@@ -1,14 +1,22 @@
 // Solicitudes de ingreso del grupo (spec frontend-pages-moderation
 // REQ-4..5): lista de join_requests en <Table> Mantine con Badge por
 // estado, acciones Aprobar/Rechazar clic directo + notifySuccess (sin
-// Modal — la acción es reversible: el admin puede deshacerla desde
-// Telegram). Reemplaza los banners inline de la versión CSS plana y
+// Modal — la accion es reversible: el admin puede deshacerla desde
+// Telegram). Reemplaza los banners inline de la version CSS plana y
 // delega feedback a lib/notifications (slice 1 helper).
+//
+// Batch approve/reject: permite seleccionar hasta 50 solicitudes
+// pendientes via checkboxes y ejecutar approve/reject en lote.
+// Patron similar a publications-batch (BatchWizard) pero inline en la
+// tabla (sin modal): checkboxes + botones de accion por debajo del
+// titulo.
+import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
   Alert,
   Badge,
   Button,
+  Checkbox,
   Group,
   Paper,
   Skeleton,
@@ -21,6 +29,7 @@ import { IconArrowLeft, IconCheck, IconX } from '@tabler/icons-react'
 import { formatModerationError } from '../features/moderation/error'
 import {
   useApproveJoinRequest,
+  useBatchJoinRequest,
   useJoinRequests,
   useRejectJoinRequest,
 } from '../features/moderation/hooks'
@@ -39,6 +48,9 @@ const STATUS_COLOR: Record<JoinRequest['status'], string> = {
   rejected: 'red',
 }
 
+/** Maximo de solicitudes seleccionables por batch. */
+const MAX_BATCH_SIZE = 50
+
 function formatDate(iso: string | null): string {
   if (!iso) return '—'
   return new Date(iso).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })
@@ -49,6 +61,7 @@ function RequestsSkeleton() {
     <Table striped highlightOnHover>
       <Table.Thead>
         <Table.Tr>
+          <Table.Th w={40} />
           <Table.Th>Usuario</Table.Th>
           <Table.Th>Fecha</Table.Th>
           <Table.Th>Estado</Table.Th>
@@ -58,6 +71,7 @@ function RequestsSkeleton() {
       <Table.Tbody>
         {[0, 1, 2].map((i) => (
           <Table.Tr key={i}>
+            <Table.Td><Skeleton height={16} width={16} /></Table.Td>
             <Table.Td><Skeleton height={16} width="60%" /></Table.Td>
             <Table.Td><Skeleton height={16} width="80%" /></Table.Td>
             <Table.Td><Skeleton height={16} width={80} /></Table.Td>
@@ -76,9 +90,70 @@ export default function GroupRequestsPage() {
   const requests = useJoinRequests(groupId)
   const approve = useApproveJoinRequest()
   const reject = useRejectJoinRequest()
+  const batchMutate = useBatchJoinRequest()
 
-  const pending = approve.isPending || reject.isPending
+  const pending = approve.isPending || reject.isPending || batchMutate.isPending
 
+  // ── Batch selection state ──────────────────────────────────────
+  const [selected, setSelected] = useState<Set<number>>(new Set())
+
+  const pendingIds = requests.data
+    ?.filter((r) => r.status === 'pending')
+    .map((r) => r.id) ?? []
+
+  const allPendingSelected =
+    pendingIds.length > 0 && pendingIds.every((id) => selected.has(id))
+
+  const toggleAll = () => {
+    if (allPendingSelected) {
+      setSelected(new Set())
+    } else {
+      setSelected(new Set(pendingIds.slice(0, MAX_BATCH_SIZE)))
+    }
+  }
+
+  const toggleOne = (id: number) => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        if (next.size >= MAX_BATCH_SIZE) {
+          notifyError(`Maximo ${MAX_BATCH_SIZE} solicitudes seleccionables`)
+          return prev
+        }
+        next.add(id)
+      }
+      return next
+    })
+  }
+
+  const clearSelection = () => setSelected(new Set())
+
+  // ── Batch actions ──────────────────────────────────────────────
+  const runBatch = (action: 'approve' | 'reject') => {
+    const ids = Array.from(selected)
+    if (ids.length === 0) return
+
+    const label = action === 'approve' ? 'Aprobar' : 'Rechazar'
+    batchMutate.mutate(
+      { groupId, action, requestIds: ids },
+      {
+        onSuccess: (data) => {
+          const ok = data.results.filter((r) => r.status !== 'error').length
+          const fail = data.results.filter((r) => r.status === 'error').length
+          const parts: string[] = []
+          if (ok > 0) parts.push(`${ok} ${label.toLowerCase()}${ok > 1 ? 's' : ''}`)
+          if (fail > 0) parts.push(`${fail} error${fail > 1 ? 'es' : ''}`)
+          notifySuccess(parts.join(', '))
+          clearSelection()
+        },
+        onError: (e) => notifyError(formatModerationError(e)),
+      },
+    )
+  }
+
+  // ── Single actions ─────────────────────────────────────────────
   const runApprove = (requestId: number) => {
     approve.mutate(
       { groupId, requestId },
@@ -99,6 +174,8 @@ export default function GroupRequestsPage() {
     )
   }
 
+  const batchMode = selected.size > 0
+
   return (
     <Paper p="md" withBorder radius="md">
       <Stack gap="md">
@@ -115,6 +192,43 @@ export default function GroupRequestsPage() {
         </Group>
 
         <Title order={2}>Solicitudes de ingreso</Title>
+
+        {/* ── Batch action bar ──────────────────────────────── */}
+        {batchMode ? (
+          <Group gap="xs">
+            <Button
+              size="sm"
+              variant="filled"
+              color="green"
+              leftSection={<IconCheck size={16} />}
+              disabled={pending}
+              onClick={() => runBatch('approve')}
+              loading={batchMutate.isPending}
+            >
+              Aprobar ({selected.size})
+            </Button>
+            <Button
+              size="sm"
+              variant="filled"
+              color="red"
+              leftSection={<IconX size={16} />}
+              disabled={pending}
+              onClick={() => runBatch('reject')}
+              loading={batchMutate.isPending}
+            >
+              Rechazar ({selected.size})
+            </Button>
+            <Button
+              size="sm"
+              variant="subtle"
+              color="gray"
+              disabled={pending}
+              onClick={clearSelection}
+            >
+              Limpiar seleccion
+            </Button>
+          </Group>
+        ) : null}
 
         {requests.isPending ? <RequestsSkeleton /> : null}
 
@@ -146,6 +260,15 @@ export default function GroupRequestsPage() {
             <Table striped highlightOnHover withTableBorder verticalSpacing="sm">
               <Table.Thead>
                 <Table.Tr>
+                  <Table.Th w={40}>
+                    <Checkbox
+                      checked={allPendingSelected}
+                      indeterminate={selected.size > 0 && !allPendingSelected}
+                      onChange={toggleAll}
+                      disabled={pendingIds.length === 0}
+                      aria-label="Seleccionar todas las pendientes"
+                    />
+                  </Table.Th>
                   <Table.Th>Usuario</Table.Th>
                   <Table.Th>Fecha</Table.Th>
                   <Table.Th>Estado</Table.Th>
@@ -155,6 +278,16 @@ export default function GroupRequestsPage() {
               <Table.Tbody>
                 {requests.data.map((req) => (
                   <Table.Tr key={req.id}>
+                    <Table.Td>
+                      {req.status === 'pending' ? (
+                        <Checkbox
+                          checked={selected.has(req.id)}
+                          onChange={() => toggleOne(req.id)}
+                          disabled={pending}
+                          aria-label={`Seleccionar solicitud de ${req.first_name}`}
+                        />
+                      ) : null}
+                    </Table.Td>
                     <Table.Td>
                       <Text fw={500}>{req.first_name}</Text>
                       <Text size="xs" c="dimmed">
@@ -176,7 +309,7 @@ export default function GroupRequestsPage() {
                             variant="light"
                             color="green"
                             leftSection={<IconCheck size={14} />}
-                            disabled={pending}
+                            disabled={pending || batchMode}
                             onClick={() => runApprove(req.id)}
                           >
                             Aprobar
@@ -186,7 +319,7 @@ export default function GroupRequestsPage() {
                             variant="light"
                             color="red"
                             leftSection={<IconX size={14} />}
-                            disabled={pending}
+                            disabled={pending || batchMode}
                             onClick={() => runReject(req.id)}
                           >
                             Rechazar

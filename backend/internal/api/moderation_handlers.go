@@ -25,6 +25,7 @@ type ModerationActions interface {
 	Unlock(ctx context.Context, actorID, groupID int64) error
 	Approve(ctx context.Context, actorID, groupID, requestID int64) error
 	Reject(ctx context.Context, actorID, groupID, requestID int64) error
+	BatchDecide(ctx context.Context, actorID, groupID int64, action string, requestIDs []int64) ([]moderation.BatchItemResult, error)
 }
 
 // banRequest es el body opcional de POST .../ban: si no llega body, el

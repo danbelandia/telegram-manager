@@ -98,6 +98,7 @@ type fakeModeration struct {
 	banCalls       int
 	approveCalls   int
 	unmuteCalls    int
+	batchDecideResults []moderation.BatchItemResult
 }
 
 func (f *fakeModeration) Ban(ctx context.Context, actorID, groupID, userID int64, untilDate int64, revokeMessages bool) error {
@@ -145,6 +146,24 @@ func (f *fakeModeration) Approve(ctx context.Context, actorID, groupID, requestI
 func (f *fakeModeration) Reject(ctx context.Context, actorID, groupID, requestID int64) error {
 	f.rejectCalls++
 	return f.err
+}
+
+func (f *fakeModeration) BatchDecide(ctx context.Context, actorID, groupID int64, action string, requestIDs []int64) ([]moderation.BatchItemResult, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.batchDecideResults != nil {
+		return f.batchDecideResults, nil
+	}
+	results := make([]moderation.BatchItemResult, 0, len(requestIDs))
+	for _, rid := range requestIDs {
+		status := "approved"
+		if action == "reject" {
+			status = "rejected"
+		}
+		results = append(results, moderation.BatchItemResult{ID: rid, Status: status})
+	}
+	return results, nil
 }
 
 // fakeJoinRequestStore satisface joinRequestStore.
@@ -220,6 +239,7 @@ func TestModerationRoutes_RequireAuth(t *testing.T) {
 		{"GET", "/api/groups/-100/join-requests"},
 		{"POST", "/api/groups/-100/join-requests/9/approve"},
 		{"POST", "/api/groups/-100/join-requests/9/reject"},
+		{"POST", "/api/groups/-100/join-requests/batch"},
 		{"GET", "/api/groups/-100/logs"},
 	}
 	for _, tc := range cases {
@@ -526,5 +546,103 @@ func TestModerationAction_ForeignGroup(t *testing.T) {
 	}
 	if mod.banCalls != 0 {
 		t.Errorf("ban calls = %d, want 0 (grupo ajeno no llega al servicio)", mod.banCalls)
+	}
+}
+
+// ── Batch join requests tests ──────────────────────────────────────
+
+func TestBatchJoinRequests_RequireAuth(t *testing.T) {
+	mod := &fakeModeration{}
+	server, _ := buildModerationServer(t, mod)
+
+	rr := doRequest(server, "POST", "/api/groups/-100/join-requests/batch",
+		`{"action":"approve","request_ids":[1]}`, "")
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("code = %d, want 401", rr.Code)
+	}
+}
+
+func TestBatchJoinRequests_BadBody(t *testing.T) {
+	mod := &fakeModeration{}
+	server, _ := buildModerationServer(t, mod)
+
+	cases := []struct {
+		name, body string
+	}{
+		{"json malformado", `{invalid`},
+		{"action invalido", `{"action":"delete","request_ids":[1]}`},
+		{"request_ids vacio", `{"action":"approve","request_ids":[]}`},
+		{"request_ids excedido", `{"action":"approve","request_ids":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51]}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rr := doRequest(server, "POST", "/api/groups/-100/join-requests/batch",
+				tc.body, validToken)
+			if rr.Code != http.StatusBadRequest {
+				t.Errorf("code = %d, want 400 (body: %s)", rr.Code, rr.Body.String())
+			}
+		})
+	}
+}
+
+func TestBatchJoinRequests_Success(t *testing.T) {
+	mod := &fakeModeration{}
+	server, _ := buildModerationServer(t, mod)
+
+	body := `{"action":"approve","request_ids":[1,2,3]}`
+	rr := doRequest(server, "POST", "/api/groups/-100/join-requests/batch",
+		body, validToken)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"id":1`) || !strings.Contains(rr.Body.String(), `"status":"approved"`) {
+		t.Errorf("body sin resultado esperado: %s", rr.Body.String())
+	}
+}
+
+func TestBatchJoinRequests_RejectAction(t *testing.T) {
+	mod := &fakeModeration{}
+	server, _ := buildModerationServer(t, mod)
+
+	body := `{"action":"reject","request_ids":[5]}`
+	rr := doRequest(server, "POST", "/api/groups/-100/join-requests/batch",
+		body, validToken)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"status":"rejected"`) {
+		t.Errorf("body sin status rejected: %s", rr.Body.String())
+	}
+}
+
+func TestBatchJoinRequests_GroupNotFound(t *testing.T) {
+	mod := &fakeModeration{}
+	jr := &fakeJoinRequestStore{}
+	ls := &fakeLogStore{}
+	server := NewServer(fakePinger{}, botStatusStub{},
+		WithAuth(nil, fixedAuthenticator{claims: testClaims}, false),
+		WithGroups(&fakeGroupStore{}, &fakeGroupUsers{}),
+		WithModeration(mod),
+		WithJoinRequests(jr, mod),
+		WithLogs(ls),
+	)
+
+	body := `{"action":"approve","request_ids":[1]}`
+	rr := doRequest(server, "POST", "/api/groups/-999/join-requests/batch",
+		body, validToken)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("code = %d, want 404 (body: %s)", rr.Code, rr.Body.String())
+	}
+}
+
+func TestBatchJoinRequests_ServiceError(t *testing.T) {
+	mod := &fakeModeration{err: moderation.ErrBotPermission}
+	server, _ := buildModerationServer(t, mod)
+
+	body := `{"action":"approve","request_ids":[1]}`
+	rr := doRequest(server, "POST", "/api/groups/-100/join-requests/batch",
+		body, validToken)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("code = %d, want 403 (body: %s)", rr.Code, rr.Body.String())
 	}
 }

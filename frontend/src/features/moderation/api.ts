@@ -94,6 +94,25 @@ export function rejectJoinRequest(groupId: string, requestId: number): Promise<{
   })
 }
 
+/** Resultado individual de un batch approve/reject. */
+export interface BatchJoinResultItem {
+  id: number
+  status: string
+  error?: string | null
+}
+
+/** POST .../join-requests/batch — batch approve/reject. */
+export function batchDecideJoinRequests(
+  groupId: string,
+  action: 'approve' | 'reject',
+  requestIds: number[],
+): Promise<{ results: BatchJoinResultItem[] }> {
+  return request<{ results: BatchJoinResultItem[] }>(`/api/groups/${groupId}/join-requests/batch`, {
+    method: 'POST',
+    body: JSON.stringify({ action, request_ids: requestIds }),
+  })
+}
+
 // ── Logs ──────────────────────────────────────────────────────────────
 
 /** GET /api/groups/:id/logs — auditoria del grupo, mas reciente primero. */

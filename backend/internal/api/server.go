@@ -247,8 +247,8 @@ func WithModeration(mod ModerationActions) Option {
 }
 
 // WithJoinRequests monta las rutas de solicitudes de ingreso (paso 10):
-// listado y approve/reject (estas dos ultimas delegan en el Service de
-// moderacion, que orquesta la decision).
+// listado, approve/reject (estas dos ultimas delegan en el Service de
+// moderacion, que orquesta la decision) y batch approve/reject.
 func WithJoinRequests(store joinRequestStore, mod ModerationActions) Option {
 	return func(s *Server) {
 		s.joinRequests = store
@@ -258,6 +258,7 @@ func WithJoinRequests(store joinRequestStore, mod ModerationActions) Option {
 		s.mux.HandleFunc("GET /api/groups/{id}/join-requests", s.requireAuth(s.requireLicense(s.handleListJoinRequests)))
 		s.mux.HandleFunc("POST /api/groups/{id}/join-requests/{requestId}/approve", s.requireAuth(s.requireLicense(s.handleApproveJoinRequest)))
 		s.mux.HandleFunc("POST /api/groups/{id}/join-requests/{requestId}/reject", s.requireAuth(s.requireLicense(s.handleRejectJoinRequest)))
+		s.mux.HandleFunc("POST /api/groups/{id}/join-requests/batch", s.requireAuth(s.requireLicense(s.handleBatchJoinRequests)))
 	}
 }
 
