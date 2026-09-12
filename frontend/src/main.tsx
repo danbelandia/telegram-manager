@@ -14,8 +14,11 @@ import { MantineProvider } from '@mantine/core'
 import { Notifications } from '@mantine/notifications'
 
 import '@mantine/core/styles.css'
+import '@mantine/dates/styles.css'
 import '@mantine/notifications/styles.css'
 import './styles.css'
+
+import 'dayjs/locale/es'
 
 import App from './App'
 import { AuthProvider } from './lib/auth-context'

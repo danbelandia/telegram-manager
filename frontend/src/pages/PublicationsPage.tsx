@@ -349,6 +349,9 @@ export default function PublicationsPage() {
                 leftSection={<IconCalendar size={16} />}
                 radius="md"
                 valueFormat="DD/MM/YYYY HH:mm"
+                locale="es"
+                dropdownType="popover"
+                size="md"
                 clearable
               />
             ) : null}

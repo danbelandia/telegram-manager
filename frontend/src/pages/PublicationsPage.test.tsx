@@ -12,7 +12,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 // DateTimePicker es button-based (no se puede escribir con user.type),
 // asi que lo reemplazamos con un <input> que acepta "YYYY-MM-DDTHH:MM".
 vi.mock('@mantine/dates', () => ({
-  DateTimePicker: ({ value, onChange, label, ...rest }: Record<string, unknown>) => {
+  DateTimePicker: ({ value, onChange, label }: { value: unknown; onChange: (v: Date | null) => void; label: string }) => {
     const dateToValue = (v: unknown): string => {
       if (!v) return ''
       if (typeof v === 'string') return v
@@ -24,12 +24,11 @@ vi.mock('@mantine/dates', () => ({
     }
     return (
       <label>
-        {label as string}
+        {label}
         <input
           type="datetime-local"
           value={dateToValue(value)}
-          onChange={(e) => onChange?.(e.target.value ? new Date(e.target.value) : null)}
-          data-testid={(rest as Record<string, string>)['data-testid']}
+          onChange={(e) => onChange(e.target.value ? new Date(e.target.value) : null)}
         />
       </label>
     )

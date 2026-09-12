@@ -335,6 +335,9 @@ export default function BatchWizard({ opened, onClose }: BatchWizardProps) {
                       onChange={(d) => updateSlot(i, { scheduledDate: d })}
                       leftSection={<IconCalendar size={16} />}
                       valueFormat="DD/MM/YYYY HH:mm"
+                      locale="es"
+                      dropdownType="popover"
+                      size="md"
                       clearable
                       error={errors[i] && errors[i]?.includes('fecha') ? errors[i] : undefined}
                     />

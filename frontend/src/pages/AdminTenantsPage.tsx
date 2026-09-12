@@ -266,6 +266,9 @@ export default function AdminTenantsPage() {
             value={editForm.trial_ends_at}
             onChange={(d) => setEditForm((f) => ({ ...f, trial_ends_at: d }))}
             valueFormat="DD/MM/YYYY HH:mm"
+            locale="es"
+            dropdownType="popover"
+            size="md"
             clearable
           />
 
@@ -274,6 +277,9 @@ export default function AdminTenantsPage() {
             value={editForm.expires_at}
             onChange={(d) => setEditForm((f) => ({ ...f, expires_at: d }))}
             valueFormat="DD/MM/YYYY HH:mm"
+            locale="es"
+            dropdownType="popover"
+            size="md"
             clearable
           />
 
