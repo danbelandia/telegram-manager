@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -200,7 +201,7 @@ func TestAdapterGetUpdates_Success(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"ok":true,"result":[
 			{"update_id":10,"message":{"message_id":1,"chat":{"id":-1001,"type":"supergroup"},"text":"hola"}},
-			{"update_id":11,"chat_join_request":{"user":{"id":42,"first_name":"Juan"},"chat":{"id":-1001,"type":"supergroup"},"date":1700000000}}
+			{"update_id":11,"chat_join_request":{"from":{"id":42,"first_name":"Juan"},"chat":{"id":-1001,"type":"supergroup"},"date":1700000000}}
 		]}`))
 	})
 	defer srv.Close()
@@ -223,8 +224,8 @@ func TestAdapterGetUpdates_Success(t *testing.T) {
 	if updates[1].Kind() != "chat_join_request" {
 		t.Errorf("second update kind = %s, want chat_join_request", updates[1].Kind())
 	}
-	if updates[1].ChatJoinRequest.User.ID != 42 {
-		t.Errorf("join request user id = %d, want 42", updates[1].ChatJoinRequest.User.ID)
+	if updates[1].ChatJoinRequest.From.ID != 42 {
+		t.Errorf("join request user id = %d, want 42", updates[1].ChatJoinRequest.From.ID)
 	}
 }
 
@@ -317,5 +318,42 @@ func TestAdapterDeleteWebhook_Success(t *testing.T) {
 	}
 	if len(*paths) != 1 {
 		t.Errorf("requests = %v, want 1", *paths)
+	}
+}
+
+// TestChatJoinRequest_JSONDeserialization verifica que el payload real
+// de Telegram (campo "from") se deserialice correctamente. Regresion:
+// el tag JSON decia "user" en vez de "from", causando que el User
+// llegara zero-valued y el request se descartara silenciosamente.
+func TestChatJoinRequest_JSONDeserialization(t *testing.T) {
+	payload := `{
+		"update_id": 99,
+		"chat_join_request": {
+			"chat": {"id": -100123, "type": "supergroup", "title": "Test Group"},
+			"from": {"id": 456, "first_name": "Juan", "username": "juan123"},
+			"date": 1694000000
+		}
+	}`
+
+	var u Update
+	if err := json.Unmarshal([]byte(payload), &u); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+
+	if u.ChatJoinRequest == nil {
+		t.Fatal("ChatJoinRequest is nil after deserialization")
+	}
+	cjr := u.ChatJoinRequest
+	if cjr.From.ID != 456 {
+		t.Errorf("From.ID = %d, want 456", cjr.From.ID)
+	}
+	if cjr.From.FirstName != "Juan" {
+		t.Errorf("From.FirstName = %q, want Juan", cjr.From.FirstName)
+	}
+	if cjr.From.Username != "juan123" {
+		t.Errorf("From.Username = %q, want juan123", cjr.From.Username)
+	}
+	if cjr.Chat.ID != -100123 {
+		t.Errorf("Chat.ID = %d, want -100123", cjr.Chat.ID)
 	}
 }

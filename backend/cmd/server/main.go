@@ -212,10 +212,10 @@ func run() error {
 			}
 			usr := &users.User{
 				TelegramID: r.UserID,
-				FirstName:  u.ChatJoinRequest.User.FirstName,
+				FirstName:  u.ChatJoinRequest.From.FirstName,
 			}
-			if u.ChatJoinRequest.User.Username != "" {
-				usr.Username = &u.ChatJoinRequest.User.Username
+			if u.ChatJoinRequest.From.Username != "" {
+				usr.Username = &u.ChatJoinRequest.From.Username
 			}
 			if err := usersRepo.UpsertByTelegramID(ctx, usr); err != nil {
 				slog.Error("joinrequests: user upsert failed", "tenant_id", tenantID, "user_id", r.UserID, "error", err)

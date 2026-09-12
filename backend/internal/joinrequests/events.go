@@ -17,7 +17,7 @@ func HandleChatJoinRequest(ctx context.Context, upd *telegram.ChatJoinRequest, r
 		return nil
 	}
 	r.GroupID = upd.Chat.ID
-	r.UserID = upd.User.ID
+	r.UserID = upd.From.ID
 	r.Status = StatusPending
 	return nil
 }

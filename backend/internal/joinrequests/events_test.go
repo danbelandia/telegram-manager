@@ -9,7 +9,7 @@ import (
 
 func TestHandleChatJoinRequest_FillsRequest(t *testing.T) {
 	upd := &telegram.ChatJoinRequest{
-		User: telegram.User{ID: 42, FirstName: "Juan"},
+		From: telegram.User{ID: 42, FirstName: "Juan"},
 		Chat: telegram.Chat{ID: -1001, Type: "supergroup", Title: "MU Online"},
 	}
 

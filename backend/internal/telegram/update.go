@@ -78,7 +78,7 @@ const (
 // ChatJoinRequest modela una solicitud de ingreso (ver telefono, el
 // bot debe ser administrador y el grupo tener el modo de aprobacion).
 type ChatJoinRequest struct {
-	User User  `json:"user"`
+	From User  `json:"from"`
 	Chat Chat  `json:"chat"`
 	Date int64 `json:"date"`
 }
