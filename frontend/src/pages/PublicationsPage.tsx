@@ -471,7 +471,7 @@ export default function PublicationsPage() {
             >
               ← Anterior
             </Button>
-            <Text size="sm" c="dimmed">Página offset={offset}</Text>
+            <Text size="sm" c="dimmed">Página {Math.floor(offset / DEFAULT_LIST_LIMIT) + 1}</Text>
             <Button
               variant="default"
               disabled={!canNext}
