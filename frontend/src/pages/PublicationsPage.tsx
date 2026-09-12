@@ -72,7 +72,7 @@ const STATUS_COLOR: Record<PublicationStatus, string> = {
 const MAX_TEXT_NO_PHOTO = 4096
 const MAX_TEXT_WITH_PHOTO = 1024
 const MAX_GROUPS = 10
-const DEFAULT_LIST_LIMIT = 50
+const DEFAULT_LIST_LIMIT = 10
 
 type PublishMode = 'now' | 'schedule'
 

@@ -541,7 +541,7 @@ describe('PublicationsPage', () => {
   })
 
   it('Next deshabilitado cuando returned < limit (final real)', async () => {
-    // Solo 2 publicaciones; limit default 50 -> Next disabled.
+    // Solo 2 publicaciones; limit default 10 -> Next disabled.
     mockFetchRoutes({
       '/api/groups': () => okJson(groups),
       '/api/publications': () => okJson(pubs.slice(0, 2)),
@@ -568,8 +568,8 @@ describe('PublicationsPage', () => {
   })
 
   it('click en Next avanza offset y recarga la query', async () => {
-    // Devolvemos >=50 items en la primera pagina para que Next se habilite.
-    const firstPage = Array.from({ length: 50 }, (_, i) => ({
+    // Devolvemos >=10 items en la primera pagina para que Next se habilite.
+    const firstPage = Array.from({ length: 10 }, (_, i) => ({
       ...pubs[0],
       id: 1000 + i,
       text: `pub ${i}`,
@@ -599,11 +599,11 @@ describe('PublicationsPage', () => {
     next.click()
 
     await waitFor(() => {
-      expect(fetched.some((u) => matchQuery(u, { offset: '50', limit: '50' }))).toBe(true)
+      expect(fetched.some((u) => matchQuery(u, { offset: '10', limit: '10' }))).toBe(true)
     })
   })
 
-  it('GET lista envia ?limit=50 por default', async () => {
+  it('GET lista envia ?limit=10 por default', async () => {
     const fetched: string[] = []
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = String(input)
@@ -623,7 +623,7 @@ describe('PublicationsPage', () => {
 
     const pubsCall = fetched.find((u) => u.includes('/api/publications') && !u.includes('/groups'))
     expect(pubsCall).toBeDefined()
-    expect(pubsCall).toContain('limit=50')
+    expect(pubsCall).toContain('limit=10')
     expect(pubsCall).toContain('offset=0')
   })
 
@@ -652,7 +652,7 @@ describe('PublicationsPage', () => {
       const pubsCall = fetched.filter((u) => u.includes('/api/publications') && !u.includes('/groups')).pop()
       expect(pubsCall).toBeDefined()
       expect(pubsCall).toContain('group_id=-100123')
-      expect(pubsCall).toContain('limit=50')
+      expect(pubsCall).toContain('limit=10')
       expect(pubsCall).toContain('offset=0')
     })
   })
