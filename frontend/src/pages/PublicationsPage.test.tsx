@@ -7,6 +7,34 @@
 import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+
+// Mock DateTimePicker → un input nativo simple para tests.
+// DateTimePicker es button-based (no se puede escribir con user.type),
+// asi que lo reemplazamos con un <input> que acepta "YYYY-MM-DDTHH:MM".
+vi.mock('@mantine/dates', () => ({
+  DateTimePicker: ({ value, onChange, label, ...rest }: Record<string, unknown>) => {
+    const dateToValue = (v: unknown): string => {
+      if (!v) return ''
+      if (typeof v === 'string') return v
+      if (v instanceof Date) {
+        const pad = (n: number) => String(n).padStart(2, '0')
+        return `${v.getFullYear()}-${pad(v.getMonth() + 1)}-${pad(v.getDate())}T${pad(v.getHours())}:${pad(v.getMinutes())}`
+      }
+      return ''
+    }
+    return (
+      <label>
+        {label as string}
+        <input
+          type="datetime-local"
+          value={dateToValue(value)}
+          onChange={(e) => onChange?.(e.target.value ? new Date(e.target.value) : null)}
+          data-testid={(rest as Record<string, string>)['data-testid']}
+        />
+      </label>
+    )
+  },
+}))
 import PublicationsPage from './PublicationsPage'
 import { errorJson, matchQuery, mockFetchRoutes, okJson, renderWithProviders } from '../test/helpers'
 

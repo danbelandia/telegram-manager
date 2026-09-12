@@ -14,6 +14,7 @@ import {
   TextInput,
   Title,
 } from '@mantine/core'
+import { DateTimePicker } from '@mantine/dates'
 import { IconEdit } from '@tabler/icons-react'
 import { adminGetTenant, adminListTenants, adminUpdateTenant } from '../features/admin/api'
 import type { AdminTenant } from '../features/admin/types'
@@ -75,11 +76,11 @@ class ModalErrorBoundary extends Component<{ children: ReactNode }, { error: Err
   }
 }
 
-function toLocalDatetime(iso: string | null): string {
-  if (!iso) return ''
-  const d = new Date(iso)
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+/** Parse ISO string to Date, or null. */
+function parseISO(s: string | null): Date | null {
+  if (!s) return null
+  const d = new Date(s)
+  return Number.isNaN(d.getTime()) ? null : d
 }
 
 export default function AdminTenantsPage() {
@@ -93,8 +94,8 @@ export default function AdminTenantsPage() {
   const [editForm, setEditForm] = useState({
     status: '',
     plan: '',
-    trial_ends_at: '',
-    expires_at: '',
+    trial_ends_at: null as Date | null,
+    expires_at: null as Date | null,
     max_groups: -1,
     max_messages_day: -1,
   })
@@ -125,8 +126,8 @@ export default function AdminTenantsPage() {
       setEditForm({
         status: detail.status,
         plan: detail.plan,
-        trial_ends_at: toLocalDatetime(detail.trial_ends_at),
-        expires_at: toLocalDatetime(detail.expires_at),
+        trial_ends_at: parseISO(detail.trial_ends_at),
+        expires_at: parseISO(detail.expires_at),
         max_groups: detail.max_groups,
         max_messages_day: detail.max_messages_day,
       })
@@ -135,8 +136,8 @@ export default function AdminTenantsPage() {
       setEditForm({
         status: tenant.status,
         plan: tenant.plan,
-        trial_ends_at: toLocalDatetime(tenant.trial_ends_at),
-        expires_at: toLocalDatetime(tenant.expires_at),
+        trial_ends_at: parseISO(tenant.trial_ends_at),
+        expires_at: parseISO(tenant.expires_at),
         max_groups: tenant.max_groups,
         max_messages_day: tenant.max_messages_day,
       })
@@ -151,8 +152,8 @@ export default function AdminTenantsPage() {
       await adminUpdateTenant(editing.id, {
         status: editForm.status,
         plan: editForm.plan,
-        trial_ends_at: editForm.trial_ends_at ? new Date(editForm.trial_ends_at).toISOString() : null,
-        expires_at: editForm.expires_at ? new Date(editForm.expires_at).toISOString() : null,
+        trial_ends_at: editForm.trial_ends_at ? editForm.trial_ends_at.toISOString() : null,
+        expires_at: editForm.expires_at ? editForm.expires_at.toISOString() : null,
         max_groups: editForm.max_groups,
         max_messages_day: editForm.max_messages_day,
       })
@@ -260,18 +261,20 @@ export default function AdminTenantsPage() {
             comboboxProps={{ withinPortal: false }}
           />
 
-          <TextInput
+          <DateTimePicker
             label="Trial hasta"
-            type="datetime-local"
             value={editForm.trial_ends_at}
-            onChange={(e) => setEditForm((f) => ({ ...f, trial_ends_at: e.target.value }))}
+            onChange={(d) => setEditForm((f) => ({ ...f, trial_ends_at: d }))}
+            valueFormat="DD/MM/YYYY HH:mm"
+            clearable
           />
 
-          <TextInput
+          <DateTimePicker
             label="Expira"
-            type="datetime-local"
             value={editForm.expires_at}
-            onChange={(e) => setEditForm((f) => ({ ...f, expires_at: e.target.value }))}
+            onChange={(d) => setEditForm((f) => ({ ...f, expires_at: d }))}
+            valueFormat="DD/MM/YYYY HH:mm"
+            clearable
           />
 
           <TextInput

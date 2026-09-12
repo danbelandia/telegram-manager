@@ -27,6 +27,7 @@ import {
   TextInput,
   Title,
 } from '@mantine/core'
+import { DateTimePicker } from '@mantine/dates'
 import { IconCalendar, IconPlus, IconSend, IconTrash, IconX } from '@tabler/icons-react'
 import {
   formatPublicationsError,
@@ -37,6 +38,7 @@ import {
 import {
   validateScheduledAtClient,
 } from '../publications/validateScheduledAtClient'
+import { dateToLocalInput } from '../publications/dateHelpers'
 import type {
   InlineButton,
   Publication,
@@ -61,7 +63,7 @@ interface SlotDraft {
   photoUrl: string
   buttons: InlineButton[][]
   groupIds: number[]
-  scheduledLocal: string
+  scheduledDate: Date | null
 }
 
 function emptySlot(): SlotDraft {
@@ -70,7 +72,7 @@ function emptySlot(): SlotDraft {
     photoUrl: '',
     buttons: [],
     groupIds: [],
-    scheduledLocal: '',
+    scheduledDate: null,
   }
 }
 
@@ -84,8 +86,8 @@ function slotToInput(s: SlotDraft): BatchItemInput {
   }
   if (photoUrl) item.photo_url = photoUrl
   if (buttons.length > 0) item.buttons = buttons
-  if (s.scheduledLocal) {
-    const res = validateScheduledAtClient(s.scheduledLocal, new Date())
+  if (s.scheduledDate) {
+    const res = validateScheduledAtClient(dateToLocalInput(s.scheduledDate), new Date())
     if (res.ok) item.scheduled_at = res.iso
   }
   return item
@@ -101,11 +103,9 @@ function truncate(text: string, max = 60): string {
   return text.length > max ? `${text.slice(0, max)}…` : text
 }
 
-function formatScheduledPreview(local: string): string | null {
-  if (!local) return null
-  const parsed = new Date(local)
-  if (Number.isNaN(parsed.getTime())) return local
-  return parsed.toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })
+function formatScheduledPreview(date: Date | null): string | null {
+  if (!date) return null
+  return date.toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })
 }
 
 interface BatchWizardProps {
@@ -174,8 +174,8 @@ export default function BatchWizard({ opened, onClose }: BatchWizardProps) {
     if (btnErr) return btnErr
     const groupErr = validateGroupIdsClient(s.groupIds)
     if (groupErr) return groupErr
-    if (s.scheduledLocal) {
-      const r = validateScheduledAtClient(s.scheduledLocal, new Date())
+    if (s.scheduledDate) {
+      const r = validateScheduledAtClient(dateToLocalInput(s.scheduledDate), new Date())
       if (!r.ok) return r.error
     }
     return null
@@ -329,12 +329,13 @@ export default function BatchWizard({ opened, onClose }: BatchWizardProps) {
                       ) : null}
                     </Stack>
 
-                    <TextInput
-                      type="datetime-local"
+                    <DateTimePicker
                       label="Programar para (opcional)"
-                      value={s.scheduledLocal}
-                      onChange={(e) => updateSlot(i, { scheduledLocal: e.currentTarget.value })}
+                      value={s.scheduledDate}
+                      onChange={(d) => updateSlot(i, { scheduledDate: d })}
                       leftSection={<IconCalendar size={16} />}
+                      valueFormat="DD/MM/YYYY HH:mm"
+                      clearable
                       error={errors[i] && errors[i]?.includes('fecha') ? errors[i] : undefined}
                     />
 
@@ -426,8 +427,8 @@ function SummaryAlert({ slots, errors, groupName }: SummaryAlertProps) {
               <Text size="xs" c={err ? 'red' : undefined}>
                 {err ? `Slot ${i + 1}: ${err}` : truncate(s.text || '(sin texto)')}
                 {s.groupIds.length > 0 ? ` → ${s.groupIds.map(groupName).join(', ')}` : ''}
-                {formatScheduledPreview(s.scheduledLocal)
-                  ? ` · programado ${formatScheduledPreview(s.scheduledLocal)}`
+                {formatScheduledPreview(s.scheduledDate)
+                  ? ` · programado ${formatScheduledPreview(s.scheduledDate)}`
                   : ''}
               </Text>
             </Group>

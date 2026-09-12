@@ -25,6 +25,7 @@ import {
   TextInput,
   Title,
 } from '@mantine/core'
+import { DateTimePicker } from '@mantine/dates'
 import { IconCalendar, IconSend, IconStack3, IconTrash } from '@tabler/icons-react'
 import {
   formatPublicationsError,
@@ -40,6 +41,7 @@ import {
 import {
   validateScheduledAtClient,
 } from '../features/publications/validateScheduledAtClient'
+import { dateToLocalInput } from '../features/publications/dateHelpers'
 import type {
   InlineButton,
   Publication,
@@ -109,7 +111,7 @@ export default function PublicationsPage() {
   const [mediaFile, setMediaFile] = useState<MediaValue | null>(null)
   const [buttons, setButtons] = useState<InlineButton[][]>([])
   const [selectedGroupIds, setSelectedGroupIds] = useState<number[]>([])
-  const [scheduledLocal, setScheduledLocal] = useState('')
+  const [scheduledDate, setScheduledDate] = useState<Date | null>(null)
   const [clientError, setClientError] = useState<string | null>(null)
   const [batchOpen, setBatchOpen] = useState(false)
 
@@ -177,7 +179,7 @@ export default function PublicationsPage() {
 
     let scheduledAt: string | undefined
     if (mode === 'schedule') {
-      const res = validateScheduledAtClient(scheduledLocal, new Date())
+      const res = validateScheduledAtClient(scheduledDate ? dateToLocalInput(scheduledDate) : '', new Date())
       if (!res.ok) {
         setClientError(res.error)
         return
@@ -340,13 +342,14 @@ export default function PublicationsPage() {
             </Stack>
 
             {mode === 'schedule' ? (
-              <TextInput
-                type="datetime-local"
+              <DateTimePicker
                 label="Fecha y hora (zona horaria local del navegador)"
-                value={scheduledLocal}
-                onChange={(e) => setScheduledLocal(e.currentTarget.value)}
+                value={scheduledDate}
+                onChange={setScheduledDate}
                 leftSection={<IconCalendar size={16} />}
                 radius="md"
+                valueFormat="DD/MM/YYYY HH:mm"
+                clearable
               />
             ) : null}
 
