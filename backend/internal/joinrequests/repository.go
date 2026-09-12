@@ -40,21 +40,58 @@ ON CONFLICT (tenant_id, group_id, user_id) WHERE status = 'pending' DO NOTHING`
 	return nil
 }
 
+// ListByGroupParams parametriza el listado de solicitudes.
+type ListByGroupParams struct {
+	Status string // "pending" | "approved" | "rejected"; vacio = todos
+	Limit  int
+	Offset int
+}
+
 // ListByGroup devuelve las solicitudes del tenant para el grupo, de la
 // mas reciente a la mas antigua, con el nombre del usuario (LEFT JOIN
 // users). Un admin NUNCA ve filas de otro tenant.
-func (r *Repository) ListByGroup(ctx context.Context, tenantID, groupID int64) ([]Request, error) {
-	const q = `
-SELECT j.id, j.tenant_id, j.group_id, j.user_id, j.status, j.requested_at, j.decided_at, j.decided_by,
-       COALESCE(u.first_name, ''), u.username
+func (r *Repository) ListByGroup(ctx context.Context, tenantID, groupID int64, p ListByGroupParams) ([]Request, int, error) {
+	const base = `
 FROM join_requests j
 LEFT JOIN users u ON u.telegram_id = j.user_id
-WHERE j.tenant_id = $1 AND j.group_id = $2
-ORDER BY j.requested_at DESC`
+WHERE j.tenant_id = $1 AND j.group_id = $2`
 
-	rows, err := r.db.QueryContext(ctx, q, tenantID, groupID)
+	// Contar total con filtros.
+	countQ := "SELECT COUNT(*) " + base
+	args := []any{tenantID, groupID}
+	if p.Status != "" {
+		countQ += " AND j.status = $3"
+		args = append(args, p.Status)
+	}
+	var total int
+	if err := r.db.QueryRowContext(ctx, countQ, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("joinrequests: count %d: %w", groupID, err)
+	}
+
+	// Listar con LIMIT/OFFSET.
+	listQ := `SELECT j.id, j.tenant_id, j.group_id, j.user_id, j.status, j.requested_at, j.decided_at, j.decided_by,
+       COALESCE(u.first_name, ''), u.username ` + base
+	listArgs := make([]any, len(args))
+	copy(listArgs, args)
+	paramIdx := len(args)
+	if p.Status != "" {
+		paramIdx++
+	}
+	listQ += " ORDER BY j.requested_at DESC"
+	if p.Limit > 0 {
+		paramIdx++
+		listQ += fmt.Sprintf(" LIMIT $%d", paramIdx)
+		listArgs = append(listArgs, p.Limit)
+	}
+	if p.Offset > 0 {
+		paramIdx++
+		listQ += fmt.Sprintf(" OFFSET $%d", paramIdx)
+		listArgs = append(listArgs, p.Offset)
+	}
+
+	rows, err := r.db.QueryContext(ctx, listQ, listArgs...)
 	if err != nil {
-		return nil, fmt.Errorf("joinrequests: list %d: %w", groupID, err)
+		return nil, 0, fmt.Errorf("joinrequests: list %d: %w", groupID, err)
 	}
 	defer rows.Close()
 
@@ -62,14 +99,14 @@ ORDER BY j.requested_at DESC`
 	for rows.Next() {
 		req, err := scanRequest(rows)
 		if err != nil {
-			return nil, fmt.Errorf("joinrequests: list %d: %w", groupID, err)
+			return nil, 0, fmt.Errorf("joinrequests: list %d: %w", groupID, err)
 		}
 		requests = append(requests, req)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("joinrequests: list %d: %w", groupID, err)
+		return nil, 0, fmt.Errorf("joinrequests: list %d: %w", groupID, err)
 	}
-	return requests, nil
+	return requests, total, nil
 }
 
 // GetByID devuelve la solicitud del tenant por su id local, o

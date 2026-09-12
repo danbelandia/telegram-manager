@@ -20,12 +20,14 @@ import {
   unlockGroup,
   listGroupLogs,
   listJoinRequests,
+  type JoinRequestParams,
 } from './api'
 
 // Claves raiz de cada subrecurso del grupo; se anidan bajo ['groups', id]
 // (decision D5) para invalidar grupos y logs de una vez.
 const usersKey = (groupId: string) => ['groups', groupId, 'users'] as const
-const requestsKey = (groupId: string) => ['groups', groupId, 'requests'] as const
+const requestsKey = (groupId: string, params?: JoinRequestParams) =>
+  ['groups', groupId, 'requests', params ?? {}] as const
 const logsKey = (groupId: string) => ['groups', groupId, 'logs'] as const
 
 // ── Lecturas ──────────────────────────────────────────────────────────
@@ -43,10 +45,10 @@ export function useGroupUser(groupId: string, userId: string) {
   })
 }
 
-export function useJoinRequests(groupId: string) {
+export function useJoinRequests(groupId: string, params?: JoinRequestParams) {
   return useQuery({
-    queryKey: requestsKey(groupId),
-    queryFn: () => listJoinRequests(groupId),
+    queryKey: requestsKey(groupId, params),
+    queryFn: () => listJoinRequests(groupId, params),
     retry: false,
   })
 }

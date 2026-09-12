@@ -172,8 +172,8 @@ type fakeJoinRequestStore struct {
 	err      error
 }
 
-func (f *fakeJoinRequestStore) ListByGroup(_ context.Context, _, _ int64) ([]joinrequests.Request, error) {
-	return f.requests, f.err
+func (f *fakeJoinRequestStore) ListByGroup(_ context.Context, _, _ int64, _ joinrequests.ListByGroupParams) ([]joinrequests.Request, int, error) {
+	return f.requests, len(f.requests), f.err
 }
 
 // fakeLogStore satisface logStore.

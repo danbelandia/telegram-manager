@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/telegram-manager/backend/internal/groups"
@@ -16,7 +17,7 @@ import (
 // ingreso que los handlers necesitan (lado consumidor). Scopeado por
 // tenant (slice 0).
 type joinRequestStore interface {
-	ListByGroup(ctx context.Context, tenantID, groupID int64) ([]joinrequests.Request, error)
+	ListByGroup(ctx context.Context, tenantID, groupID int64, p joinrequests.ListByGroupParams) ([]joinrequests.Request, int, error)
 }
 
 // joinRequestResponse es la vista JSON de una solicitud de ingreso.
@@ -69,7 +70,7 @@ func checkGroupOwnership(s *Server, w http.ResponseWriter, r *http.Request, tena
 
 // handleListJoinRequests GET /api/groups/{id}/join-requests (decision
 // P2: pendientes y decididas, mas recientes primero). Solo filas del
-// tenant (iso-listados).
+// tenant (iso-listados). Accepts query params: status, limit, offset.
 func (s *Server) handleListJoinRequests(w http.ResponseWriter, r *http.Request) {
 	if s.joinRequests == nil {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "modulo de solicitudes no habilitado")
@@ -86,16 +87,39 @@ func (s *Server) handleListJoinRequests(w http.ResponseWriter, r *http.Request) 
 	if !checkGroupOwnership(s, w, r, tenantID, groupID) {
 		return
 	}
-	list, err := s.joinRequests.ListByGroup(r.Context(), tenantID, groupID)
+
+	p := joinrequests.ListByGroupParams{
+		Limit:  50,
+		Offset: 0,
+	}
+	if s := r.URL.Query().Get("status"); s != "" {
+		p.Status = s
+	}
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if v, err := strconv.Atoi(l); err == nil && v > 0 && v <= 100 {
+			p.Limit = v
+		}
+	}
+	if o := r.URL.Query().Get("offset"); o != "" {
+		if v, err := strconv.Atoi(o); err == nil && v >= 0 {
+			p.Offset = v
+		}
+	}
+
+	list, total, err := s.joinRequests.ListByGroup(r.Context(), tenantID, groupID, p)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "no se pudieron listar las solicitudes")
 		return
+	}
+	type listResponse struct {
+		Data  []joinRequestResponse `json:"data"`
+		Total int                   `json:"total"`
 	}
 	out := make([]joinRequestResponse, 0, len(list))
 	for _, req := range list {
 		out = append(out, toJoinRequestResponse(&req))
 	}
-	respond(w, http.StatusOK, out)
+	respond(w, http.StatusOK, listResponse{Data: out, Total: total})
 }
 
 // handleApproveJoinRequest POST /api/groups/{id}/join-requests/{requestId}/approve.

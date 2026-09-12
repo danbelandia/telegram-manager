@@ -75,9 +75,30 @@ export function unlockGroup(groupId: string): Promise<{ status: string }> {
 
 // ── Solicitudes de ingreso ────────────────────────────────────────────
 
-/** GET /api/groups/:id/join-requests. */
-export function listJoinRequests(groupId: string): Promise<JoinRequest[]> {
-  return request<JoinRequest[]>(`/api/groups/${groupId}/join-requests`)
+export interface JoinRequestParams {
+  status?: string
+  limit?: number
+  offset?: number
+}
+
+export interface JoinRequestListResponse {
+  data: JoinRequest[]
+  total: number
+}
+
+/** GET /api/groups/:id/join-requests?status=&limit=&offset=. */
+export function listJoinRequests(
+  groupId: string,
+  params?: JoinRequestParams,
+): Promise<JoinRequestListResponse> {
+  const qs = new URLSearchParams()
+  if (params?.status) qs.set('status', params.status)
+  if (params?.limit != null) qs.set('limit', String(params.limit))
+  if (params?.offset != null) qs.set('offset', String(params.offset))
+  const query = qs.toString()
+  return request<JoinRequestListResponse>(
+    `/api/groups/${groupId}/join-requests${query ? `?${query}` : ''}`,
+  )
 }
 
 /** POST .../join-requests/:requestId/approve. */

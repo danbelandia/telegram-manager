@@ -10,7 +10,7 @@
 // Patron similar a publications-batch (BatchWizard) pero inline en la
 // tabla (sin modal): checkboxes + botones de accion por debajo del
 // titulo.
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
   Alert,
@@ -18,6 +18,7 @@ import {
   Button,
   Checkbox,
   Group,
+  NativeSelect,
   Paper,
   Skeleton,
   Stack,
@@ -50,6 +51,7 @@ const STATUS_COLOR: Record<JoinRequest['status'], string> = {
 
 /** Maximo de solicitudes seleccionables por batch. */
 const MAX_BATCH_SIZE = 50
+const PAGE_SIZE = 50
 
 function formatDate(iso: string | null): string {
   if (!iso) return '—'
@@ -87,7 +89,15 @@ export default function GroupRequestsPage() {
   const { id } = useParams<{ id: string }>()
   const groupId = id ?? ''
 
-  const requests = useJoinRequests(groupId)
+  // ── Filter / pagination state ──────────────────────────────────
+  const [statusFilter, setStatusFilter] = useState('')
+  const [offset, setOffset] = useState(0)
+
+  const requests = useJoinRequests(groupId, {
+    status: statusFilter || undefined,
+    limit: PAGE_SIZE,
+    offset,
+  })
   const approve = useApproveJoinRequest()
   const reject = useRejectJoinRequest()
   const batchMutate = useBatchJoinRequest()
@@ -97,9 +107,12 @@ export default function GroupRequestsPage() {
   // ── Batch selection state ──────────────────────────────────────
   const [selected, setSelected] = useState<Set<number>>(new Set())
 
-  const pendingIds = requests.data
-    ?.filter((r) => r.status === 'pending')
-    .map((r) => r.id) ?? []
+  // Current page items (new response format: { data, total })
+  const pageItems = requests.data?.data ?? []
+
+  const pendingIds = pageItems
+    .filter((r) => r.status === 'pending')
+    .map((r) => r.id)
 
   const allPendingSelected =
     pendingIds.length > 0 && pendingIds.every((id) => selected.has(id))
@@ -129,6 +142,11 @@ export default function GroupRequestsPage() {
   }
 
   const clearSelection = () => setSelected(new Set())
+
+  // Reset selection when filter or page changes
+  useEffect(() => {
+    setSelected(new Set())
+  }, [statusFilter, offset])
 
   // ── Batch actions ──────────────────────────────────────────────
   const runBatch = (action: 'approve' | 'reject') => {
@@ -176,6 +194,16 @@ export default function GroupRequestsPage() {
 
   const batchMode = selected.size > 0
 
+  // ── Pagination ─────────────────────────────────────────────────
+  const canPrev = offset > 0
+  const canNext = pageItems.length >= PAGE_SIZE
+  const currentPage = Math.floor(offset / PAGE_SIZE) + 1
+
+  // Empty state message depends on active filter
+  const emptyMessage = statusFilter
+    ? `Sin solicitudes con estado "${STATUS_LABEL[statusFilter as JoinRequest['status']] ?? statusFilter}".`
+    : 'Sin solicitudes de ingreso pendientes ni resueltas.'
+
   return (
     <Paper p="md" withBorder radius="md">
       <Stack gap="md">
@@ -192,6 +220,23 @@ export default function GroupRequestsPage() {
         </Group>
 
         <Title order={2}>Solicitudes de ingreso</Title>
+
+        {/* ── Filter ─────────────────────────────────────────── */}
+        <NativeSelect
+          label="Filtrar por estado"
+          name="filter-status"
+          value={statusFilter}
+          onChange={(e) => {
+            setStatusFilter(e.currentTarget.value)
+            setOffset(0)
+          }}
+          data={[
+            { value: '', label: 'Todos' },
+            { value: 'pending', label: 'Pendiente' },
+            { value: 'approved', label: 'Aprobada' },
+          ]}
+          radius="md"
+        />
 
         {/* ── Batch action bar ──────────────────────────────── */}
         {batchMode ? (
@@ -249,13 +294,13 @@ export default function GroupRequestsPage() {
           </Alert>
         ) : null}
 
-        {!requests.isPending && !requests.isError && requests.data && requests.data.length === 0 ? (
+        {!requests.isPending && !requests.isError && pageItems.length === 0 ? (
           <Text c="dimmed">
-            Sin solicitudes de ingreso pendientes ni resueltas.
+            {emptyMessage}
           </Text>
         ) : null}
 
-        {!requests.isPending && !requests.isError && requests.data && requests.data.length > 0 ? (
+        {!requests.isPending && !requests.isError && pageItems.length > 0 ? (
           <Table.ScrollContainer minWidth={500}>
             <Table striped highlightOnHover withTableBorder verticalSpacing="sm">
               <Table.Thead>
@@ -276,7 +321,7 @@ export default function GroupRequestsPage() {
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
-                {requests.data.map((req) => (
+                {pageItems.map((req) => (
                   <Table.Tr key={req.id}>
                     <Table.Td>
                       {req.status === 'pending' ? (
@@ -336,6 +381,27 @@ export default function GroupRequestsPage() {
               </Table.Tbody>
             </Table>
           </Table.ScrollContainer>
+        ) : null}
+
+        {/* ── Pagination ─────────────────────────────────────── */}
+        {!requests.isPending && !requests.isError && (pageItems.length > 0 || offset > 0) ? (
+          <Group justify="space-between">
+            <Button
+              variant="default"
+              disabled={!canPrev}
+              onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
+            >
+              ← Anterior
+            </Button>
+            <Text size="sm" c="dimmed">Página {currentPage}</Text>
+            <Button
+              variant="default"
+              disabled={!canNext}
+              onClick={() => setOffset(offset + PAGE_SIZE)}
+            >
+              Siguiente →
+            </Button>
+          </Group>
         ) : null}
       </Stack>
     </Paper>

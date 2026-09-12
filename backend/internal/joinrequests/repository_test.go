@@ -63,7 +63,7 @@ func TestRepository_UpsertPendingIdempotent(t *testing.T) {
 		t.Fatalf("second upsert: %v", err)
 	}
 
-	got, err := repo.ListByGroup(ctx, tid, -1001)
+	got, _, err := repo.ListByGroup(ctx, tid, -1001, ListByGroupParams{Limit: 100})
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestRepository_UpsertAfterResolveCreatesNewRow(t *testing.T) {
 	if err := repo.UpsertPending(ctx, tid, -1001, 42); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	first, err := repo.ListByGroup(ctx, tid, -1001)
+	first, _, err := repo.ListByGroup(ctx, tid, -1001, ListByGroupParams{Limit: 100})
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestRepository_UpsertAfterResolveCreatesNewRow(t *testing.T) {
 		t.Fatalf("upsert tras resolver: %v", err)
 	}
 
-	got, err := repo.ListByGroup(ctx, tid, -1001)
+	got, _, err := repo.ListByGroup(ctx, tid, -1001, ListByGroupParams{Limit: 100})
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestRepository_Resolve(t *testing.T) {
 	if err := repo.UpsertPending(ctx, tid, -1001, 42); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	req, err := repo.ListByGroup(ctx, tid, -1001)
+	req, _, err := repo.ListByGroup(ctx, tid, -1001, ListByGroupParams{Limit: 100})
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestRepository_ResolveNotPending(t *testing.T) {
 	if err := repo.UpsertPending(ctx, tid, -1001, 42); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	req, _ := repo.ListByGroup(ctx, tid, -1001)
+	req, _, _ := repo.ListByGroup(ctx, tid, -1001, ListByGroupParams{Limit: 100})
 	if err := repo.Resolve(ctx, req[0].ID, StatusApproved, &admin); err != nil {
 		t.Fatalf("first resolve: %v", err)
 	}
@@ -188,7 +188,7 @@ func TestRepository_ListFiltersByGroup(t *testing.T) {
 		t.Fatalf("upsert group 2: %v", err)
 	}
 
-	got, err := repo.ListByGroup(ctx, tid, -1001)
+	got, _, err := repo.ListByGroup(ctx, tid, -1001, ListByGroupParams{Limit: 100})
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -216,7 +216,7 @@ RETURNING id`
 	}
 
 	// Listado de B no ve la fila de A.
-	gotB, err := repo.ListByGroup(ctx, tidB, -1001)
+	gotB, _, err := repo.ListByGroup(ctx, tidB, -1001, ListByGroupParams{Limit: 100})
 	if err != nil {
 		t.Fatalf("list B: %v", err)
 	}
@@ -225,7 +225,7 @@ RETURNING id`
 	}
 
 	// GetByID cruzado: indistinguible de inexistente.
-	gotA, err := repo.ListByGroup(ctx, tidA, -1001)
+	gotA, _, err := repo.ListByGroup(ctx, tidA, -1001, ListByGroupParams{Limit: 100})
 	if err != nil || len(gotA) != 1 {
 		t.Fatalf("list A: %+v, %v", gotA, err)
 	}
