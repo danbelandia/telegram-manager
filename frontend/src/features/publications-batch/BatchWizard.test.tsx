@@ -112,33 +112,37 @@ describe('BatchWizard', () => {
     expect(addBtn).not.toBeDisabled()
   }, 15000)
 
-  it('submit deshabilitado si algun slot tiene text vacio o 0 grupos', async () => {
+  it('submit no deshabilita por errores; errores aparecen al hacer click', async () => {
     const user = userEvent.setup()
     renderWithProviders(<BatchWizard opened onClose={vi.fn()} />)
 
-    // Llenamos solo el slot 0.
-    const slot0 = screen.getByTestId('batch-slot-0')
-    const textarea0 = slot0.querySelector('textarea') as HTMLTextAreaElement
-    await user.type(textarea0, 'hola')
-    // Click en grupo MU Online.
-    const slot0Labels = Array.from(slot0.querySelectorAll('label'))
-    const slot0Group = slot0Labels.find((l) => l.textContent?.trim() === 'MU Online Comunidad')
-    if (slot0Group) await user.click(slot0Group)
-
-    // Slot 1 sigue vacio -> submit deshabilitado.
+    // El boton submit esta habilitado aunque haya slots vacios.
     const submit = screen.getByTestId('batch-submit') as HTMLButtonElement
-    expect(submit).toBeDisabled()
+    expect(submit).not.toBeDisabled()
 
-    // Llenamos slot 1 tambien.
+    // Hacemos click sin llenar nada -> aparecen errores (uno por slot vacio).
+    await user.click(submit)
+    await waitFor(() => {
+      expect(screen.getAllByText('texto no puede estar vacio').length).toBe(2)
+    })
+
+    // Llenamos ambos slots -> errores desaparecen.
+    const slot0 = screen.getByTestId('batch-slot-0')
+    await user.type(slot0.querySelector('textarea')!, 'hola')
+    const group0 = Array.from(slot0.querySelectorAll('label')).find(
+      (l) => l.textContent?.trim() === 'MU Online Comunidad',
+    )
+    if (group0) await user.click(group0)
+
     const slot1 = screen.getByTestId('batch-slot-1')
-    const textarea1 = slot1.querySelector('textarea') as HTMLTextAreaElement
-    await user.type(textarea1, 'mundo')
-    const slot1Labels = Array.from(slot1.querySelectorAll('label'))
-    const slot1Group = slot1Labels.find((l) => l.textContent?.trim() === 'MU Online Comunidad')
-    if (slot1Group) await user.click(slot1Group)
+    await user.type(slot1.querySelector('textarea')!, 'mundo')
+    const group1 = Array.from(slot1.querySelectorAll('label')).find(
+      (l) => l.textContent?.trim() === 'MU Online Comunidad',
+    )
+    if (group1) await user.click(group1)
 
     await waitFor(() => {
-      expect(submit).not.toBeDisabled()
+      expect(screen.queryAllByText('texto no puede estar vacio').length).toBe(0)
     })
   })
 

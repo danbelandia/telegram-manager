@@ -136,6 +136,7 @@ export default function BatchWizard({ opened, onClose }: BatchWizardProps) {
   )
   const [result, setResult] = useState<BatchResponse | null>(null)
   const [attempt, setAttempt] = useState(0)
+  const [submitted, setSubmitted] = useState(false)
   const create = useCreatePublicationBatch()
 
   // Reset al cerrar: limpiar slots, resultado y contador de intentos.
@@ -144,6 +145,7 @@ export default function BatchWizard({ opened, onClose }: BatchWizardProps) {
       setSlots(Array.from({ length: DEFAULT_SLOT_COUNT }, () => emptySlot()))
       setResult(null)
       setAttempt(0)
+      setSubmitted(false)
       create.reset()
     }
     // create.reset es estable; el effect solo debe correr al cambiar opened.
@@ -196,10 +198,12 @@ export default function BatchWizard({ opened, onClose }: BatchWizardProps) {
   }
 
   const errors = useMemo(() => slots.map(slotError), [slots])
+  const visibleErrors = submitted ? errors : errors.map(() => null)
   const hasErrors = errors.some((e) => e !== null)
   const submitting = create.isPending
 
   const handleSubmit = () => {
+    setSubmitted(true)
     if (hasErrors) return
     const payload = {
       publications: slots.map(slotToInput),
@@ -300,7 +304,7 @@ export default function BatchWizard({ opened, onClose }: BatchWizardProps) {
                       minRows={3}
                       autosize
                       maxRows={10}
-                      error={errors[i] && errors[i]?.includes('texto') ? errors[i] : undefined}
+                      error={visibleErrors[i] && visibleErrors[i]?.includes('texto') ? visibleErrors[i] : undefined}
                     />
 
                     <Stack gap="xs">
@@ -318,7 +322,7 @@ export default function BatchWizard({ opened, onClose }: BatchWizardProps) {
                           value={s.photoUrl}
                           onChange={(e) => updateSlot(i, { photoUrl: e.currentTarget.value })}
                           placeholder="https://ejemplo.com/imagen.jpg"
-                          error={errors[i] && errors[i]?.includes('URL') ? errors[i] : undefined}
+                          error={visibleErrors[i] && visibleErrors[i]?.includes('URL') ? visibleErrors[i] : undefined}
                           size="sm"
                         />
                       )}
@@ -348,9 +352,9 @@ export default function BatchWizard({ opened, onClose }: BatchWizardProps) {
                           ))}
                         </Stack>
                       )}
-                      {errors[i] && errors[i]?.includes('grupo') ? (
+                      {visibleErrors[i] && visibleErrors[i]?.includes('grupo') ? (
                         <Text size="xs" c="red">
-                          {errors[i]}
+                          {visibleErrors[i]}
                         </Text>
                       ) : null}
                     </Stack>
@@ -365,7 +369,7 @@ export default function BatchWizard({ opened, onClose }: BatchWizardProps) {
                       dropdownType="popover"
                       size="md"
                       clearable
-                      error={errors[i] && errors[i]?.includes('fecha') ? errors[i] : undefined}
+                      error={visibleErrors[i] && visibleErrors[i]?.includes('fecha') ? visibleErrors[i] : undefined}
                     />
 
                     <Stack gap="xs">
@@ -375,9 +379,9 @@ export default function BatchWizard({ opened, onClose }: BatchWizardProps) {
                       <ButtonsEditor value={s.buttons} onChange={(rows) => updateSlot(i, { buttons: rows })} />
                     </Stack>
 
-                    {errors[i] && !['texto', 'URL', 'grupo', 'fecha'].some((k) => errors[i]?.includes(k)) ? (
+                    {visibleErrors[i] && !['texto', 'URL', 'grupo', 'fecha'].some((k) => visibleErrors[i]?.includes(k)) ? (
                       <Text size="xs" c="red">
-                        {errors[i]}
+                        {visibleErrors[i]}
                       </Text>
                     ) : null}
                   </Stack>
@@ -387,7 +391,7 @@ export default function BatchWizard({ opened, onClose }: BatchWizardProps) {
 
             <SummaryAlert
               slots={slots}
-              errors={errors}
+              errors={visibleErrors}
               groupName={groupName}
               createdCount={createdCount}
               failedCount={failedCount}
@@ -407,7 +411,7 @@ export default function BatchWizard({ opened, onClose }: BatchWizardProps) {
               </Button>
               <Button
                 onClick={handleSubmit}
-                disabled={hasErrors || submitting}
+                disabled={submitting}
                 loading={submitting}
                 leftSection={<IconSend size={16} />}
                 data-testid="batch-submit"
