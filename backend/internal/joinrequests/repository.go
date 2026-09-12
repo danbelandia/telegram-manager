@@ -74,9 +74,6 @@ WHERE j.tenant_id = $1 AND j.group_id = $2`
 	listArgs := make([]any, len(args))
 	copy(listArgs, args)
 	paramIdx := len(args)
-	if p.Status != "" {
-		paramIdx++
-	}
 	listQ += " ORDER BY j.requested_at DESC"
 	if p.Limit > 0 {
 		paramIdx++
