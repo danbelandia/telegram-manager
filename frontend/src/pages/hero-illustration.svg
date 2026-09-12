@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 340 340" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="340" y2="340" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#339af0" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#228be6" stop-opacity="0.05"/>
+    </linearGradient>
+  </defs>
+  <!-- Background circle -->
+  <circle cx="170" cy="170" r="160" fill="url(#bg)" stroke="var(--mantine-color-blue-3, #74c0fc)" stroke-width="2"/>
+  <!-- Telegram paper plane icon -->
+  <g transform="translate(95, 90) scale(1.6)">
+    <path d="M12 2L20.5 22L12 18L3.5 22L12 2Z" fill="#339af0" opacity="0.9"/>
+    <path d="M12 2L20.5 22L12 18" fill="#1c7ed6"/>
+    <path d="M12 2L3.5 22L12 18" fill="#4dabf7"/>
+    <path d="M12 18L12 32L16 22" fill="#1c7ed6" opacity="0.8"/>
+    <path d="M12 18L12 32L8 22" fill="#4dabf7" opacity="0.8"/>
+    <path d="M12 2L12 18L3.5 22" fill="#228be6" opacity="0.3"/>
+    <path d="M12 2L12 18L20.5 22" fill="#228be6" opacity="0.3"/>
+  </g>
+  <!-- Decorative dots -->
+  <circle cx="60" cy="280" r="4" fill="#339af0" opacity="0.3"/>
+  <circle cx="80" cy="300" r="3" fill="#228be6" opacity="0.2"/>
+  <circle cx="280" cy="60" r="4" fill="#339af0" opacity="0.3"/>
+  <circle cx="260" cy="80" r="3" fill="#228be6" opacity="0.2"/>
+  <circle cx="290" cy="290" r="3" fill="#339af0" opacity="0.2"/>
+</svg>

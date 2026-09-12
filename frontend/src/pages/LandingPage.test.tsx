@@ -21,7 +21,7 @@ describe('LandingPage', () => {
   it('muestra enlaces a /signup y /login', () => {
     renderLanding()
 
-    expect(screen.getByRole('link', { name: 'Crear cuenta' })).toHaveAttribute('href', '/signup')
+    expect(screen.getByRole('link', { name: 'Crear cuenta gratis' })).toHaveAttribute('href', '/signup')
     expect(screen.getByRole('link', { name: 'Iniciar sesión' })).toHaveAttribute('href', '/login')
   })
 })
