@@ -6,7 +6,6 @@ import {
   Group,
   Loader,
   Modal,
-  NativeSelect,
   Paper,
   Select,
   Stack,
@@ -243,18 +242,22 @@ export default function AdminTenantsPage() {
       >
         <ModalErrorBoundary>
         <Stack gap="md">
-          <NativeSelect
+          <Select
             label="Estado"
             data={editing ? editableStatuses(editing.status) : []}
             value={editForm.status}
-            onChange={(e) => setEditForm((f) => ({ ...f, status: e.currentTarget.value }))}
+            onChange={(v) => { if (v) setEditForm((f) => ({ ...f, status: v })) }}
+            allowDeselect={false}
+            comboboxProps={{ withinPortal: false }}
           />
 
-          <NativeSelect
+          <Select
             label="Plan"
             data={PLAN_OPTIONS}
             value={editForm.plan}
-            onChange={(e) => setEditForm((f) => ({ ...f, plan: e.currentTarget.value }))}
+            onChange={(v) => { if (v) setEditForm((f) => ({ ...f, plan: v })) }}
+            allowDeselect={false}
+            comboboxProps={{ withinPortal: false }}
           />
 
           <TextInput
