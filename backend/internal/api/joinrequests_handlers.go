@@ -19,6 +19,8 @@ import (
 // tenant (slice 0).
 type joinRequestStore interface {
 	ListByGroup(ctx context.Context, tenantID, groupID int64, p joinrequests.ListByGroupParams) ([]joinrequests.Request, int, error)
+	ApprovePendingByUser(ctx context.Context, tenantID, groupID, userID int64) error
+	RejectPendingByUser(ctx context.Context, tenantID, groupID, userID int64) error
 }
 
 // joinRequestResponse es la vista JSON de una solicitud de ingreso.

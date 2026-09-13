@@ -168,6 +168,20 @@ WHERE tenant_id = $1 AND group_id = $2 AND user_id = $3 AND status = 'pending'`
 	return nil
 }
 
+// RejectPendingByUser marca como rejected la solicitud pendiente de
+// un usuario en un grupo (dentro del tenant). Best-effort, idempotente.
+func (r *Repository) RejectPendingByUser(ctx context.Context, tenantID, groupID, userID int64) error {
+	const q = `
+UPDATE join_requests
+SET status = 'rejected', decided_at = now(), decided_by = NULL
+WHERE tenant_id = $1 AND group_id = $2 AND user_id = $3 AND status = 'pending'`
+
+	if _, err := r.db.ExecContext(ctx, q, tenantID, groupID, userID); err != nil {
+		return fmt.Errorf("joinrequests: reject by user %d/%d: %w", groupID, userID, err)
+	}
+	return nil
+}
+
 // rowScanner es la vista minima de fila que el scanner necesita;
 // *sql.Rows y *sql.Row la satisfacen.
 type rowScanner interface {

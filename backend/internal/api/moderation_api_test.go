@@ -176,6 +176,9 @@ func (f *fakeJoinRequestStore) ListByGroup(_ context.Context, _, _ int64, _ join
 	return f.requests, len(f.requests), f.err
 }
 
+func (f *fakeJoinRequestStore) ApprovePendingByUser(_ context.Context, _, _, _ int64) error { return nil }
+func (f *fakeJoinRequestStore) RejectPendingByUser(_ context.Context, _, _, _ int64) error  { return nil }
+
 // fakeLogStore satisface logStore.
 type fakeLogStore struct {
 	entries []logs.Entry
