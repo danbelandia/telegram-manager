@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -108,6 +109,7 @@ func (s *Server) handleListJoinRequests(w http.ResponseWriter, r *http.Request) 
 
 	list, total, err := s.joinRequests.ListByGroup(r.Context(), tenantID, groupID, p)
 	if err != nil {
+		slog.Error("joinrequests: list failed", "group_id", groupID, "err", err)
 		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "no se pudieron listar las solicitudes")
 		return
 	}

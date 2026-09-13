@@ -68,25 +68,24 @@ WHERE j.tenant_id = $1 AND j.group_id = $2`
 		return nil, 0, fmt.Errorf("joinrequests: count %d: %w", groupID, err)
 	}
 
-	// Listar con LIMIT/OFFSET.
+	// Listar con filtros, LIMIT/OFFSET.
 	listQ := `SELECT j.id, j.tenant_id, j.group_id, j.user_id, j.status, j.requested_at, j.decided_at, j.decided_by,
        COALESCE(u.first_name, ''), u.username ` + base
-	listArgs := make([]any, len(args))
-	copy(listArgs, args)
-	paramIdx := len(args)
+	if p.Status != "" {
+		listQ += " AND j.status = $3"
+	}
+	// LIMIT/OFFSET se interpolan directamente porque pgx no puede
+	// inferir el tipo de un parámetro numérico (42P18). Los valores
+	// ya están validados como enteros 1..100 / >=0 por el handler.
 	listQ += " ORDER BY j.requested_at DESC"
 	if p.Limit > 0 {
-		paramIdx++
-		listQ += fmt.Sprintf(" LIMIT $%d", paramIdx)
-		listArgs = append(listArgs, p.Limit)
+		listQ += fmt.Sprintf(" LIMIT %d", p.Limit)
 	}
 	if p.Offset > 0 {
-		paramIdx++
-		listQ += fmt.Sprintf(" OFFSET $%d", paramIdx)
-		listArgs = append(listArgs, p.Offset)
+		listQ += fmt.Sprintf(" OFFSET %d", p.Offset)
 	}
 
-	rows, err := r.db.QueryContext(ctx, listQ, listArgs...)
+	rows, err := r.db.QueryContext(ctx, listQ, args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("joinrequests: list %d: %w", groupID, err)
 	}
