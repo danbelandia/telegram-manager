@@ -197,6 +197,71 @@ func TestRepository_ListFiltersByGroup(t *testing.T) {
 	}
 }
 
+func TestRepository_ApprovePendingByUser(t *testing.T) {
+	db := testDB(t)
+	repo := NewRepository(db)
+	tid := testTenant(t, db)
+
+	ctx := context.Background()
+	if err := repo.UpsertPending(ctx, tid, -1001, 42); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	if err := repo.ApprovePendingByUser(ctx, tid, -1001, 42); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+
+	got, _, err := repo.ListByGroup(ctx, tid, -1001, ListByGroupParams{Limit: 100})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("requests = %d, want 1", len(got))
+	}
+	if got[0].Status != StatusApproved {
+		t.Errorf("status = %s, want approved", got[0].Status)
+	}
+	if got[0].DecidedBy != nil {
+		t.Errorf("decided_by = %v, want nil (auto-approve)", got[0].DecidedBy)
+	}
+	if got[0].DecidedAt == nil {
+		t.Error("decided_at nil, want fecha")
+	}
+}
+
+func TestRepository_ApprovePendingByUser_NoPending(t *testing.T) {
+	db := testDB(t)
+	repo := NewRepository(db)
+	tid := testTenant(t, db)
+
+	ctx := context.Background()
+	// No pending request exists — should not error (best-effort).
+	if err := repo.ApprovePendingByUser(ctx, tid, -1001, 42); err != nil {
+		t.Fatalf("approve no-pending: %v", err)
+	}
+}
+
+func TestRepository_ApprovePendingByUser_AlreadyApproved(t *testing.T) {
+	db := testDB(t)
+	repo := NewRepository(db)
+	tid := testTenant(t, db)
+
+	ctx := context.Background()
+	admin := int64(3)
+	if err := repo.UpsertPending(ctx, tid, -1001, 42); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	req, _, _ := repo.ListByGroup(ctx, tid, -1001, ListByGroupParams{Limit: 100})
+	if err := repo.Resolve(ctx, req[0].ID, StatusApproved, &admin); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+
+	// Already approved — should not error (best-effort, no-op).
+	if err := repo.ApprovePendingByUser(ctx, tid, -1001, 42); err != nil {
+		t.Fatalf("approve already-approved: %v", err)
+	}
+}
+
 func TestRepository_CrossTenantIsolation(t *testing.T) {
 	db := testDB(t)
 	repo := NewRepository(db)

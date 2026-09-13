@@ -150,6 +150,24 @@ WHERE id = $1 AND status = 'pending'`
 	return nil
 }
 
+// ApprovePendingByUser marca como approved la solicitud pendiente de
+// un usuario en un grupo (dentro del tenant). Si no hay solicitud
+// pendiente (ya fue resuelta, no existia, etc.) no retorna error —
+// es best-effort porque el evento chat_member puede llegar despues
+// de que la solicitud fue procesada por el bot o directamente en
+// Telegram.
+func (r *Repository) ApprovePendingByUser(ctx context.Context, tenantID, groupID, userID int64) error {
+	const q = `
+UPDATE join_requests
+SET status = 'approved', decided_at = now(), decided_by = NULL
+WHERE tenant_id = $1 AND group_id = $2 AND user_id = $3 AND status = 'pending'`
+
+	if _, err := r.db.ExecContext(ctx, q, tenantID, groupID, userID); err != nil {
+		return fmt.Errorf("joinrequests: approve by user %d/%d: %w", groupID, userID, err)
+	}
+	return nil
+}
+
 // rowScanner es la vista minima de fila que el scanner necesita;
 // *sql.Rows y *sql.Row la satisfacen.
 type rowScanner interface {

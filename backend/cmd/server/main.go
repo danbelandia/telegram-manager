@@ -227,6 +227,26 @@ func run() error {
 			}
 			slog.Info("joinrequests: request registered", "tenant_id", tenantID, "group_id", r.GroupID, "user_id", r.UserID)
 		})
+
+		// Auto-approve: cuando un usuario es aprobado directamente
+		// en Telegram (no via el bot), el chat_member update llega
+		// con status "member". Marcamos la solicitud pendiente como
+		// approved para sincronizar el estado del panel.
+		bus.Handle(func(u *telegram.Update) {
+			if u.ChatMember == nil {
+				return
+			}
+			groupID, userID, relevant := joinrequests.HandleChatMember(u.ChatMember)
+			if !relevant {
+				return
+			}
+			if err := joinRequestsRepo.ApprovePendingByUser(ctx, tenantID, groupID, userID); err != nil {
+				slog.Warn("joinrequests: auto-approve failed", "tenant_id", tenantID, "group_id", groupID, "user_id", userID, "error", err)
+				return
+			}
+			slog.Info("joinrequests: auto-approved pending request", "tenant_id", tenantID, "group_id", groupID, "user_id", userID)
+		})
+
 		return bus
 	}
 

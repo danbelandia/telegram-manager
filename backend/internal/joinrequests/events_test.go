@@ -34,3 +34,106 @@ func TestHandleChatJoinRequest_NilNoop(t *testing.T) {
 		t.Errorf("request cambio con upd nil: %+v", r)
 	}
 }
+
+func TestHandleChatMember_MemberStatusRelevant(t *testing.T) {
+	upd := &telegram.ChatMemberUpdated{
+		Chat: &telegram.Chat{ID: -1001, Type: "supergroup"},
+		NewChatMember: telegram.ChatMember{
+			Status: telegram.MemberStatusMember,
+			User:   &telegram.User{ID: 42, FirstName: "Juan"},
+		},
+	}
+
+	groupID, userID, relevant := HandleChatMember(upd)
+	if !relevant {
+		t.Fatal("HandleChatMember: want relevant=true for member status")
+	}
+	if groupID != -1001 {
+		t.Errorf("groupID = %d, want -1001", groupID)
+	}
+	if userID != 42 {
+		t.Errorf("userID = %d, want 42", userID)
+	}
+}
+
+func TestHandleChatMember_KickedNotRelevant(t *testing.T) {
+	upd := &telegram.ChatMemberUpdated{
+		Chat: &telegram.Chat{ID: -1001},
+		NewChatMember: telegram.ChatMember{
+			Status: telegram.MemberStatusKicked,
+			User:   &telegram.User{ID: 42},
+		},
+	}
+
+	_, _, relevant := HandleChatMember(upd)
+	if relevant {
+		t.Error("HandleChatMember: want relevant=false for kicked status")
+	}
+}
+
+func TestHandleChatMember_LeftNotRelevant(t *testing.T) {
+	upd := &telegram.ChatMemberUpdated{
+		Chat: &telegram.Chat{ID: -1001},
+		NewChatMember: telegram.ChatMember{
+			Status: telegram.MemberStatusLeft,
+			User:   &telegram.User{ID: 42},
+		},
+	}
+
+	_, _, relevant := HandleChatMember(upd)
+	if relevant {
+		t.Error("HandleChatMember: want relevant=false for left status")
+	}
+}
+
+func TestHandleChatMember_RestrictedNotRelevant(t *testing.T) {
+	upd := &telegram.ChatMemberUpdated{
+		Chat: &telegram.Chat{ID: -1001},
+		NewChatMember: telegram.ChatMember{
+			Status: telegram.MemberStatusRestricted,
+			User:   &telegram.User{ID: 42},
+		},
+	}
+
+	_, _, relevant := HandleChatMember(upd)
+	if relevant {
+		t.Error("HandleChatMember: want relevant=false for restricted status")
+	}
+}
+
+func TestHandleChatMember_NilUpdateNotRelevant(t *testing.T) {
+	_, _, relevant := HandleChatMember(nil)
+	if relevant {
+		t.Error("HandleChatMember(nil): want relevant=false")
+	}
+}
+
+func TestHandleChatMember_NilUserNotRelevant(t *testing.T) {
+	upd := &telegram.ChatMemberUpdated{
+		Chat: &telegram.Chat{ID: -1001},
+		NewChatMember: telegram.ChatMember{
+			Status: telegram.MemberStatusMember,
+			User:   nil,
+		},
+	}
+
+	_, _, relevant := HandleChatMember(upd)
+	if relevant {
+		t.Error("HandleChatMember: want relevant=false when user is nil")
+	}
+}
+
+func TestHandleChatMember_NilChatNotRelevant(t *testing.T) {
+	upd := &telegram.ChatMemberUpdated{
+		Chat: nil,
+		NewChatMember: telegram.ChatMember{
+			Status: telegram.MemberStatusMember,
+			User:   &telegram.User{ID: 42},
+		},
+	}
+
+	_, _, relevant := HandleChatMember(upd)
+	if relevant {
+		t.Error("HandleChatMember: want relevant=false when chat is nil")
+	}
+}
