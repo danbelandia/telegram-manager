@@ -258,6 +258,15 @@ func (s *Service) BatchDecide(ctx context.Context, actorID, groupID int64, actio
 		}
 
 		if err := s.requests.Resolve(ctx, rid, status, &actorID); err != nil {
+			if errors.Is(err, joinrequests.ErrNotPending) {
+				// Ya fue resuelta (race con auto-approve via
+				// chat_member u otra accion). No es error: la
+				// solicitud ya esta en el estado deseado.
+				entry.Status = logs.StatusSuccess
+				_ = s.logs.Create(ctx, entry)
+				results = append(results, BatchItemResult{ID: rid, Status: string(status)})
+				continue
+			}
 			return results, fmt.Errorf("moderation: batch %s: resolve %d: %w", action, rid, err)
 		}
 		entry.Status = logs.StatusSuccess
@@ -306,6 +315,13 @@ func (s *Service) decide(ctx context.Context, actorID, groupID, requestID int64,
 	}
 
 	if err := s.requests.Resolve(ctx, req.ID, status, &actorID); err != nil {
+		if errors.Is(err, joinrequests.ErrNotPending) {
+			// Ya fue resuelta (race con auto-approve). Tratar como
+			// exito: la solicitud ya esta en el estado deseado.
+			entry.Status = logs.StatusSuccess
+			_ = s.logs.Create(ctx, entry)
+			return nil
+		}
 		return fmt.Errorf("moderation: %s: resolve: %w", action, err)
 	}
 	entry.Status = logs.StatusSuccess
