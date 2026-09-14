@@ -17,8 +17,6 @@ import {
   Text,
   Title,
 } from '@mantine/core'
-import { formatModerationError } from '../features/moderation/error'
-import { useLockGroup, useUnlockGroup } from '../features/moderation/hooks'
 import { formatPermissions } from '../features/groups/permissions'
 import { useGroup } from '../features/groups/hooks'
 
@@ -31,17 +29,6 @@ export default function GroupDetailPage() {
   const { id } = useParams<{ id: string }>()
   const groupId = id ?? ''
   const { data: group, isPending, isError, error, refetch } = useGroup(groupId)
-
-  const lock = useLockGroup()
-  const unlock = useUnlockGroup()
-
-  const chatError = lock.error ?? unlock.error
-  const chatPending = lock.isPending || unlock.isPending
-
-  const confirmLock = () => {
-    if (!window.confirm('¿Cerrar el envío de mensajes en este grupo?')) return
-    lock.mutate(groupId)
-  }
 
   if (isPending) {
     return (
@@ -105,45 +92,31 @@ export default function GroupDetailPage() {
         </Group>
       </Box>
 
-      <Stack gap="xs">
-        <Title order={4}>Acciones de moderación</Title>
-        {chatError ? (
-          <Text c="red" size="sm">
-            {formatModerationError(chatError)}
-          </Text>
-        ) : null}
-        <Group>
-          <Button variant="default" disabled={chatPending} onClick={() => unlock.mutate(groupId)}>
-            🔓 Abrir chat
-          </Button>
-          <Button color="red" disabled={chatPending} onClick={confirmLock}>
-            🔒 Cerrar chat
-          </Button>
-          <Button
-            component={Link}
-            to={`/groups/${groupId}/users`}
-            variant="light"
-          >
-            Membresía y moderación
-          </Button>
-          <Button
-            component={Link}
-            to={`/groups/${groupId}/automation`}
-            variant="light"
-            data-testid="automation-link"
-          >
-            Configurar reglas
-          </Button>
-          <Button
-            component={Link}
-            to={`/groups/${groupId}/moderation`}
-            variant="light"
-            data-testid="moderation-dashboard-link"
-          >
-            Ver dashboard
-          </Button>
-        </Group>
-      </Stack>
+      <Group>
+        <Button
+          component={Link}
+          to={`/groups/${groupId}/users`}
+          variant="light"
+        >
+          Membresía y moderación
+        </Button>
+        <Button
+          component={Link}
+          to={`/groups/${groupId}/automation`}
+          variant="light"
+          data-testid="automation-link"
+        >
+          Configurar reglas
+        </Button>
+        <Button
+          component={Link}
+          to={`/groups/${groupId}/moderation`}
+          variant="light"
+          data-testid="moderation-dashboard-link"
+        >
+          Ver dashboard
+        </Button>
+      </Group>
 
       <Tabs defaultValue="detalle">
         <Tabs.List>

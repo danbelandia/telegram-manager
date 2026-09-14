@@ -7,9 +7,10 @@
 // invierten las queries correctas via useBanUser/useUnbanUser/useMuteUser
 // /useUnmuteUser (call-sites only — features/moderation/hooks.ts intacto).
 import { useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import {
   Alert,
+  Anchor,
   Avatar,
   Badge,
   Button,
@@ -231,6 +232,10 @@ export default function GroupUsersPage() {
   return (
     <Container size="lg" py="md">
       <Stack gap="md">
+        <Anchor component={Link} to="/groups" size="sm">
+          ← Grupos
+        </Anchor>
+
         <Stack gap={4}>
           <Title order={2}>Membresía y moderación</Title>
           <Text size="sm" c="dimmed">
