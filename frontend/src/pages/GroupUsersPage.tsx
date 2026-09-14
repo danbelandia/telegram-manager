@@ -232,9 +232,9 @@ export default function GroupUsersPage() {
   return (
     <Container size="lg" py="md">
       <Stack gap="md">
-        <Anchor component={Link} to="/groups" size="sm">
-          ← Grupos
-        </Anchor>
+      <Anchor component={Link} to={`/groups/${groupId}`} size="sm">
+        ← Volver al grupo
+      </Anchor>
 
         <Stack gap={4}>
           <Title order={2}>Membresía y moderación</Title>
