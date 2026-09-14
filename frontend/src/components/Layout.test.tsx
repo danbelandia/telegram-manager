@@ -1,7 +1,7 @@
 // Smoke test del Layout autenticado (frontend-refresh slice 1 — design D6).
 // Verifica que el AppShell de Mantine renderiza header + navbar (los 3
-// NavLinks a rutas globales) + outlet. Mockea useAuth para inyectar un
-// usuario sin depender del backend.
+// NavLinks a rutas globales: Grupos, Publicaciones, Configuracion) +
+// outlet. Mockea useAuth para inyectar un usuario sin depender del backend.
 import { render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { MantineProvider } from '@mantine/core'
@@ -30,7 +30,7 @@ vi.mock('../lib/auth-context', () => ({
   }),
 }))
 
-function renderLayout(initialEntries: string[] = ['/dashboard']) {
+function renderLayout(initialEntries: string[] = ['/groups']) {
   return render(
     <MantineProvider theme={mantineTheme} defaultColorScheme="light">
       <Notifications position="top-right" />
@@ -38,8 +38,8 @@ function renderLayout(initialEntries: string[] = ['/dashboard']) {
         <Routes>
           <Route element={<Layout />}>
             <Route
-              path="/dashboard"
-              element={<div data-testid="outlet-content">Dashboard outlet</div>}
+              path="/groups"
+              element={<div data-testid="outlet-content">Groups outlet</div>}
             />
           </Route>
         </Routes>
@@ -63,7 +63,6 @@ describe('Layout', () => {
     expect(screen.getByTestId('logout-button')).toBeInTheDocument()
 
     // Navbar: las 3 rutas globales.
-    expect(screen.getByTestId('nav-dashboard')).toBeInTheDocument()
     expect(screen.getByTestId('nav-groups')).toBeInTheDocument()
     expect(screen.getByTestId('nav-publications')).toBeInTheDocument()
 

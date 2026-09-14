@@ -42,7 +42,7 @@ describe('App', () => {
     expect(screen.getByRole('link', { name: 'Iniciar sesión' })).toBeInTheDocument()
   })
 
-  it('la ruta raiz redirige a /dashboard con sesion', async () => {
+  it('la ruta raiz redirige a /groups con sesion', async () => {
     vi.stubGlobal('fetch', vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input)
       if (url.includes('/api/auth/me')) {
@@ -52,7 +52,7 @@ describe('App', () => {
           json: () => Promise.resolve({ data: { id: '1', username: 'admin', tenant_id: 7 }, error: null }),
         })
       }
-      // /api/groups: lista vacia -> Dashboard muestra estado vacio
+      // /api/groups: lista vacia -> GroupsPage muestra estado vacio
       return Promise.resolve({
         ok: true,
         status: 200,
@@ -62,8 +62,8 @@ describe('App', () => {
 
     renderApp(['/'])
 
-    // PublicOnly redirige / -> /dashboard con sesion valida.
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeInTheDocument())
+    // PublicOnly redirige / -> /groups con sesion valida.
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Grupos' })).toBeInTheDocument())
   })
 
   it('/signup es publica sin sesion', async () => {
@@ -72,7 +72,7 @@ describe('App', () => {
     expect(await screen.findByRole('heading', { name: 'Crear cuenta' })).toBeInTheDocument()
   })
 
-  it('renderiza el dashboard con sesion', async () => {
+  it('renderiza grupos con sesion', async () => {
     vi.stubGlobal('fetch', vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input)
       if (url.includes('/api/auth/me')) {
@@ -82,7 +82,7 @@ describe('App', () => {
           json: () => Promise.resolve({ data: { id: '1', username: 'admin' }, error: null }),
         })
       }
-      // /api/groups: lista vacia -> Dashboard muestra estado vacio
+      // /api/groups: lista vacia -> GroupsPage muestra estado vacio
       return Promise.resolve({
         ok: true,
         status: 200,
@@ -90,9 +90,9 @@ describe('App', () => {
       })
     }))
 
-    renderApp(['/dashboard'])
+    renderApp(['/groups'])
 
-    expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Grupos' })).toBeInTheDocument()
   })
 
   it('muestra 404 en rutas desconocidas', async () => {

@@ -6,8 +6,8 @@ export default function NotFoundPage() {
     <main className="notfound-page">
       <h1>Página no encontrada</h1>
       <p>La ruta que buscas no existe.</p>
-      <Link to="/dashboard" className="btn btn-primary">
-        Ir al Dashboard
+      <Link to="/groups" className="btn btn-primary">
+        Ir a Grupos
       </Link>
     </main>
   )

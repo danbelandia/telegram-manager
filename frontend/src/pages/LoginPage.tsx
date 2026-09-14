@@ -48,10 +48,10 @@ export default function LoginPage() {
   })
 
   if (user) {
-    return <Navigate to="/dashboard" replace />
+    return <Navigate to="/groups" replace />
   }
 
-  const from = (location.state as { from?: string } | null)?.from ?? '/dashboard'
+  const from = (location.state as { from?: string } | null)?.from ?? '/groups'
 
   const onSubmit = async (values: LoginForm) => {
     try {

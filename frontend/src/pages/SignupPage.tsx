@@ -2,7 +2,7 @@
 // de tenant con React Hook Form + Zod espejando la validacion del
 // backend (backend/internal/auth/service.go: slug trim 1–63, username
 // no vacio, password >= 8, token no vacio; sin trim en password como
-// el backend). Flujo: signup() → login(u,p) → /dashboard; si el
+// el backend). Flujo: signup() → login(u,p) → /groups; si el
 // auto-login falla, degradacion a /login?username=&created=1 (Q2).
 // Errores: 409 por substring (slug/username, fallback generico),
 // 400 al campo identificado, 502 con guia @BotFather (D4).
@@ -59,7 +59,7 @@ export default function SignupPage() {
   })
 
   if (user) {
-    return <Navigate to="/dashboard" replace />
+    return <Navigate to="/groups" replace />
   }
 
   /** 409/400/502 → setError en el campo (o raiz); resto → raiz. */
@@ -123,7 +123,7 @@ export default function SignupPage() {
       try {
         await login(values.username, values.password)
         notifySuccess('Cuenta creada')
-        navigate('/dashboard', { replace: true })
+        navigate('/groups', { replace: true })
       } catch {
         // Degradacion (Q2): el tenant existe pero el auto-login fallo.
         navigate(`/login?username=${encodeURIComponent(values.username)}&created=1`, {

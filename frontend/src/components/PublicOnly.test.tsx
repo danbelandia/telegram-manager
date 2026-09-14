@@ -1,5 +1,5 @@
 // Tests de PublicOnly (spec frontend-routing): sin sesion renderiza el
-// contenido publico; con sesion redirige a /dashboard. mockFetchRoutes
+// contenido publico; con sesion redirige a /groups. mockFetchRoutes
 // (by URL) evita desalinear mocks con el refresh automatico del
 // api-client (patron LoginPage.test.tsx).
 import { render, screen, waitFor } from '@testing-library/react'
@@ -14,7 +14,7 @@ function renderPublic(initialEntry: string) {
     <MemoryRouter initialEntries={[initialEntry]}>
       <AuthProvider>
         <Routes>
-          <Route path="/dashboard" element={<div>pagina dashboard</div>} />
+          <Route path="/groups" element={<div>pagina grupos</div>} />
           <Route
             element={
               <PublicOnly>
@@ -46,14 +46,14 @@ describe('PublicOnly', () => {
     expect(await screen.findByText('contenido publico')).toBeInTheDocument()
   })
 
-  it('redirige a /dashboard con sesion', async () => {
+  it('redirige a /groups con sesion', async () => {
     mockFetchRoutes({
       '/api/auth/me': () => okJson({ id: '1', username: 'admin', tenant_id: 7 }),
     })
 
     renderPublic('/signup')
 
-    await waitFor(() => expect(screen.getByText('pagina dashboard')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('pagina grupos')).toBeInTheDocument())
     expect(screen.queryByText('contenido publico')).not.toBeInTheDocument()
   })
 })

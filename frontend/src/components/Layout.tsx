@@ -24,7 +24,6 @@ import {
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import {
-  IconLayoutDashboard,
   IconUsersGroup,
   IconSend,
   IconLogout,
@@ -44,7 +43,6 @@ type NavItem = {
 }
 
 const BASE_NAV_ITEMS: ReadonlyArray<NavItem> = [
-  { to: '/dashboard', label: 'Dashboard', icon: IconLayoutDashboard },
   { to: '/groups', label: 'Grupos', icon: IconUsersGroup },
   { to: '/publications', label: 'Publicaciones', icon: IconSend },
   { to: '/tenant', label: 'Configuracion', icon: IconSettings },

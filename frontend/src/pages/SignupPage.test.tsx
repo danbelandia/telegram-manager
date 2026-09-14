@@ -41,7 +41,7 @@ function renderSignup() {
         <AuthProvider>
           <Routes>
             <Route path="/signup" element={<SignupPage />} />
-            <Route path="/dashboard" element={<div>pagina dashboard</div>} />
+            <Route path="/groups" element={<div>pagina grupos</div>} />
             <Route path="/login" element={<LoginProbe />} />
           </Routes>
         </AuthProvider>
@@ -74,7 +74,7 @@ describe('SignupPage', () => {
     expect(signupCalled()).toBe(false)
   })
 
-  it('signup 201 con auto-login va a /dashboard', async () => {
+  it('signup 201 con auto-login va a /groups', async () => {
     let meCalls = 0
     mockFetchRoutes({
       '/api/auth/signup': () => okJson({ tenant: { id: 7, slug: 'acme' }, admin: { id: '1', username: 'juan' } }),
@@ -92,7 +92,7 @@ describe('SignupPage', () => {
     fillValidForm()
     fireEvent.click(screen.getByRole('button', { name: 'Crear cuenta' }))
 
-    expect(await screen.findByText('pagina dashboard')).toBeInTheDocument()
+    expect(await screen.findByText('pagina grupos')).toBeInTheDocument()
     // Higiene: el campo del token quedo vacio tras el submit.
     expect(screen.queryByDisplayValue(FAKE_TOKEN)).not.toBeInTheDocument()
   })
