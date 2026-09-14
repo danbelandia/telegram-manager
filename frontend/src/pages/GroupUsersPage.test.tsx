@@ -1,7 +1,9 @@
 // Tests del GroupUsersPage (spec frontend-pages-moderation REQ-1..3):
 // render de Cards en SimpleGrid, lookup puntual, accion destructiva ban
-// confirmada con <Modal> en lugar de window.confirm. Wrapper compartido
-// con Mantine + Notifications (frontend-refresh slice 1).
+// confirmada con <Modal> en lugar de window.confirm. Lock/unlock del chat
+// vive en esta vista (frontend-refresh slice 4): el boton Cerrar abre
+// window.confirm y dispara la mutacion, abrir va directo sin confirmacion.
+// Wrapper compartido con Mantine + Notifications (frontend-refresh slice 1).
 import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Route, Routes } from 'react-router-dom'
@@ -31,6 +33,23 @@ const admins = [
     can_invite_users: true,
   },
 ]
+
+const group = {
+  id: 'g123',
+  telegram_id: -100123,
+  title: 'MU Online Comunidad',
+  username: null,
+  type: 'supergroup',
+  member_count: 4821,
+  bot_status: 'administrator',
+  bot_permissions: {
+    can_restrict_members: true,
+    can_delete_messages: true,
+    can_pin_messages: true,
+    can_invite_users: true,
+    can_change_info: true,
+  },
+}
 
 function renderUsers() {
   // renderWithProviders ya envuelve con MemoryRouter. Registramos la
@@ -218,5 +237,26 @@ describe('GroupUsersPage', () => {
 
     await waitFor(() => expect(spy).toHaveBeenCalled())
     expect(await screen.findByText('Usuario muteado')).toBeInTheDocument()
+  })
+
+  it('cierra el chat cuando el admin confirma', async () => {
+    window.confirm = vi.fn(() => true)
+    const spy = vi.fn()
+    mockFetchRoutes({
+      '/api/groups/123/lock': () => {
+        spy()
+        return okJson({ status: 'ok' })
+      },
+      '/api/groups/123/users': () => okJson(admins),
+      '/api/groups/123': () => okJson(group),
+    })
+
+    renderUsers()
+
+    const lockButton = await screen.findByRole('button', { name: /Cerrar chat/i })
+    lockButton.click()
+
+    await waitFor(() => expect(spy).toHaveBeenCalled())
+    expect(window.confirm).toHaveBeenCalled()
   })
 })

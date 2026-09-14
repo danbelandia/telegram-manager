@@ -30,11 +30,14 @@ import {
   useBanUser,
   useGroupUser,
   useGroupUsers,
+  useLockGroup,
   useMuteUser,
   useUnbanUser,
   useUnmuteUser,
+  useUnlockGroup,
 } from '../features/moderation/hooks'
 import type { GroupUser } from '../features/moderation/types'
+import { useGroup } from '../features/groups/hooks'
 import { notifyError, notifySuccess } from '../lib/notifications'
 
 // Color del Badge por status (memberResponse.status del backend).
@@ -193,6 +196,11 @@ export default function GroupUsersPage() {
 
   const users = useGroupUsers(groupId)
   const lookup = useGroupUser(groupId, lookupSubmitted)
+  // useGroup se carga aca (no se renderiza directo) para que los hooks de
+  // lock/unlock invaliden la query del detalle del grupo al mutar.
+  useGroup(groupId)
+  const lock = useLockGroup()
+  const unlock = useUnlockGroup()
 
   // Hook a nivel de padre para que el Modal pueda disparar la mutacion
   // sin acoplarse al UserCard (mismo patron que UserCard.run() pero con
@@ -212,6 +220,14 @@ export default function GroupUsersPage() {
     )
   }
 
+  const chatError = lock.error ?? unlock.error
+  const chatPending = lock.isPending || unlock.isPending
+
+  const confirmLock = () => {
+    if (!window.confirm('¿Cerrar el envío de mensajes en este grupo?')) return
+    lock.mutate(groupId)
+  }
+
   return (
     <Container size="lg" py="md">
       <Stack gap="md">
@@ -222,6 +238,27 @@ export default function GroupUsersPage() {
             administradores del grupo y se puede buscar cualquier miembro por su ID de
             Telegram para moderarlo (banear, mutear, desbanear, desmutear).
           </Text>
+        </Stack>
+
+        <Stack gap="xs">
+          <Title order={4}>Estado del chat</Title>
+          {chatError ? (
+            <Text c="red" size="sm">
+              {formatModerationError(chatError)}
+            </Text>
+          ) : null}
+          <Group>
+            <Button
+              variant="default"
+              disabled={chatPending}
+              onClick={() => unlock.mutate(groupId)}
+            >
+              🔓 Abrir chat
+            </Button>
+            <Button color="red" disabled={chatPending} onClick={confirmLock}>
+              🔒 Cerrar chat
+            </Button>
+          </Group>
         </Stack>
 
         <form

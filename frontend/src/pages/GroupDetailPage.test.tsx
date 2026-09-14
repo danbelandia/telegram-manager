@@ -1,11 +1,11 @@
 // Tests del GroupDetailPage (spec frontend-dashboard req 3 +
-// frontend-moderation req 4-5): detalle del grupo, acciones de chat
-// lock/unlock con confirmacion y delete/pin por messageId (confirm para
-// delete, cancelado no llama a la API). Wrapper incluye MantineProvider
-// + Notifications porque el componente migrado usa Tabs / Stack /
-// TextInput / Skeleton de Mantine v7 (frontend-refresh slice 1).
-import { render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
+// frontend-moderation req 4-5): detalle del grupo, links de navegacion
+// hacia las vistas dedicadas (Membresia, Automatizacion, Moderacion).
+// Wrapper incluye MantineProvider + Notifications porque el componente
+// migrado usa Tabs / Stack / Badge de Mantine v7 (frontend-refresh
+// slice 1). Las acciones destructivas (lock chat, delete/pin mensaje)
+// viven en GroupUsersPage / vistas dedicadas y se testean alla.
+import { render, screen } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { MantineProvider } from '@mantine/core'
@@ -74,20 +74,20 @@ describe('GroupDetailPage', () => {
       '/groups/123/users',
     )
     // Slice 2 (moderacion automatica): link al editor de settings + listas.
-    // Slice 3 (Fase 3): label renombrado + nuevo link al dashboard.
+    // Slice 3 (Fase 3): link al dashboard de moderacion.
     expect(screen.getByTestId('automation-link')).toHaveAttribute(
       'href',
       '/groups/123/automation',
     )
     expect(screen.getByTestId('automation-link')).toHaveTextContent(
-      'Configurar reglas de moderación',
+      'Configurar reglas',
     )
     expect(screen.getByTestId('moderation-dashboard-link')).toHaveAttribute(
       'href',
       '/groups/123/moderation',
     )
     expect(screen.getByTestId('moderation-dashboard-link')).toHaveTextContent(
-      'Ver dashboard de moderación',
+      'Ver dashboard',
     )
   })
 
@@ -99,72 +99,5 @@ describe('GroupDetailPage', () => {
     renderDetail()
 
     expect(await screen.findByText(/Grupo no encontrado/i)).toBeInTheDocument()
-  })
-
-  it('cierra el chat cuando el admin confirma', async () => {
-    window.confirm = vi.fn(() => true)
-    const spy = vi.fn()
-    mockFetchRoutes({
-      '/api/groups/123/lock': () => {
-        spy()
-        return okJson({ status: 'ok' })
-      },
-      '/api/groups/123/logs': () => okJson([]),
-      '/api/groups/123': () => okJson(group),
-    })
-
-    renderDetail()
-
-    const lockButton = await screen.findByRole('button', { name: /Cerrar chat/i })
-    lockButton.click()
-
-    await waitFor(() => expect(spy).toHaveBeenCalled())
-    expect(window.confirm).toHaveBeenCalled()
-  })
-
-  it('elimina un mensaje por id cuando el admin confirma', async () => {
-    window.confirm = vi.fn(() => true)
-    const spy = vi.fn()
-    mockFetchRoutes({
-      '/api/groups/123/messages/987/delete': () => {
-        spy()
-        return okJson({ status: 'ok' })
-      },
-      '/api/groups/123/logs': () => okJson([]),
-      '/api/groups/123': () => okJson(group),
-    })
-
-    renderDetail()
-
-    const input = await screen.findByPlaceholderText(/ID del mensaje/i)
-    await userEvent.type(input, '987')
-
-    const deleteButton = screen.getByRole('button', { name: 'Eliminar' })
-    deleteButton.click()
-
-    await waitFor(() => expect(spy).toHaveBeenCalled())
-    expect(window.confirm).toHaveBeenCalled()
-  })
-
-  it('no llama a la API si el admin cancela el borrado', async () => {
-    window.confirm = vi.fn(() => false)
-    const spy = vi.fn()
-    mockFetchRoutes({
-      '/api/groups/123': () => okJson(group),
-      '/api/groups/123/messages/987/delete': () => {
-        spy()
-        return okJson({ status: 'ok' })
-      },
-    })
-
-    renderDetail()
-
-    const input = await screen.findByPlaceholderText(/ID del mensaje/i)
-    await userEvent.type(input, '987')
-
-    const deleteButton = screen.getByRole('button', { name: 'Eliminar' })
-    deleteButton.click()
-
-    expect(spy).not.toHaveBeenCalled()
   })
 })

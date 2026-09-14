@@ -1,10 +1,9 @@
 // GroupDetailPage migrado a Mantine (frontend-refresh slice 1 — design D14,
 // spec REQ-9). Header con Title + telegram_id + Badge de estado del bot.
-// `<Tabs>` con 4 paneles: Detalle (info + permisos), Membresia y moderacion
-// (lock/unlock + delete/pin + link a /users), Solicitudes (link a /requests),
-// Logs (link a /logs). Los hooks de moderacion y useGroup se mantienen sin
-// cambios (NO se tocan features/* — el alcance del slice es solo view layer).
-import { useState } from 'react'
+// `<Tabs>` con 3 paneles: Detalle (info + permisos), Solicitudes (link a
+// /requests), Logs (link a /logs). Las acciones destructivas (lock chat,
+// delete/pin mensaje) se movieron a GroupUsersPage / vistas dedicadas para
+// mantener este page como hub de navegacion del grupo.
 import { Link, useParams } from 'react-router-dom'
 import {
   Anchor,
@@ -16,11 +15,10 @@ import {
   Stack,
   Tabs,
   Text,
-  TextInput,
   Title,
 } from '@mantine/core'
 import { formatModerationError } from '../features/moderation/error'
-import { useDeleteMessage, useLockGroup, usePinMessage, useUnlockGroup } from '../features/moderation/hooks'
+import { useLockGroup, useUnlockGroup } from '../features/moderation/hooks'
 import { formatPermissions } from '../features/groups/permissions'
 import { useGroup } from '../features/groups/hooks'
 
@@ -36,38 +34,13 @@ export default function GroupDetailPage() {
 
   const lock = useLockGroup()
   const unlock = useUnlockGroup()
-  const deleteMsg = useDeleteMessage()
-  const pin = usePinMessage()
-
-  const [messageId, setMessageId] = useState('')
 
   const chatError = lock.error ?? unlock.error
-  const messageError = deleteMsg.error ?? pin.error
   const chatPending = lock.isPending || unlock.isPending
-  const messagePending = deleteMsg.isPending || pin.isPending
 
   const confirmLock = () => {
     if (!window.confirm('¿Cerrar el envío de mensajes en este grupo?')) return
     lock.mutate(groupId)
-  }
-
-  const confirmDelete = () => {
-    const parsed = Number(messageId)
-    if (!Number.isInteger(parsed) || parsed <= 0) {
-      window.alert('Ingresá un ID de mensaje válido (número positivo).')
-      return
-    }
-    if (!window.confirm(`¿Eliminar el mensaje ${parsed}? Esta acción es irreversible.`)) return
-    deleteMsg.mutate({ groupId, messageId: parsed })
-  }
-
-  const pinMessage = () => {
-    const parsed = Number(messageId)
-    if (!Number.isInteger(parsed) || parsed <= 0) {
-      window.alert('Ingresá un ID de mensaje válido (número positivo).')
-      return
-    }
-    pin.mutate({ groupId, messageId: parsed })
   }
 
   if (isPending) {
@@ -168,27 +141,6 @@ export default function GroupDetailPage() {
             data-testid="moderation-dashboard-link"
           >
             Ver dashboard
-          </Button>
-        </Group>
-        {messageError ? (
-          <Text c="red" size="sm">
-            {formatModerationError(messageError)}
-          </Text>
-        ) : null}
-        <Group align="flex-end">
-          <TextInput
-            label="ID del mensaje en Telegram"
-            placeholder="ID del mensaje"
-            inputMode="numeric"
-            value={messageId}
-            onChange={(e) => setMessageId(e.currentTarget.value)}
-            style={{ flex: 1 }}
-          />
-          <Button color="red" disabled={messagePending} onClick={confirmDelete}>
-            Eliminar
-          </Button>
-          <Button variant="default" disabled={messagePending} onClick={pinMessage}>
-            Fijar
           </Button>
         </Group>
       </Stack>
