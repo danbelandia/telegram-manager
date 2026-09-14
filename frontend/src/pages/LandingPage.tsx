@@ -14,7 +14,7 @@ import {
 } from '@mantine/core'
 import { IconCheck } from '@tabler/icons-react'
 import { Link } from 'react-router-dom'
-import heroSvg from './hero-illustration.svg'
+import heroSvg from './image.35935aae.svg'
 import classes from './LandingPage.module.css'
 
 export default function LandingPage() {
@@ -66,8 +66,7 @@ export default function LandingPage() {
               to="/signup"
               radius="xl"
               size="lg"
-              variant="gradient"
-              gradient={{ from: 'blue', to: 'cyan', deg: 135 }}
+              variant="filled"
             >
               Crear cuenta gratis
             </Button>
