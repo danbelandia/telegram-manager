@@ -7,11 +7,13 @@ import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { Link, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
+import { IconArrowLeft } from '@tabler/icons-react'
 import {
   Alert,
   Anchor,
   Button,
   Center,
+  Group,
   Paper,
   PasswordInput,
   Stack,
@@ -67,11 +69,23 @@ export default function LoginPage() {
   }
 
   return (
-    <Center mih="100vh" px="md">
-      <Paper withBorder shadow="md" p="xl" radius="md" w={360}>
-        <Title order={2} ta="center" mb="sm">
-          ¡Qué bueno que estás aquí!
-        </Title>
+    <>
+      <Group justify="flex-start" p="md">
+        <Button
+          component={Link}
+          to="/"
+          variant="subtle"
+          size="sm"
+          leftSection={<IconArrowLeft size={14} />}
+        >
+          Volver al home
+        </Button>
+      </Group>
+      <Center mih="100vh" px="md">
+        <Paper withBorder shadow="md" p="xl" radius="md" w={360}>
+          <Title order={2} size="h3" ta="center" mb="sm" style={{ whiteSpace: 'nowrap' }}>
+            ¡Qué bueno que estás aquí!
+          </Title>
         <Text ta="center" c="dimmed" size="sm" mb="lg">
           ¿Aún no tenés cuenta?{' '}
           <Anchor component={Link} to="/signup" fw={600}>
@@ -114,7 +128,8 @@ export default function LoginPage() {
             </Button>
           </Stack>
         </form>
-      </Paper>
-    </Center>
+        </Paper>
+      </Center>
+    </>
   )
 }
