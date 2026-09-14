@@ -6,14 +6,16 @@
 import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Alert,
+  Anchor,
   Button,
   Center,
   Paper,
   PasswordInput,
   Stack,
+  Text,
   TextInput,
   Title,
 } from '@mantine/core'
@@ -67,9 +69,15 @@ export default function LoginPage() {
   return (
     <Center mih="100vh" px="md">
       <Paper withBorder shadow="md" p="xl" radius="md" w={360}>
-        <Title order={2} ta="center" mb="lg">
-          Iniciar sesión
+        <Title order={2} ta="center" mb="sm">
+          ¡Qué bueno que estás aquí!
         </Title>
+        <Text ta="center" c="dimmed" size="sm" mb="lg">
+          ¿Aún no tenés cuenta?{' '}
+          <Anchor component={Link} to="/signup" fw={600}>
+            Crear cuenta
+          </Anchor>
+        </Text>
         <form onSubmit={handleSubmit(onSubmit)} noValidate>
           <Stack>
             {justCreated ? (
