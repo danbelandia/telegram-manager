@@ -241,14 +241,17 @@ export default function LandingPage() {
             </Text>
 
             <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xl" mt="xl">
-              <Box className={classes.pricingCard} data-testid="pricing-free">
+              <Box className={classes.pricingCard} data-testid="pricing-trial">
                 <Stack gap="sm">
-                  <Title order={3}>Gratis</Title>
+                  <Title order={3}>Trial</Title>
+                  <Text size="xs" c="dimmed">
+                    Prueba todas las funciones por 3 días, sin tarjeta.
+                  </Text>
                   <Text size="xl" fw={700}>
-                    $0
+                    Trial 3 días
                   </Text>
                   <Text c="dimmed" size="sm">
-                    Para grupos chicos y medianos que recién empiezan.
+                    Acceso completo a Sentinel durante 3 días para probar todo sin compromiso.
                   </Text>
                   <List
                     spacing="xs"
@@ -264,10 +267,10 @@ export default function LandingPage() {
                       </ThemeIcon>
                     }
                   >
-                    <List.Item>Hasta 1 grupo conectado</List.Item>
+                    <List.Item>Acceso completo por 3 días</List.Item>
+                    <List.Item>Todos los grupos habilitados</List.Item>
                     <List.Item>Moderación manual completa</List.Item>
-                    <List.Item>Solicitudes de ingreso</List.Item>
-                    <List.Item>Logs de auditoría</List.Item>
+                    <List.Item>Sin tarjeta de crédito</List.Item>
                   </List>
                   <Button
                     component={Link}
@@ -290,10 +293,10 @@ export default function LandingPage() {
                     </Text>
                   </Group>
                   <Text size="xl" fw={700}>
-                    —
+                    $6.99 / mes
                   </Text>
                   <Text c="dimmed" size="sm">
-                    Para comunidades grandes y equipos de moderación.
+                    Para comunidades grandes y equipos de moderación. Facturación mensual, cancelás cuando quieras.
                   </Text>
                   <List
                     spacing="xs"
@@ -313,6 +316,7 @@ export default function LandingPage() {
                     <List.Item>Publicaciones programadas</List.Item>
                     <List.Item>Moderación automática</List.Item>
                     <List.Item>Soporte prioritario</List.Item>
+                    <List.Item>Sin límite de tiempo</List.Item>
                   </List>
                   <Button
                     radius="md"
