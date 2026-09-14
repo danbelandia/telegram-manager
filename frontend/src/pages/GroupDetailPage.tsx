@@ -146,6 +146,29 @@ export default function GroupDetailPage() {
           <Button color="red" disabled={chatPending} onClick={confirmLock}>
             🔒 Cerrar chat
           </Button>
+          <Button
+            component={Link}
+            to={`/groups/${groupId}/users`}
+            variant="light"
+          >
+            Membresía y moderación
+          </Button>
+          <Button
+            component={Link}
+            to={`/groups/${groupId}/automation`}
+            variant="light"
+            data-testid="automation-link"
+          >
+            Configurar reglas
+          </Button>
+          <Button
+            component={Link}
+            to={`/groups/${groupId}/moderation`}
+            variant="light"
+            data-testid="moderation-dashboard-link"
+          >
+            Ver dashboard
+          </Button>
         </Group>
         {messageError ? (
           <Text c="red" size="sm">
@@ -199,32 +222,6 @@ export default function GroupDetailPage() {
                 {permissions.length > 0 ? permissions.join(', ') : 'Sin permisos'}
               </Text>
             </Stack>
-            <Button
-              component={Link}
-              to={`/groups/${groupId}/users`}
-              variant="light"
-              w={260}
-            >
-              Membresía y moderación
-            </Button>
-            <Button
-              component={Link}
-              to={`/groups/${groupId}/automation`}
-              variant="light"
-              w={260}
-              data-testid="automation-link"
-            >
-              Configurar reglas de moderación
-            </Button>
-            <Button
-              component={Link}
-              to={`/groups/${groupId}/moderation`}
-              variant="light"
-              w={260}
-              data-testid="moderation-dashboard-link"
-            >
-              Ver dashboard de moderación
-            </Button>
           </Stack>
         </Tabs.Panel>
 
