@@ -63,7 +63,7 @@ export default function Layout() {
   const handleLogout = async () => {
     await logout()
     notifySuccess('Sesión cerrada')
-    navigate('/login', { replace: true })
+    navigate('/', { replace: true })
   }
 
   return (
