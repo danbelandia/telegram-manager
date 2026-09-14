@@ -1,3 +1,45 @@
+/* Landing styles (slice: rebrand a "Sentinel" + navbar sticky + 3 secciones
+ * + footer). La navbar usa position: sticky con background solido para
+ * tapar contenido al hacer scroll; las secciones tienen border-top sutil
+ * para separarse visualmente; el footer usa background mas oscuro que
+ * el body. Los colores siguen light-dark() para respetar el toggle de
+ * tema de Mantine. */
+
+.navbar {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background-color: light-dark(
+    var(--mantine-color-white),
+    var(--mantine-color-dark-7)
+  );
+  border-bottom: 1px solid
+    light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+  backdrop-filter: saturate(180%) blur(8px);
+}
+
+.navbarInner {
+  height: 60px;
+  display: flex;
+  align-items: center;
+}
+
+.brand {
+  font-size: 20px;
+  letter-spacing: -0.01em;
+  color: light-dark(var(--mantine-color-black), var(--mantine-color-white));
+}
+
+.navLink {
+  font-size: 14px;
+  font-weight: 500;
+  color: light-dark(var(--mantine-color-dark-6), var(--mantine-color-gray-0));
+}
+
+.navLink:hover {
+  color: var(--mantine-color-blue-filled);
+}
+
 .inner {
   display: flex;
   justify-content: space-between;
@@ -83,4 +125,33 @@
   .heroImage {
     display: none;
   }
+}
+
+.section {
+  padding-top: calc(var(--mantine-spacing-xl) * 3);
+  padding-bottom: calc(var(--mantine-spacing-xl) * 3);
+  border-top: 1px solid
+    light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
+}
+
+.pricingCard {
+  border: 1px solid
+    light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+  border-radius: var(--mantine-radius-md);
+  padding: var(--mantine-spacing-xl);
+  background-color: light-dark(
+    var(--mantine-color-white),
+    var(--mantine-color-dark-7)
+  );
+}
+
+.footer {
+  border-top: 1px solid
+    light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+  padding-top: var(--mantine-spacing-xl);
+  padding-bottom: var(--mantine-spacing-xl);
+  background-color: light-dark(
+    var(--mantine-color-gray-0),
+    var(--mantine-color-dark-8)
+  );
 }

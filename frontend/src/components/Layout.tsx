@@ -86,7 +86,7 @@ export default function Layout() {
               size="sm"
             />
             <Title order={4} fw={700}>
-              Telegram Manager
+              Sentinel
             </Title>
           </Group>
           <Group gap="sm" wrap="nowrap">

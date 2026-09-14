@@ -57,7 +57,7 @@ describe('Layout', () => {
     renderLayout()
 
     // Header: brand + username + toggle + boton logout.
-    expect(screen.getByText('Telegram Manager')).toBeInTheDocument()
+    expect(screen.getByText('Sentinel')).toBeInTheDocument()
     expect(screen.getByText('admin')).toBeInTheDocument()
     expect(screen.getByTestId('color-scheme-toggle')).toBeInTheDocument()
     expect(screen.getByTestId('logout-button')).toBeInTheDocument()
