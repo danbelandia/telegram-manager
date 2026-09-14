@@ -132,6 +132,7 @@
   padding-bottom: calc(var(--mantine-spacing-xl) * 3);
   border-top: 1px solid
     light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
+  scroll-margin-top: 80px;
 }
 
 .pricingCard {

@@ -11,6 +11,8 @@ import RequireAuth from './components/RequireAuth'
 import PublicOnly from './components/PublicOnly'
 import Layout from './components/Layout'
 import LandingPage from './pages/LandingPage'
+import TermsPage from './pages/TermsPage'
+import PrivacyPage from './pages/PrivacyPage'
 import SignupPage from './pages/SignupPage'
 import LoginPage from './pages/LoginPage'
 import GroupsPage from './pages/GroupsPage'
@@ -54,6 +56,12 @@ export default function App() {
           </PublicOnly>
         }
       />
+
+      {/* Paginas legales: publicas para cualquier visitante
+          (autenticado o no), sin PublicOnly — no redirigimos a /groups
+          si el usuario ya esta logueado. */}
+      <Route path="/terms" element={<TermsPage />} />
+      <Route path="/privacy" element={<PrivacyPage />} />
 
       <Route
         element={

@@ -1,11 +1,13 @@
 // Landing publica `/` — navbar sticky con anchors a 3 secciones
 // (#about, #features, #pricing) + hero + Quiénes somos + Qué hace
-// + Precios + footer. Los anchors usan `<Anchor component={Link} to="#x">`
-// para que React Router renderice un <a href="#x"> nativo y el browser
-// haga el scroll por anchor. Layout de features/pricing inspirado en
-// Mantine HeroBullets: titulos centrados, listas con check icons, dos
-// botones en el hero (Crear cuenta / Iniciar sesion).
-// Responsive: en mobile apila verticalmente y oculta la imagen del hero.
+// + Precios + footer. Los anchors del navbar usan `<a href="#x">` plano
+// para que el browser haga el scroll por anchor nativo (sin que React
+// Router intercepte como ruta). Las secciones tienen scroll-margin-top
+// para que el navbar sticky (60px) no tape el titulo. Layout de
+// features/pricing inspirado en Mantine HeroBullets: titulos centrados,
+// listas con check icons, dos botones en el hero (Crear cuenta /
+// Iniciar sesion). Responsive: en mobile apila verticalmente y oculta
+// la imagen del hero.
 import {
   Anchor,
   Box,
@@ -49,8 +51,7 @@ export default function LandingPage() {
               {NAV_LINKS.map((link) => (
                 <Anchor
                   key={link.to}
-                  component={Link}
-                  to={link.to}
+                  href={link.to}
                   className={classes.navLink}
                   underline="never"
                   data-testid={`landing-nav-${link.to.replace('#', '')}`}
@@ -344,10 +345,10 @@ export default function LandingPage() {
               Plataforma para administración de grupos de Telegram
             </Text>
             <Group gap="md">
-              <Anchor href="#" c="dimmed" size="sm" underline="hover">
+              <Anchor component={Link} to="/terms" c="dimmed" size="sm" underline="hover">
                 Términos
               </Anchor>
-              <Anchor href="#" c="dimmed" size="sm" underline="hover">
+              <Anchor component={Link} to="/privacy" c="dimmed" size="sm" underline="hover">
                 Privacidad
               </Anchor>
             </Group>
