@@ -146,13 +146,9 @@ export default function LandingPage() {
               Quiénes somos
             </Title>
             <Text size="lg" c="dimmed" ta="center" maw={720} mx="auto">
-              Sentinel es un equipo chico de desarrolladores y moderadores que
-              vive la comunidad de Telegram desde adentro. Construimos esta
-              plataforma porque administrar grupos grandes a mano se vuelve
-              insostenible: las solicitudes se acumulan, el spam aparece y los
-              logs se pierden. Nuestra misión es devolverles a los dueños de
-              comunidades el control y el tiempo, con herramientas serias y
-              respetuosas de la privacidad.
+            Sentinel es un equipo pequeño de desarrolladores y moderadores que conoce de primera mano los desafíos de gestionar comunidades en Telegram.
+            Creamos esta plataforma porque administrar grupos grandes manualmente no debería convertirse en un trabajo de tiempo completo. Las solicitudes de ingreso se acumulan, el spam no da tregua y mantener un historial organizado de lo que ocurre puede ser complicado.
+            Nuestra misión es devolverles a los administradores el control de sus comunidades y el tiempo que necesitan para hacerlas crecer. Desarrollamos herramientas de gestión y moderación eficientes, confiables y respetuosas de la privacidad, pensadas para simplificar el trabajo sin perder de vista lo más importante: las personas que forman parte de cada comunidad.
             </Text>
           </Stack>
         </Container>
