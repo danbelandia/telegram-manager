@@ -9,7 +9,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClientProvider } from '@tanstack/react-query'
 import { MantineProvider } from '@mantine/core'
 import { Notifications } from '@mantine/notifications'
 
@@ -22,15 +22,8 @@ import 'dayjs/locale/es'
 
 import App from './App'
 import { AuthProvider } from './lib/auth-context'
+import { queryClient } from './lib/query-client'
 import { colorSchemeManager, mantineTheme } from './theme'
-
-// Un QueryClient por app: los hooks de datos (features/*/hooks.ts) no
-// configuran cliente propio, dependen de este provider (guia seccion 4).
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: { retry: false, staleTime: 30_000 },
-  },
-})
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

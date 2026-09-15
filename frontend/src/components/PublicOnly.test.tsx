@@ -4,29 +4,34 @@
 // api-client (patron LoginPage.test.tsx).
 import { render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { QueryClientProvider } from '@tanstack/react-query'
 import { describe, expect, it, vi, afterEach } from 'vitest'
 import PublicOnly from './PublicOnly'
 import { AuthProvider } from '../lib/auth-context'
-import { errorJson, mockFetchRoutes, okJson } from '../test/helpers'
+import { createTestQueryClient, errorJson, mockFetchRoutes, okJson } from '../test/helpers'
 
 function renderPublic(initialEntry: string) {
+  // QueryClientProvider: AuthProvider usa useQueryClient() para limpiar
+  // la cache al cerrar sesion (slice 4 spec).
   return render(
-    <MemoryRouter initialEntries={[initialEntry]}>
-      <AuthProvider>
-        <Routes>
-          <Route path="/groups" element={<div>pagina grupos</div>} />
-          <Route
-            element={
-              <PublicOnly>
-                <div>contenido publico</div>
-              </PublicOnly>
-            }
-          >
-            <Route path="/signup" element={<div>contenido publico</div>} />
-          </Route>
-        </Routes>
-      </AuthProvider>
-    </MemoryRouter>,
+    <QueryClientProvider client={createTestQueryClient()}>
+      <MemoryRouter initialEntries={[initialEntry]}>
+        <AuthProvider>
+          <Routes>
+            <Route path="/groups" element={<div>pagina grupos</div>} />
+            <Route
+              element={
+                <PublicOnly>
+                  <div>contenido publico</div>
+                </PublicOnly>
+              }
+            >
+              <Route path="/signup" element={<div>contenido publico</div>} />
+            </Route>
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>
+    </QueryClientProvider>,
   )
 }
 

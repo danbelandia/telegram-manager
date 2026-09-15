@@ -4,28 +4,34 @@
 // redirect aterrice en un destino (si no, router + Navigate bucean).
 import { render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { QueryClientProvider } from '@tanstack/react-query'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import RequireAuth from './RequireAuth'
 import { AuthProvider } from '../lib/auth-context'
+import { createTestQueryClient } from '../test/helpers'
 
 function renderProtected(initialEntry: string) {
+  // QueryClientProvider: AuthProvider usa useQueryClient() para limpiar
+  // la cache al cerrar sesion (slice 4 spec).
   return render(
-    <MemoryRouter initialEntries={[initialEntry]}>
-      <AuthProvider>
-        <Routes>
-          <Route path="/login" element={<div>pagina login</div>} />
-          <Route
-            element={
-              <RequireAuth>
-                <div>contenido protegido</div>
-              </RequireAuth>
-            }
-          >
-            <Route path="/groups" element={<div>contenido protegido</div>} />
-          </Route>
-        </Routes>
-      </AuthProvider>
-    </MemoryRouter>,
+    <QueryClientProvider client={createTestQueryClient()}>
+      <MemoryRouter initialEntries={[initialEntry]}>
+        <AuthProvider>
+          <Routes>
+            <Route path="/login" element={<div>pagina login</div>} />
+            <Route
+              element={
+                <RequireAuth>
+                  <div>contenido protegido</div>
+                </RequireAuth>
+              }
+            >
+              <Route path="/groups" element={<div>contenido protegido</div>} />
+            </Route>
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>
+    </QueryClientProvider>,
   )
 }
 

@@ -5,13 +5,14 @@
 // literal sintetico SIGNUP_BOT_TOKEN_EXAMPLE (REQ hygiene).
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useSearchParams } from 'react-router-dom'
+import { QueryClientProvider } from '@tanstack/react-query'
 import { MantineProvider } from '@mantine/core'
 import { Notifications } from '@mantine/notifications'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Mock } from 'vitest'
 import SignupPage from './SignupPage'
 import { AuthProvider } from '../lib/auth-context'
-import { errorJson, mockFetchRoutes, okJson } from '../test/helpers'
+import { createTestQueryClient, errorJson, mockFetchRoutes, okJson } from '../test/helpers'
 import { mantineTheme } from '../theme'
 
 const FAKE_TOKEN = 'SIGNUP_BOT_TOKEN_EXAMPLE'
@@ -34,18 +35,22 @@ function LoginProbe() {
 }
 
 function renderSignup() {
+  // QueryClientProvider: AuthProvider usa useQueryClient() para limpiar
+  // la cache al cerrar sesion (slice 4 spec).
   return render(
     <MantineProvider theme={mantineTheme} defaultColorScheme="light">
       <Notifications position="top-right" />
-      <MemoryRouter initialEntries={['/signup']}>
-        <AuthProvider>
-          <Routes>
-            <Route path="/signup" element={<SignupPage />} />
-            <Route path="/groups" element={<div>pagina grupos</div>} />
-            <Route path="/login" element={<LoginProbe />} />
-          </Routes>
-        </AuthProvider>
-      </MemoryRouter>
+      <QueryClientProvider client={createTestQueryClient()}>
+        <MemoryRouter initialEntries={['/signup']}>
+          <AuthProvider>
+            <Routes>
+              <Route path="/signup" element={<SignupPage />} />
+              <Route path="/groups" element={<div>pagina grupos</div>} />
+              <Route path="/login" element={<LoginProbe />} />
+            </Routes>
+          </AuthProvider>
+        </MemoryRouter>
+      </QueryClientProvider>
     </MantineProvider>,
   )
 }

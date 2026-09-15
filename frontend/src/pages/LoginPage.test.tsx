@@ -4,12 +4,13 @@
 // automatico del api-client.
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
+import { QueryClientProvider } from '@tanstack/react-query'
 import { MantineProvider } from '@mantine/core'
 import { Notifications } from '@mantine/notifications'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import LoginPage from './LoginPage'
 import { AuthProvider } from '../lib/auth-context'
-import { errorJson, mockFetchRoutes, okJson } from '../test/helpers'
+import { createTestQueryClient, errorJson, mockFetchRoutes, okJson } from '../test/helpers'
 import { mantineTheme } from '../theme'
 
 // state de entrada para /login: permite simular redirect post-login
@@ -19,14 +20,18 @@ const ROUTE_WITH_STATE: { pathname: string; state: { from?: string } } = {
 }
 
 function renderLogin(initialEntries: Array<string | { pathname: string; state: unknown }> = ['/login']) {
+  // QueryClientProvider: AuthProvider usa useQueryClient() para limpiar
+  // la cache al cerrar sesion (slice 4 spec).
   return render(
     <MantineProvider theme={mantineTheme} defaultColorScheme="light">
       <Notifications position="top-right" />
-      <MemoryRouter initialEntries={initialEntries}>
-        <AuthProvider>
-          <LoginPage />
-        </AuthProvider>
-      </MemoryRouter>
+      <QueryClientProvider client={createTestQueryClient()}>
+        <MemoryRouter initialEntries={initialEntries}>
+          <AuthProvider>
+            <LoginPage />
+          </AuthProvider>
+        </MemoryRouter>
+      </QueryClientProvider>
     </MantineProvider>,
   )
 }
